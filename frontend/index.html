@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="">
+  <head>
+    <meta charset="UTF-8">
+    <link rel="icon" href="/favicon.ico">
+    <!-- prevent user scale and let viewport fit the whole page -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <!-- prevent auto detection of possible phone numbers and emails -->
+    <meta name="format-detection" content="telephone=no, email=no">
+    <title>面试题库，助力成功</title>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script>
+        !(function(c,b,d,a){c[a]||(c[a]={});c[a]=
+        { 
+          endpoint: 'https://proj-xtrace-e54c2c2415e061c7bc5cc0dc319435-cn-hangzhou.cn-hangzhou.log.aliyuncs.com/rum/web/v2?workspace=default-cms-1193857402054812-cn-hangzhou&service_id=br6qiop5lo@82efff3f788f4f041d1d4',
+          // 设置环境信息，参考值：'prod' | 'gray' | 'pre' | 'daily' | 'local'
+          env: 'prod', 
+          // 设置路由模式， 参考值：'history' | 'hash'
+          spaMode: 'history',
+          collectors: {
+            // 页面性能指标监听开关，默认开启
+            perf: true,
+            // WebVitals指标监听开关，默认开启
+            webVitals: true,
+            // Ajax监听开关，默认开启
+            api: true,
+            // 静态资源开关，默认开启
+            staticResource: true,
+            // JS错误监听开关，默认开启
+            jsError: true,
+            // 控制台错误监听开关，默认开启
+            consoleError: true,
+            // 用户行为监听开关，默认开启
+            action: true,
+          },
+          // 链路追踪配置开关，默认关闭
+          tracing: false,
+        }
+        with(b)with(body)with(insertBefore(createElement("script"),firstChild))setAttribute("crossorigin","",src=d)
+    })(window, document, "https://sdk.rum.aliyuncs.com/v2/browser-sdk.js", "__rum");
+    </script>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

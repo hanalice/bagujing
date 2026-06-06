@@ -1,0 +1,6 @@
+node_modules
+
+# Local SQLite databases
+db/*.sqlite3
+db/*.sqlite3-wal
+db/*.sqlite3-shm

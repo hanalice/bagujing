@@ -1,0 +1,611 @@
+<!DOCTYPE html>
+<html lang="zh-cn">
+
+<head>
+    <meta charset="utf-8">
+    <title>首页 - 八股精</title>
+    <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+    <meta name="renderer" content="webkit">
+    <meta name="force-rendering" content="webkit">
+    <meta name="csrf-token" content="">
+    <meta name="description" content="提供求职经验技巧、面试题库和求职工具的网站。">
+    <meta name="keywords" content="程序员面试,面试题库,面试八股,刷 题,求职技巧,面试经验,面试工具,面试资料,模拟面试,制作简历,应届生求职">
+    <link rel="stylesheet" href="/fonts/inter3.19/inter.css">
+    <link rel="stylesheet" href="/assets/app/main.css?ts=1762015623044">
+
+    <script type="application/json"
+        id="PAGE_CONFIG">{"sentryDSN":"https://8ed0d86616ca05f7fd85751b295bf22c@o62261.ingest.us.sentry.io/4507462265602048"}</script>
+    <script>(function () {
+            var theme = window.localStorage?.theme;
+            if (theme === 'light') {
+                window.initialColorTheme = theme;
+            } else if (theme === 'dark' || window.matchMedia('(prefers-color-scheme: dark)').matches) {
+                window.initialColorTheme = 'dark';
+                document.documentElement.classList.add('dark');
+            }
+        })();</script>
+    <script
+        type="text/javascript">var _hmt = _hmt || []; (function () { var hm = document.createElement("script"); hm.src = "https://hm.baidu.com/hm.js?fe45b9a4fbfe96cbbe00125a4301cad9"; var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(hm, s); })();</script>
+    <script
+        type="text/javascript">(function (c, l, a, r, i, t, y) { c[a] = c[a] || function () { (c[a].q = c[a].q || []).push(arguments) }; t = l.createElement(r); t.async = 1; t.src = "https://www.clarity.ms/tag/" + i; y = l.getElementsByTagName(r)[0]; y.parentNode.insertBefore(t, y); })(window, document, "clarity", "script", "s1cu3ea2ua");</script>
+</head>
+
+<body>
+
+    <div class="page-header">
+        <div class="widget" data-widget-id="page-header-widget">
+            <script type="application/json">{"path":"/"}</script>
+            <div class="w">
+                <div class="shadow dark:bg-dark-nav">
+                    <nav data-headlessui-state="">
+                        <div class="px-4 sm:px-6 lg:px-8">
+                            <div class="flex h-18 items-center justify-between">
+                                <div class="flex items-center">
+                                    <div class="flex-shrink-0"><a href="/" class="logo"></a></div>
+                                    <div class="hidden lg:block">
+                                        <div class="ml-8 flex space-x-2 md:space-x-4 items-center"><a href="/"
+                                                class="border-b-[3px] border-b-primary px-2 py-5 text-sm font-medium">首页</a><a
+                                                href="/problem-banks"
+                                                class="text-heading px-2 py-5 text-sm font-medium">精选题库</a><a
+                                                href="/companies"
+                                                class="text-heading px-2 py-5 text-sm font-medium">公司真题</a><a
+                                                href="/learning-paths"
+                                                class="text-heading px-2 py-5 text-sm font-medium">学习路径</a><a
+                                                href="/article-series"
+                                                class="text-heading px-2 py-5 text-sm font-medium">经验</a><a
+                                                href="/booklists"
+                                                class="text-heading px-2 py-5 text-sm font-medium">书单</a></div>
+                                    </div>
+                                </div>
+                                <div class="flex items-center">
+                                    <div class="flex gap-x-6 items-center">
+                                        <div><button type="button" title="搜索" class="px-0 py-4"><svg
+                                                    xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"
+                                                    stroke-width="1.5" stroke="currentColor" aria-hidden="true"
+                                                    data-slot="icon" class="h-5 w-5">
+                                                    <path stroke-linecap="round" stroke-linejoin="round"
+                                                        d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z">
+                                                    </path>
+                                                </svg></button></div><a href="/user/achievement"
+                                            class="text-inherit"><svg xmlns="http://www.w3.org/2000/svg" fill="none"
+                                                viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"
+                                                aria-hidden="true" data-slot="icon" class="h-5 w-5">
+                                                <path stroke-linecap="round" stroke-linejoin="round"
+                                                    d="M16.5 18.75h-9m9 0a3 3 0 0 1 3 3h-15a3 3 0 0 1 3-3m9 0v-3.375c0-.621-.503-1.125-1.125-1.125h-.871M7.5 18.75v-3.375c0-.621.504-1.125 1.125-1.125h.872m5.007 0H9.497m5.007 0a7.454 7.454 0 0 1-.982-3.172M9.497 14.25a7.454 7.454 0 0 0 .981-3.172M5.25 4.236c-.982.143-1.954.317-2.916.52A6.003 6.003 0 0 0 7.73 9.728M5.25 4.236V4.5c0 2.108.966 3.99 2.48 5.228M5.25 4.236V2.721C7.456 2.41 9.71 2.25 12 2.25c2.291 0 4.545.16 6.75.47v1.516M7.73 9.728a6.726 6.726 0 0 0 2.748 1.35m8.272-6.842V4.5c0 2.108-.966 3.99-2.48 5.228m2.48-5.492a46.32 46.32 0 0 1 2.916.52 6.003 6.003 0 0 1-5.395 4.972m0 0a6.726 6.726 0 0 1-2.749 1.35m0 0a6.772 6.772 0 0 1-3.044 0">
+                                                </path>
+                                            </svg></a><button type="button" label="改变颜色主题"><svg
+                                                xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"
+                                                stroke-width="1.5" stroke="currentColor" aria-hidden="true"
+                                                data-slot="icon" class="h-5 w-5 text-heading">
+                                                <path stroke-linecap="round" stroke-linejoin="round"
+                                                    d="M12 3v2.25m6.364.386-1.591 1.591M21 12h-2.25m-.386 6.364-1.591-1.591M12 18.75V21m-4.773-4.227-1.591 1.591M5.25 12H3m4.227-4.773L5.636 5.636M15.75 12a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0Z">
+                                                </path>
+                                            </svg></button>
+                                    </div>
+                                    <div class="ml-4 flex items-center md:ml-6"><a href="/login"
+                                            class="px-3 py-4 text-sm font-medium hidden lg:block">登录</a></div>
+                                    <div class="-mr-2 flex lg:hidden"><button
+                                            class="relative inline-flex items-center justify-center rounded-md p-2 focus:outline-none focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-gray-200"
+                                            id="headlessui-disclosure-button-:R76:" type="button" aria-expanded="false"
+                                            data-headlessui-state=""><span class="absolute -inset-0.5"></span><span
+                                                class="sr-only">打开主菜单</span><svg xmlns="http://www.w3.org/2000/svg"
+                                                fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"
+                                                aria-hidden="true" data-slot="icon" class="block h-6 w-6">
+                                                <path stroke-linecap="round" stroke-linejoin="round"
+                                                    d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5"></path>
+                                            </svg></button></div>
+                                </div>
+                            </div>
+                        </div>
+                    </nav>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="page-main">
+        <div class="bg-gray-50 text-gray-900">
+            <main>
+                <section class="bg-gray-50 dark:bg-gray-900 relative overflow-hidden">
+                    <div
+                        class="bg-opacity-0 absolute left-0 right-0 top-0 bottom-0 z-0 bg-cover bg-center rounded bg-hero">
+                    </div>
+                    <div class="bg-gray-300/30 dark:bg-black/30 absolute left-0 right-0 top-0 bottom-0 z-0"></div>
+                    <div class="container mx-auto px-4 text-center my-24 relative z-10">
+                        <h1
+                            class="text-5xl md:text-[56px] text-gray-900 dark:text-white font-extrabold mb-6 leading-tight">
+                            Offer，稳了！</h1>
+                        <p class="text-xl text-gray-800 dark:text-gray-50 max-w-2xl mx-auto mb-10">
+                            始于八股，不止八股。精选20万+面试题目，900+公司真题，助你轻松成为offer收割机！</p>
+                        <div class="flex flex-col sm:flex-row justify-center gap-5 mb-16"><a href="/login"
+                                class="px-6 py-3 font-semibold rounded-md transition-all duration-300 ease-in-out cursor-pointer text-white bg-primary/80 hover:bg-primary shadow hover:shadow-hover hover:-translate-y-0.5 ">立即开始</a><a
+                                href="/problem-banks"
+                                class="px-6 py-3 font-semibold rounded-md transition-all duration-300 ease-in-out cursor-pointer border-2 border-primary text-white hover:bg-primary hover:text-white ">探索题库</a>
+                        </div>
+                        <div id="homeHeroSearch" class="relative  mx-auto max-w-2xl"><input type="text"
+                                placeholder="搜索文章和题目..."
+                                class="w-full rounded-xl bg-white shadow focus:ring-2 px-6 py-4 pr-16" /><svg
+                                xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5"
+                                stroke="currentColor" aria-hidden="true" data-slot="icon"
+                                class="pointer-events-none absolute right-4 top-4 h-6 w-6">
+                                <path stroke-linecap="round" stroke-linejoin="round"
+                                    d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z">
+                                </path>
+                            </svg></div>
+                    </div>
+                </section>
+                <section class="py-20 bg-gray-50 dark:bg-gray-900">
+                    <div class="container mx-auto px-4">
+                        <div class="text-center mb-16">
+                            <h2 class="text-4xl font-bold text-gray-900 dark:text-white mb-4">为什么开发者选择我们?</h2>
+                            <p class="text-lg text-gray-600 dark:text-gray-400 max-w-2xl mx-auto">
+                                专为技术面试打造的全面解决方案，让你的准备事半功倍</p>
+                        </div>
+                        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
+                            <div
+                                class="bg-white dark:bg-gray-800 rounded-xl p-8 shadow hover:shadow-hover dark:hover:shadow-dark-hover transition-all hover:-translate-y-2 border border-gray-100 dark:border-gray-700">
+                                <div
+                                    class="w-20 h-20 bg-gradient-to-br from-primary to-accent rounded-full flex items-center justify-center text-white text-3xl shadow-lg mx-auto mb-6">
+                                    <svg stroke="currentColor" fill="currentColor" stroke-width="0"
+                                        viewBox="0 0 448 512" class="h-10" height="1em" width="1em"
+                                        xmlns="http://www.w3.org/2000/svg">
+                                        <path
+                                            d="M448 73.143v45.714C448 159.143 347.667 192 224 192S0 159.143 0 118.857V73.143C0 32.857 100.333 0 224 0s224 32.857 224 73.143zM448 176v102.857C448 319.143 347.667 352 224 352S0 319.143 0 278.857V176c48.125 33.143 136.208 48.572 224 48.572S399.874 209.143 448 176zm0 160v102.857C448 479.143 347.667 512 224 512S0 479.143 0 438.857V336c48.125 33.143 136.208 48.572 224 48.572S399.874 369.143 448 336z">
+                                        </path>
+                                    </svg></div>
+                                <h3 class="text-xl font-bold text-center text-gray-900 dark:text-white mb-4">真实题库</h3>
+                                <p class="text-gray-600 dark:text-gray-400 text-center">收录国内头部科技公司最新面试真题，每道题目都经过专业筛选和验证
+                                </p>
+                            </div>
+                            <div
+                                class="bg-white dark:bg-gray-800 rounded-xl p-8 shadow hover:shadow-hover dark:hover:shadow-dark-hover transition-all hover:-translate-y-2 border border-gray-100 dark:border-gray-700">
+                                <div
+                                    class="w-20 h-20 bg-gradient-to-br from-primary to-accent rounded-full flex items-center justify-center text-white text-3xl shadow-lg mx-auto mb-6">
+                                    <svg stroke="currentColor" fill="currentColor" stroke-width="0"
+                                        viewBox="0 0 352 512" class="h-10" height="1em" width="1em"
+                                        xmlns="http://www.w3.org/2000/svg">
+                                        <path
+                                            d="M96.06 454.35c.01 6.29 1.87 12.45 5.36 17.69l17.09 25.69a31.99 31.99 0 0 0 26.64 14.28h61.71a31.99 31.99 0 0 0 26.64-14.28l17.09-25.69a31.989 31.989 0 0 0 5.36-17.69l.04-38.35H96.01l.05 38.35zM0 176c0 44.37 16.45 84.85 43.56 115.78 16.52 18.85 42.36 58.23 52.21 91.45.04.26.07.52.11.78h160.24c.04-.26.07-.51.11-.78 9.85-33.22 35.69-72.6 52.21-91.45C335.55 260.85 352 220.37 352 176 352 78.61 272.91-.3 175.45 0 73.44.31 0 82.97 0 176zm176-80c-44.11 0-80 35.89-80 80 0 8.84-7.16 16-16 16s-16-7.16-16-16c0-61.76 50.24-112 112-112 8.84 0 16 7.16 16 16s-7.16 16-16 16z">
+                                        </path>
+                                    </svg></div>
+                                <h3 class="text-xl font-bold text-center text-gray-900 dark:text-white mb-4">全面解答</h3>
+                                <p class="text-gray-600 dark:text-gray-400 text-center">每道题目提供答案、解析、追问、思维导图等，更加深入及全面</p>
+                            </div>
+                            <div
+                                class="bg-white dark:bg-gray-800 rounded-xl p-8 shadow hover:shadow-hover dark:hover:shadow-dark-hover transition-all hover:-translate-y-2 border border-gray-100 dark:border-gray-700">
+                                <div
+                                    class="w-20 h-20 bg-gradient-to-br from-primary to-accent rounded-full flex items-center justify-center text-white text-3xl shadow-lg mx-auto mb-6">
+                                    <svg stroke="currentColor" fill="currentColor" stroke-width="0"
+                                        viewBox="0 0 640 512" class="h-10" height="1em" width="1em"
+                                        xmlns="http://www.w3.org/2000/svg">
+                                        <path
+                                            d="M32,224H64V416H32A31.96166,31.96166,0,0,1,0,384V256A31.96166,31.96166,0,0,1,32,224Zm512-48V448a64.06328,64.06328,0,0,1-64,64H160a64.06328,64.06328,0,0,1-64-64V176a79.974,79.974,0,0,1,80-80H288V32a32,32,0,0,1,64,0V96H464A79.974,79.974,0,0,1,544,176ZM264,256a40,40,0,1,0-40,40A39.997,39.997,0,0,0,264,256Zm-8,128H192v32h64Zm96,0H288v32h64ZM456,256a40,40,0,1,0-40,40A39.997,39.997,0,0,0,456,256Zm-8,128H384v32h64ZM640,256V384a31.96166,31.96166,0,0,1-32,32H576V224h32A31.96166,31.96166,0,0,1,640,256Z">
+                                        </path>
+                                    </svg></div>
+                                <h3 class="text-xl font-bold text-center text-gray-900 dark:text-white mb-4">智能助手</h3>
+                                <p class="text-gray-600 dark:text-gray-400 text-center">基于DeepSeek
+                                    AI的智能学习助手，提供个性化学习建议和指导</p>
+                            </div>
+                            <div
+                                class="bg-white dark:bg-gray-800 rounded-xl p-8 shadow hover:shadow-hover dark:hover:shadow-dark-hover transition-all hover:-translate-y-2 border border-gray-100 dark:border-gray-700">
+                                <div
+                                    class="w-20 h-20 bg-gradient-to-br from-primary to-accent rounded-full flex items-center justify-center text-white text-3xl shadow-lg mx-auto mb-6">
+                                    <svg stroke="currentColor" fill="currentColor" stroke-width="0"
+                                        viewBox="0 0 640 512" class="h-10" height="1em" width="1em"
+                                        xmlns="http://www.w3.org/2000/svg">
+                                        <path
+                                            d="M208 352c-2.39 0-4.78.35-7.06 1.09C187.98 357.3 174.35 360 160 360c-14.35 0-27.98-2.7-40.95-6.91-2.28-.74-4.66-1.09-7.05-1.09C49.94 352-.33 402.48 0 464.62.14 490.88 21.73 512 48 512h224c26.27 0 47.86-21.12 48-47.38.33-62.14-49.94-112.62-112-112.62zm-48-32c53.02 0 96-42.98 96-96s-42.98-96-96-96-96 42.98-96 96 42.98 96 96 96zM592 0H208c-26.47 0-48 22.25-48 49.59V96c23.42 0 45.1 6.78 64 17.8V64h352v288h-64v-64H384v64h-76.24c19.1 16.69 33.12 38.73 39.69 64H592c26.47 0 48-22.25 48-49.59V49.59C640 22.25 618.47 0 592 0z">
+                                        </path>
+                                    </svg></div>
+                                <h3 class="text-xl font-bold text-center text-gray-900 dark:text-white mb-4">模拟实战</h3>
+                                <p class="text-gray-600 dark:text-gray-400 text-center">模拟技术面试场景，回答录音及模拟面试，提升面试技巧和表达能力
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+                <section class="py-20 bg-white dark:bg-gray-800">
+                    <div class="container mx-auto px-4">
+                        <div class="text-center mb-16">
+                            <h2 class="text-4xl font-bold text-gray-900 dark:text-white mb-4">热门面试题目</h2>
+                            <p class="text-lg text-gray-600 dark:text-gray-400">来自顶级科技公司 的高频面试题</p>
+                        </div>
+                        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                            <div
+                                class="bg-gray-50 dark:bg-gray-900 rounded-xl p-6 shadow hover:shadow-hover dark:hover:shadow-dark-hover transition-all relative overflow-hidden border border-gray-100 dark:border-gray-700">
+                                <div class="absolute top-0 left-0 w-1 h-full bg-gradient-to-b from-primary to-accent">
+                                </div>
+                                <h3 class="text-xl font-bold text-gray-900 dark:text-white mb-4">给定一个单向 链表，如何判断其是否有环？
+                                </h3>
+                                <div class="flex justify-between text-sm text-gray-500 dark:text-gray-400 mb-4">
+                                    <span>难度:中等</span><span>频率:★★★★★</span></div>
+                                <div class="flex flex-wrap gap-2 mb-4"><span
+                                        class="px-3 py-1 rounded-full text-xs font-medium bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-300">链表</span><span
+                                        class="px-3 py-1 rounded-full text-xs font-medium bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-300">算法</span>
+                                </div>
+                                <p class="text-gray-600 dark:text-gray-400 mb-6"></p><a
+                                    href="/problem-exercise/3?pid=54410"
+                                    class="block w-full text-center px-4 py-3 text-white font-semibold rounded-md bg-primary/80 hover:bg-primary transition-colors">查看题目</a>
+                            </div>
+                            <div
+                                class="bg-gray-50 dark:bg-gray-900 rounded-xl p-6 shadow hover:shadow-hover dark:hover:shadow-dark-hover transition-all relative overflow-hidden border border-gray-100 dark:border-gray-700">
+                                <div class="absolute top-0 left-0 w-1 h-full bg-gradient-to-b from-primary to-accent">
+                                </div>
+                                <h3 class="text-xl font-bold text-gray-900 dark:text-white mb-4">什么是智能指针？它们如何帮助管理内存？
+                                </h3>
+                                <div class="flex justify-between text-sm text-gray-500 dark:text-gray-400 mb-4">
+                                    <span>难度:中等</span><span>频率:★★★★☆</span></div>
+                                <div class="flex flex-wrap gap-2 mb-4"><span
+                                        class="px-3 py-1 rounded-full text-xs font-medium bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-300">智能指针</span><span
+                                        class="px-3 py-1 rounded-full text-xs font-medium bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-300">内存管理</span>
+                                </div>
+                                <p class="text-gray-600 dark:text-gray-400 mb-6"></p><a
+                                    href="/problem-exercise/21?pid=2430"
+                                    class="block w-full text-center px-4 py-3 text-white font-semibold rounded-md bg-primary/80 hover:bg-primary transition-colors">查看题目</a>
+                            </div>
+                            <div
+                                class="bg-gray-50 dark:bg-gray-900 rounded-xl p-6 shadow hover:shadow-hover dark:hover:shadow-dark-hover transition-all relative overflow-hidden border border-gray-100 dark:border-gray-700">
+                                <div class="absolute top-0 left-0 w-1 h-full bg-gradient-to-b from-primary to-accent">
+                                </div>
+                                <h3 class="text-xl font-bold text-gray-900 dark:text-white mb-4">
+                                    请举例说明你在项目中遇到的困难，以及你是如何解决的？</h3>
+                                <div class="flex justify-between text-sm text-gray-500 dark:text-gray-400 mb-4">
+                                    <span>难度:中等</span><span>频率:★★★★★</span></div>
+                                <div class="flex flex-wrap gap-2 mb-4"><span
+                                        class="px-3 py-1 rounded-full text-xs font-medium bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-300">问题解决</span><span
+                                        class="px-3 py-1 rounded-full text-xs font-medium bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-300">项目</span>
+                                </div>
+                                <p class="text-gray-600 dark:text-gray-400 mb-6"></p><a
+                                    href="/problem-exercise/99?pid=18492"
+                                    class="block w-full text-center px-4 py-3 text-white font-semibold rounded-md bg-primary/80 hover:bg-primary transition-colors">查看题目</a>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+                <section class="py-20 bg-gradient-to-br from-primary to-accent text-white relative overflow-hidden">
+                    <div
+                        class="absolute inset-0 bg-[radial-gradient(circle_at_30%_50%,rgba(255,255,255,0.1)_0%,transparent_50%)]">
+                    </div>
+                    <div class="container mx-auto px-4 relative">
+                        <div class="text-center mb-16">
+                            <h2 class="text-4xl font-bold text-white mb-4">我们的成就</h2>
+                            <p class="text-lg text-gray-300 max-w-2xl mx-auto">让 您成为优秀、有竞争力的求职者</p>
+                        </div>
+                        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-10">
+                            <div class="text-center">
+                                <h3 class="text-5xl font-extrabold mb-3 text-white">200,000+</h3>
+                                <p class="text-lg opacity-90 font-medium">精选面试题目</p>
+                            </div>
+                            <div class="text-center">
+                                <h3 class="text-5xl font-extrabold mb-3 text-white">110+</h3>
+                                <p class="text-lg opacity-90 font-medium">题库数量</p>
+                            </div>
+                            <div class="text-center">
+                                <h3 class="text-5xl font-extrabold mb-3 text-white">900+</h3>
+                                <p class="text-lg opacity-90 font-medium">覆盖顶级公司</p>
+                            </div>
+                            <div class="text-center">
+                                <h3 class="text-5xl font-extrabold mb-3 text-white">99%+</h3>
+                                <p class="text-lg opacity-90 font-medium">题目准确率</p>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+                <section class="py-20 bg-gray-50 dark:bg-gray-900">
+                    <div class="container mx-auto px-4">
+                        <div class="text-center mb-16">
+                            <h2 class="text-4xl font-bold text-gray-900 dark:text-white mb-4">用户评价</h2>
+                            <p class="text-lg text-gray-600 dark:text-gray-400 max-w-2xl mx-auto">听听成功者的经验分享</p>
+                        </div>
+                        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+                            <div
+                                class="bg-white dark:bg-gray-800 rounded-xl p-8 shadow border border-gray-100 dark:border-gray-700 relative">
+                                <div class="relative z-10">
+                                    <p class="text-gray-600 dark:text-gray-300 italic mb-8">
+                                        八股精网站简直是我的求职救星！我最近准备跳槽，在上面刷了大量的面试题，涵盖了我所涉及技术栈的方方面面。题目分类清晰，像我主要做 Java
+                                        开发，直接就能找到对应的 Java 全系列题目，从基础语法到各种框架应用，十分全面。而且答案解析超
+                                        详细，不只是简单给出答案，还会深入分析解题思路，拓展相关知识点，让我不仅知其然还知其所以然。</p>
+                                    <div class="flex items-center"><img src="/images/users/1.jpg" alt="Rocky"
+                                            class="w-14 h-14 rounded-full border-2 border-primary mr-4 object-cover" />
+                                        <div>
+                                            <h4 class="font-bold text-gray-900 dark:text-white">Rocky</h4>
+                                            <div class="flex mt-1"><svg stroke="currentColor" fill="currentColor"
+                                                    stroke-width="0" viewBox="0 0 576 512" class="text-yellow-400"
+                                                    height="1em" width="1em" xmlns="http://www.w3.org/2000/svg">
+                                                    <path
+                                                        d="M259.3 17.8L194 150.2 47.9 171.5c-26.2 3.8-36.7 36.1-17.7 54.6l105.7 103-25 145.5c-4.5 26.3 23.2 46 46.4 33.7L288 439.6l130.7 68.7c23.2 12.2 50.9-7.4 46.4-33.7l-25-145.5 105.7-103c19-18.5 8.5-50.8-17.7-54.6L382 150.2 316.7 17.8c-11.7-23.6-45.6-23.9-57.4 0z">
+                                                    </path>
+                                                </svg><svg stroke="currentColor" fill="currentColor" stroke-width="0"
+                                                    viewBox="0 0 576 512" class="text-yellow-400" height="1em"
+                                                    width="1em" xmlns="http://www.w3.org/2000/svg">
+                                                    <path
+                                                        d="M259.3 17.8L194 150.2 47.9 171.5c-26.2 3.8-36.7 36.1-17.7 54.6l105.7 103-25 145.5c-4.5 26.3 23.2 46 46.4 33.7L288 439.6l130.7 68.7c23.2 12.2 50.9-7.4 46.4-33.7l-25-145.5 105.7-103c19-18.5 8.5-50.8-17.7-54.6L382 150.2 316.7 17.8c-11.7-23.6-45.6-23.9-57.4 0z">
+                                                    </path>
+                                                </svg><svg stroke="currentColor" fill="currentColor" stroke-width="0"
+                                                    viewBox="0 0 576 512" class="text-yellow-400" height="1em"
+                                                    width="1em" xmlns="http://www.w3.org/2000/svg">
+                                                    <path
+                                                        d="M259.3 17.8L194 150.2 47.9 171.5c-26.2 3.8-36.7 36.1-17.7 54.6l105.7 103-25 145.5c-4.5 26.3 23.2 46 46.4 33.7L288 439.6l130.7 68.7c23.2 12.2 50.9-7.4 46.4-33.7l-25-145.5 105.7-103c19-18.5 8.5-50.8-17.7-54.6L382 150.2 316.7 17.8c-11.7-23.6-45.6-23.9-57.4 0z">
+                                                    </path>
+                                                </svg><svg stroke="currentColor" fill="currentColor" stroke-width="0"
+                                                    viewBox="0 0 576 512" class="text-yellow-400" height="1em"
+                                                    width="1em" xmlns="http://www.w3.org/2000/svg">
+                                                    <path
+                                                        d="M259.3 17.8L194 150.2 47.9 171.5c-26.2 3.8-36.7 36.1-17.7 54.6l105.7 103-25 145.5c-4.5 26.3 23.2 46 46.4 33.7L288 439.6l130.7 68.7c23.2 12.2 50.9-7.4 46.4-33.7l-25-145.5 105.7-103c19-18.5 8.5-50.8-17.7-54.6L382 150.2 316.7 17.8c-11.7-23.6-45.6-23.9-57.4 0z">
+                                                    </path>
+                                                </svg><svg stroke="currentColor" fill="currentColor" stroke-width="0"
+                                                    viewBox="0 0 576 512" class="text-yellow-400" height="1em"
+                                                    width="1em" xmlns="http://www.w3.org/2000/svg">
+                                                    <path
+                                                        d="M259.3 17.8L194 150.2 47.9 171.5c-26.2 3.8-36.7 36.1-17.7 54.6l105.7 103-25 145.5c-4.5 26.3 23.2 46 46.4 33.7L288 439.6l130.7 68.7c23.2 12.2 50.9-7.4 46.4-33.7l-25-145.5 105.7-103c19-18.5 8.5-50.8-17.7-54.6L382 150.2 316.7 17.8c-11.7-23.6-45.6-23.9-57.4 0z">
+                                                    </path>
+                                                </svg></div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div
+                                class="bg-white dark:bg-gray-800 rounded-xl p-8 shadow border border-gray-100 dark:border-gray-700 relative">
+                                <div class="relative z-10">
+                                    <p class="text-gray-600 dark:text-gray-300 italic mb-8">
+                                        对于我们应届毕业生来说，找工作时面对五花八门的面试题真的很迷茫。八股精把操作系统、数据结构等题目分成不同的题库，不仅每道题目有出现频率、难度、出现的公司等，每个题库还提供了面试真题的关键词高频次统计，让我能够
+                                        清晰地知道该如何去准备面试。</p>
+                                    <div class="flex items-center"><img src="/images/users/3.jpg" alt="沐晨"
+                                            class="w-14 h-14 rounded-full border-2 border-primary mr-4 object-cover" />
+                                        <div>
+                                            <h4 class="font-bold text-gray-900 dark:text-white">沐晨</h4>
+                                            <div class="flex mt-1"><svg stroke="currentColor" fill="currentColor"
+                                                    stroke-width="0" viewBox="0 0 576 512" class="text-yellow-400"
+                                                    height="1em" width="1em" xmlns="http://www.w3.org/2000/svg">
+                                                    <path
+                                                        d="M259.3 17.8L194 150.2 47.9 171.5c-26.2 3.8-36.7 36.1-17.7 54.6l105.7 103-25 145.5c-4.5 26.3 23.2 46 46.4 33.7L288 439.6l130.7 68.7c23.2 12.2 50.9-7.4 46.4-33.7l-25-145.5 105.7-103c19-18.5 8.5-50.8-17.7-54.6L382 150.2 316.7 17.8c-11.7-23.6-45.6-23.9-57.4 0z">
+                                                    </path>
+                                                </svg><svg stroke="currentColor" fill="currentColor" stroke-width="0"
+                                                    viewBox="0 0 576 512" class="text-yellow-400" height="1em"
+                                                    width="1em" xmlns="http://www.w3.org/2000/svg">
+                                                    <path
+                                                        d="M259.3 17.8L194 150.2 47.9 171.5c-26.2 3.8-36.7 36.1-17.7 54.6l105.7 103-25 145.5c-4.5 26.3 23.2 46 46.4 33.7L288 439.6l130.7 68.7c23.2 12.2 50.9-7.4 46.4-33.7l-25-145.5 105.7-103c19-18.5 8.5-50.8-17.7-54.6L382 150.2 316.7 17.8c-11.7-23.6-45.6-23.9-57.4 0z">
+                                                    </path>
+                                                </svg><svg stroke="currentColor" fill="currentColor" stroke-width="0"
+                                                    viewBox="0 0 576 512" class="text-yellow-400" height="1em"
+                                                    width="1em" xmlns="http://www.w3.org/2000/svg">
+                                                    <path
+                                                        d="M259.3 17.8L194 150.2 47.9 171.5c-26.2 3.8-36.7 36.1-17.7 54.6l105.7 103-25 145.5c-4.5 26.3 23.2 46 46.4 33.7L288 439.6l130.7 68.7c23.2 12.2 50.9-7.4 46.4-33.7l-25-145.5 105.7-103c19-18.5 8.5-50.8-17.7-54.6L382 150.2 316.7 17.8c-11.7-23.6-45.6-23.9-57.4 0z">
+                                                    </path>
+                                                </svg><svg stroke="currentColor" fill="currentColor" stroke-width="0"
+                                                    viewBox="0 0 576 512" class="text-yellow-400" height="1em"
+                                                    width="1em" xmlns="http://www.w3.org/2000/svg">
+                                                    <path
+                                                        d="M259.3 17.8L194 150.2 47.9 171.5c-26.2 3.8-36.7 36.1-17.7 54.6l105.7 103-25 145.5c-4.5 26.3 23.2 46 46.4 33.7L288 439.6l130.7 68.7c23.2 12.2 50.9-7.4 46.4-33.7l-25-145.5 105.7-103c19-18.5 8.5-50.8-17.7-54.6L382 150.2 316.7 17.8c-11.7-23.6-45.6-23.9-57.4 0z">
+                                                    </path>
+                                                </svg><svg stroke="currentColor" fill="currentColor" stroke-width="0"
+                                                    viewBox="0 0 576 512" class="text-yellow-400" height="1em"
+                                                    width="1em" xmlns="http://www.w3.org/2000/svg">
+                                                    <path
+                                                        d="M259.3 17.8L194 150.2 47.9 171.5c-26.2 3.8-36.7 36.1-17.7 54.6l105.7 103-25 145.5c-4.5 26.3 23.2 46 46.4 33.7L288 439.6l130.7 68.7c23.2 12.2 50.9-7.4 46.4-33.7l-25-145.5 105.7-103c19-18.5 8.5-50.8-17.7-54.6L382 150.2 316.7 17.8c-11.7-23.6-45.6-23.9-57.4 0z">
+                                                    </path>
+                                                </svg></div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div
+                                class="bg-white dark:bg-gray-800 rounded-xl p-8 shadow border border-gray-100 dark:border-gray-700 relative">
+                                <div class="relative z-10">
+                                    <p class="text-gray-600 dark:text-gray-300 italic mb-8">
+                                        题我是自学前端开发的，平时学习资料东拼西凑，质量参差不齐。八股精网站让我有了系统学习面试知识的渠道。它的前端题目从 HTML、CSS 基础，到
+                                        JavaScript 高级编程，再到各种流行框架如 Vue、React 等都有涉及。通过刷题，我发现了自己很多知识漏洞，比如之前对 JavaScript
+                                        闭包理解不深，通过网站上的题目分析，我彻底掌握了这个难点。而且网站微信服务号访问，我在上下班路上也能随时随地学习，大大提高了我的学习效率，加速了我从自学入门到准备求职面试
+                                        的进程。</p>
+                                    <div class="flex items-center"><img src="/images/users/2.jpg" alt="守护海洋的猫"
+                                            class="w-14 h-14 rounded-full border-2 border-primary mr-4 object-cover" />
+                                        <div>
+                                            <h4 class="font-bold text-gray-900 dark:text-white">守护海洋的猫</h4>
+                                            <div class="flex mt-1"><svg stroke="currentColor" fill="currentColor"
+                                                    stroke-width="0" viewBox="0 0 576 512" class="text-yellow-400"
+                                                    height="1em" width="1em" xmlns="http://www.w3.org/2000/svg">
+                                                    <path
+                                                        d="M259.3 17.8L194 150.2 47.9 171.5c-26.2 3.8-36.7 36.1-17.7 54.6l105.7 103-25 145.5c-4.5 26.3 23.2 46 46.4 33.7L288 439.6l130.7 68.7c23.2 12.2 50.9-7.4 46.4-33.7l-25-145.5 105.7-103c19-18.5 8.5-50.8-17.7-54.6L382 150.2 316.7 17.8c-11.7-23.6-45.6-23.9-57.4 0z">
+                                                    </path>
+                                                </svg><svg stroke="currentColor" fill="currentColor" stroke-width="0"
+                                                    viewBox="0 0 576 512" class="text-yellow-400" height="1em"
+                                                    width="1em" xmlns="http://www.w3.org/2000/svg">
+                                                    <path
+                                                        d="M259.3 17.8L194 150.2 47.9 171.5c-26.2 3.8-36.7 36.1-17.7 54.6l105.7 103-25 145.5c-4.5 26.3 23.2 46 46.4 33.7L288 439.6l130.7 68.7c23.2 12.2 50.9-7.4 46.4-33.7l-25-145.5 105.7-103c19-18.5 8.5-50.8-17.7-54.6L382 150.2 316.7 17.8c-11.7-23.6-45.6-23.9-57.4 0z">
+                                                    </path>
+                                                </svg><svg stroke="currentColor" fill="currentColor" stroke-width="0"
+                                                    viewBox="0 0 576 512" class="text-yellow-400" height="1em"
+                                                    width="1em" xmlns="http://www.w3.org/2000/svg">
+                                                    <path
+                                                        d="M259.3 17.8L194 150.2 47.9 171.5c-26.2 3.8-36.7 36.1-17.7 54.6l105.7 103-25 145.5c-4.5 26.3 23.2 46 46.4 33.7L288 439.6l130.7 68.7c23.2 12.2 50.9-7.4 46.4-33.7l-25-145.5 105.7-103c19-18.5 8.5-50.8-17.7-54.6L382 150.2 316.7 17.8c-11.7-23.6-45.6-23.9-57.4 0z">
+                                                    </path>
+                                                </svg><svg stroke="currentColor" fill="currentColor" stroke-width="0"
+                                                    viewBox="0 0 576 512" class="text-yellow-400" height="1em"
+                                                    width="1em" xmlns="http://www.w3.org/2000/svg">
+                                                    <path
+                                                        d="M259.3 17.8L194 150.2 47.9 171.5c-26.2 3.8-36.7 36.1-17.7 54.6l105.7 103-25 145.5c-4.5 26.3 23.2 46 46.4 33.7L288 439.6l130.7 68.7c23.2 12.2 50.9-7.4 46.4-33.7l-25-145.5 105.7-103c19-18.5 8.5-50.8-17.7-54.6L382 150.2 316.7 17.8c-11.7-23.6-45.6-23.9-57.4 0z">
+                                                    </path>
+                                                </svg><svg stroke="currentColor" fill="currentColor" stroke-width="0"
+                                                    viewBox="0 0 576 512" class="text-yellow-400" height="1em"
+                                                    width="1em" xmlns="http://www.w3.org/2000/svg">
+                                                    <path
+                                                        d="M259.3 17.8L194 150.2 47.9 171.5c-26.2 3.8-36.7 36.1-17.7 54.6l105.7 103-25 145.5c-4.5 26.3 23.2 46 46.4 33.7L288 439.6l130.7 68.7c23.2 12.2 50.9-7.4 46.4-33.7l-25-145.5 105.7-103c19-18.5 8.5-50.8-17.7-54.6L382 150.2 316.7 17.8c-11.7-23.6-45.6-23.9-57.4 0z">
+                                                    </path>
+                                                </svg></div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+                <section
+                    class="py-24 bg-gradient-to-br from-white to-gray-50 dark:from-gray-800 dark:to-gray-900 relative overflow-hidden">
+                    <div
+                        class="absolute top-[-50%] left-[-50%] w-[200%] h-[200%] bg-[radial-gradient(circle,rgba(123,97,255,0.08)_0%,rgba(123,97,255,0)_70%)] dark:bg-[radial-gradient(circle,rgba(123,97,255,0.1)_0%,rgba(123,97,255,0)_70%)] z-0 animate-float-reverse">
+                    </div>
+                    <div class="container mx-auto px-4 text-center relative z-10">
+                        <h2 class="text-4xl font-bold text-gray-900 dark:text-white mb-5">准备好迎接挑战了吗?</h2>
+                        <p class="text-lg text-gray-600 dark:text-gray-400 max-w-2xl mx-auto mb-10">立即加入八股精，开启你的面试成功之路
+                        </p><a href="/login"
+                            class="px-6 py-3 font-semibold rounded-md transition-all duration-300 ease-in-out cursor-pointer text-white bg-primary/80 hover:bg-primary shadow hover:shadow-hover hover:-translate-y-0.5 bg-secondary hover:bg-red-600 transition-all shadow hover:shadow-[0_8px_30px_rgba(255,107,107,0.3)] hover:-translate-y-0.5">免费开始学习</a>
+                    </div>
+                </section>
+            </main>
+        </div>
+    </div>
+    <div class="content-container">
+        <div class="page-top">
+            <div class="widget" data-widget-id="snackbar-widget">
+                <script type="application/json">{}</script>
+                <div class="w"></div>
+            </div>
+        </div>
+        <div class="grid grid-cols-5 gap-8 md:gap-12 lg:grid-cols-6"></div>
+        <div class="page-bottom"></div>
+    </div>
+    <div class="page-footer">
+        <footer class="bg-white dark:bg-gray-800 border-t border-gray-100 dark:border-gray-700 pt-20 pb-8 mt-24">
+            <div class="container mx-auto px-4">
+                <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-10 mb-16">
+                    <div class="lg:col-span-1">
+                        <div class="logo logo-sm"></div>
+                        <p class="text-gray-600 dark:text-gray-400 mb-6">专业的程序员面试准备平台</p>
+                        <div class="flex space-x-4"><img src="/images/qr-codes/customer-service.webp" class="w-48"
+                                loading="lazy" alt="添加客服" /></div>
+                    </div>
+                    <div>
+                        <h3 class="text-lg font-bold text-gray-900 dark:text-white mb-6 relative inline-block">资源<span
+                                class="absolute bottom-[-8px] left-0 w-10 h-1 bg-gradient-to-r from-primary to-accent rounded"></span>
+                        </h3>
+                        <ul class="space-y-3">
+                            <li><a href="/cv-helper"
+                                    class="flex items-center text-gray-600 dark:text-gray-400 hover:text-primary dark:hover:text-primary transition-colors"><svg
+                                        stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 320 512"
+                                        class="mr-2 w-[14px] h-[14px]" height="1em" width="1em"
+                                        xmlns="http://www.w3.org/2000/svg">
+                                        <path
+                                            d="M285.476 272.971L91.132 467.314c-9.373 9.373-24.569 9.373-33.941 0l-22.667-22.667c-9.357-9.357-9.375-24.522-.04-33.901L188.505 256 34.484 101.255c-9.335-9.379-9.317-24.544.04-33.901l22.667-22.667c9.373-9.373 24.569-9.373 33.941 0L285.475 239.03c9.373 9.372 9.373 24.568.001 33.941z">
+                                        </path>
+                                    </svg>简历助手</a></li>
+                            <li><a href="/mock-interview"
+                                    class="flex items-center text-gray-600 dark:text-gray-400 hover:text-primary dark:hover:text-primary transition-colors"><svg
+                                        stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 320 512"
+                                        class="mr-2 w-[14px] h-[14px]" height="1em" width="1em"
+                                        xmlns="http://www.w3.org/2000/svg">
+                                        <path
+                                            d="M285.476 272.971L91.132 467.314c-9.373 9.373-24.569 9.373-33.941 0l-22.667-22.667c-9.357-9.357-9.375-24.522-.04-33.901L188.505 256 34.484 101.255c-9.335-9.379-9.317-24.544.04-33.901l22.667-22.667c9.373-9.373 24.569-9.373 33.941 0L285.475 239.03c9.373 9.372 9.373 24.568.001 33.941z">
+                                        </path>
+                                    </svg>模拟面试</a></li>
+                            <li><a href="/web-nav"
+                                    class="flex items-center text-gray-600 dark:text-gray-400 hover:text-primary dark:hover:text-primary transition-colors"><svg
+                                        stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 320 512"
+                                        class="mr-2 w-[14px] h-[14px]" height="1em" width="1em"
+                                        xmlns="http://www.w3.org/2000/svg">
+                                        <path
+                                            d="M285.476 272.971L91.132 467.314c-9.373 9.373-24.569 9.373-33.941 0l-22.667-22.667c-9.357-9.357-9.375-24.522-.04-33.901L188.505 256 34.484 101.255c-9.335-9.379-9.317-24.544.04-33.901l22.667-22.667c9.373-9.373 24.569-9.373 33.941 0L285.475 239.03c9.373 9.372 9.373 24.568.001 33.941z">
+                                        </path>
+                                    </svg>网址导航</a></li>
+                            <li><a href="/user/mistake-notebook"
+                                    class="flex items-center text-gray-600 dark:text-gray-400 hover:text-primary dark:hover:text-primary transition-colors"><svg
+                                        stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 320 512"
+                                        class="mr-2 w-[14px] h-[14px]" height="1em" width="1em"
+                                        xmlns="http://www.w3.org/2000/svg">
+                                        <path
+                                            d="M285.476 272.971L91.132 467.314c-9.373 9.373-24.569 9.373-33.941 0l-22.667-22.667c-9.357-9.357-9.375-24.522-.04-33.901L188.505 256 34.484 101.255c-9.335-9.379-9.317-24.544.04-33.901l22.667-22.667c9.373-9.373 24.569-9.373 33.941 0L285.475 239.03c9.373 9.372 9.373 24.568.001 33.941z">
+                                        </path>
+                                    </svg>错题本</a></li>
+                            <li><a href="/posts"
+                                    class="flex items-center text-gray-600 dark:text-gray-400 hover:text-primary dark:hover:text-primary transition-colors"><svg
+                                        stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 320 512"
+                                        class="mr-2 w-[14px] h-[14px]" height="1em" width="1em"
+                                        xmlns="http://www.w3.org/2000/svg">
+                                        <path
+                                            d="M285.476 272.971L91.132 467.314c-9.373 9.373-24.569 9.373-33.941 0l-22.667-22.667c-9.357-9.357-9.375-24.522-.04-33.901L188.505 256 34.484 101.255c-9.335-9.379-9.317-24.544.04-33.901l22.667-22.667c9.373-9.373 24.569-9.373 33.941 0L285.475 239.03c9.373 9.372 9.373 24.568.001 33.941z">
+                                        </path>
+                                    </svg>知识库</a></li>
+                            <li><a href="http://cskaoyan.com"
+                                    class="flex items-center text-gray-600 dark:text-gray-400 hover:text-primary dark:hover:text-primary transition-colors"><svg
+                                        stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 320 512"
+                                        class="mr-2 w-[14px] h-[14px]" height="1em" width="1em"
+                                        xmlns="http://www.w3.org/2000/svg">
+                                        <path
+                                            d="M285.476 272.971L91.132 467.314c-9.373 9.373-24.569 9.373-33.941 0l-22.667-22.667c-9.357-9.357-9.375-24.522-.04-33.901L188.505 256 34.484 101.255c-9.335-9.379-9.317-24.544.04-33.901l22.667-22.667c9.373-9.373 24.569-9.373 33.941 0L285.475 239.03c9.373 9.372 9.373 24.568.001 33.941z">
+                                        </path>
+                                    </svg>王道考研论坛</a></li>
+                        </ul>
+                    </div>
+                    <div>
+                        <h3 class="text-lg font-bold text-gray-900 dark:text-white mb-6 relative inline-block">支持<span
+                                class="absolute bottom-[-8px] left-0 w-10 h-1 bg-gradient-to-r from-primary to-accent rounded"></span>
+                        </h3>
+                        <ul class="space-y-3">
+                            <li><a href="/promotion"
+                                    class="flex items-center text-gray-600 dark:text-gray-400 hover:text-primary dark:hover:text-primary transition-colors"><svg
+                                        stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 320 512"
+                                        class="mr-2 w-[14px] h-[14px]" height="1em" width="1em"
+                                        xmlns="http://www.w3.org/2000/svg">
+                                        <path
+                                            d="M285.476 272.971L91.132 467.314c-9.373 9.373-24.569 9.373-33.941 0l-22.667-22.667c-9.357-9.357-9.375-24.522-.04-33.901L188.505 256 34.484 101.255c-9.335-9.379-9.317-24.544.04-33.901l22.667-22.667c9.373-9.373 24.569-9.373 33.941 0L285.475 239.03c9.373 9.372 9.373 24.568.001 33.941z">
+                                        </path>
+                                    </svg>免费得会员</a></li>
+                            <li><a href="/about-us"
+                                    class="flex items-center text-gray-600 dark:text-gray-400 hover:text-primary dark:hover:text-primary transition-colors"><svg
+                                        stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 320 512"
+                                        class="mr-2 w-[14px] h-[14px]" height="1em" width="1em"
+                                        xmlns="http://www.w3.org/2000/svg">
+                                        <path
+                                            d="M285.476 272.971L91.132 467.314c-9.373 9.373-24.569 9.373-33.941 0l-22.667-22.667c-9.357-9.357-9.375-24.522-.04-33.901L188.505 256 34.484 101.255c-9.335-9.379-9.317-24.544.04-33.901l22.667-22.667c9.373-9.373 24.569-9.373 33.941 0L285.475 239.03c9.373 9.372 9.373 24.568.001 33.941z">
+                                        </path>
+                                    </svg>联系我们</a></li>
+                            <li><a href="/update-history"
+                                    class="flex items-center text-gray-600 dark:text-gray-400 hover:text-primary dark:hover:text-primary transition-colors"><svg
+                                        stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 320 512"
+                                        class="mr-2 w-[14px] h-[14px]" height="1em" width="1em"
+                                        xmlns="http://www.w3.org/2000/svg">
+                                        <path
+                                            d="M285.476 272.971L91.132 467.314c-9.373 9.373-24.569 9.373-33.941 0l-22.667-22.667c-9.357-9.357-9.375-24.522-.04-33.901L188.505 256 34.484 101.255c-9.335-9.379-9.317-24.544.04-33.901l22.667-22.667c9.373-9.373 24.569-9.373 33.941 0L285.475 239.03c9.373 9.372 9.373 24.568.001 33.941z">
+                                        </path>
+                                    </svg>更新历史</a></li>
+                        </ul>
+                    </div>
+                    <div>
+                        <h3 class="text-lg font-bold text-gray-900 dark:text-white mb-6 relative inline-block">法律<span
+                                class="absolute bottom-[-8px] left-0 w-10 h-1 bg-gradient-to-r from-primary to-accent rounded"></span>
+                        </h3>
+                        <ul class="space-y-3">
+                            <li><a href="/privacy-poliww.w3.org/2000/svg">
+                                    <path
+                                        d="M285.476 272.971L91.132 467.314c-9.373 9.373-24.569 9.373-33.941 0l-22.667-22.667c-9.357-9.357-9.375-24.522-.04-33.901L188.505 256 34.484 101.255c-9.335-9.379-9.317-24.544.04-33.901l22.667-22.667c9.373-9.373 24.569-9.373 33.941 0L285.475 239.03c9.373 9.372 9.373 24.568.001 33.941z">
+                                    </path></svg>服务条款
+                                </a></li>
+                        </ul>
+                    </div>
+                    <div>
+                        <h3 class="text-lg font-bold text-gray-900 dark:text-white mb-6 relative inline-block">手机刷题<span
+                                class="absolute bottom-[-8px] left-0 w-10 h-1 bg-gradient-to-r from-primary to-accent rounded"></span>
+                        </h3>
+                        <ul class="space-y-3"></ul>
+                        <div class="text-center w-32"><img src="/images/qr-codes/gh.jpg" alt="公众号" /></div>
+                    </div>
+                </div>
+                <div
+                    class="pt-8 border-t border-gray-100 dark:border-gray-700 text-center text-gray-500 dark:text-gray-400 text-sm">
+                    <p><span>©2025 · 深圳市远天互联网技术有限公司 · 保留所有权利</span></p>
+                    <p
+                        class="flex gap-x-3 mt-2 items-center justify-center text-center text-xs leading-5 text-color-light">
+                        <a class="text-color-light" href="https://beian.miit.gov.cn" target="_blank"
+                            rel="noreferrer">粤ICP备19138429号-4</a><span class="flex items-center gap-x-1"><img
+                                src="/images/beian.png" alt="备案图标" class="w-3" /><a class="text-color-light"
+                                href="https://beian.mps.gov.cn/#/query/webSearch?code=44030002004108" rel="noreferrer"
+                                target="_blank">粤公网安备44030002004108号</a></span></p>
+                </div>
+            </div>
+        </footer>
+    </div>
+    <script type="text/javascript" src="/download/sentry/8.30.0/sentry.min.js"></script>
+    <script type="text/javascript" src="/assets/react/18.3.1/react.production.min.js"></script>
+    <script type="text/javascript" src="/assets/react-dom/18.3.1/react-dom.production.min.js"></script>
+    <script type="text/javascript" src="/assets/app/widgets.min.js?ts=1759907043741"></script>
+</body>
+
+</html>
