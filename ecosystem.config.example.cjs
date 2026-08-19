@@ -1,10 +1,11 @@
 /**
  * PM2 进程管理配置模板文件 (Ecosystem Config Example)
  *
- * 使用方法:
+ * 使用说明:
  * 1. 复制本文件为 ecosystem.config.cjs:
  *    cp ecosystem.config.example.cjs ecosystem.config.cjs
- * 2. 根据实际生产/测试环境修改下方的域名、数据密钥、API Key 等私密参数
+ * 2. 进程管理相关配置（内存限制、集群模式、日志等）在此文件中维护；
+ *    所有业务密钥、大模型 API、限流与认证参数已统一收敛至 backend/.env (开发) 或 backend/.env.production (生产) 中配置。
  * 3. 运行 PM2:
  *    pm2 start ecosystem.config.cjs --env production
  */
@@ -40,42 +41,6 @@ module.exports = {
             env_production: {
                 NODE_ENV: "production",
                 DOTENV_CONFIG_PATH: ".env.production",
-                PORT: 3000,
-                ENABLE_SQLITE: "true",
-
-                // AI Guard
-                AI_GUARD_ENABLED: "true",
-                AI_REQUIRE_SIGNED_HEADERS: "true",
-                AI_ALLOWED_ORIGINS: process.env.AI_ALLOWED_ORIGINS || "https://your-server-domain:*",
-                AI_CLIENT_CREDENTIALS: process.env.AI_CLIENT_CREDENTIALS || "web:change_me_client_credentials",
-
-                // LLM 上游配置
-                OPENAI_API_KEY: process.env.OPENAI_API_KEY || "change_me",
-                OPENAI_MODEL: process.env.OPENAI_MODEL || "deepseek-chat",
-                OPENAI_BASE_URL: process.env.OPENAI_BASE_URL || "https://api.deepseek.com",
-
-                // 请求大小 & 超时
-                AI_MAX_INPUT_CHARS: 1200,
-                AI_MAX_COMPLETION_TOKENS: 800,
-                AI_UPSTREAM_TIMEOUT_MS: 30000,
-                AI_SSE_IDLE_TIMEOUT_MS: 20000,
-
-                // 限流：客户端维度
-                AI_RATE_LIMIT_CLIENT_PER_MINUTE: 10,
-                AI_RATE_LIMIT_CLIENT_PER_HOUR: 100,
-                AI_DAILY_REQUEST_LIMIT_PER_CLIENT: 200,
-                AI_DAILY_TOKEN_LIMIT_PER_CLIENT: 50000,
-                AI_MAX_CONCURRENCY_PER_CLIENT: 2,
-
-                // 限流：IP 维度
-                AI_RATE_LIMIT_IP_PER_MINUTE: 30,
-
-                // 限流：全局每日上限
-                AI_GLOBAL_DAILY_REQUEST_LIMIT: 5000,
-                AI_GLOBAL_DAILY_TOKEN_LIMIT: 500000,
-
-                // 审计日志
-                AI_AUDIT_FILE_PATH: "data/ai-audit.ndjson",
             }
         }
     ]

@@ -54,6 +54,7 @@ logs/
 certs/
 .claude/
 backend/cookies.txt
+docs/internal/
 
 # Broad environment rules
 .env
