@@ -48,6 +48,7 @@ backend/src/db/*.sqlite3-wal
 
 # Private & Environment files
 .agents/
+AGENTS.md
 # .github/ 保留提交（GitHub Actions 等需要）
 crawler/
 logs/
