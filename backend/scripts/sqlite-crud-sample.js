@@ -1,3 +1,17 @@
+/**
+ * @file sqlite-crud-sample.js
+ * @description 数据库连接池与 DAO 仓储层 CRUD 代码使用范例
+ *
+ * 【设计意图】
+ * 1. 作为开发参考示例 (Sample / Reference Code)，演示如何基于自定义 SQLite 连接池
+ *    (`createSqlitePool`) 调用各 Repository 的增删改查方法。
+ * 2. 演示了 Category、Problem 与 ProblemDetail 数据模型的查询与更新调用范式。
+ * 3. 包含连接池的生命周期管理（使用完毕后必须显式调用 `pool.closeAll()`）。
+ *
+ * 【使用方式】
+ * - node scripts/sqlite-crud-sample.js
+ */
+
 import path from 'path';
 import { fileURLToPath } from 'url';
 

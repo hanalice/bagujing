@@ -1,3 +1,22 @@
+/**
+ * @file qa-verify.js
+ * @description AI 安全防护网关自动化端到端测试套件 (E2E QA Verification)
+ *
+ * 【设计意图】
+ * 1. 用于全自动验证 AI Guard 网关核心防御策略的有效性与抗攻击能力：
+ *    - 场景 1: 未提供签名的恶意请求 -> 必须被 401 拦截 (missing_signature)
+ *    - 场景 2: 伪造/错误的签名 -> 必须被 401 拦截 (invalid_signature)
+ *    - 场景 3: 时间戳篡改/时钟偏差过大 -> 必须被 401 拦截 (clock_skew)
+ *    - 场景 4: 请求重放 (Nonce 重复使用) -> 必须被 401 拦截 (replay_attack)
+ *    - 场景 5: 合法签名与未受控 Origin -> 必须被 403 拦截 (origin_not_allowed)
+ *    - 场景 6: 正常合规请求 -> 验证成功建立 SSE 流式连接并接收首个 Token
+ *    - 场景 7: 高频突发请求 -> 验证触发 429 速率限制拦截 (rate_limit_exceeded)
+ *
+ * 【使用方式】
+ * 在后端服务启动状态下执行：
+ * - node scripts/qa-verify.js
+ */
+
 import crypto from 'crypto';
 
 const BASE_URL = 'http://localhost:3000';

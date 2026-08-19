@@ -1,3 +1,22 @@
+/**
+ * @file import-ndjson-to-sqlite.js
+ * @description 题库数据批量迁移脚本 (NDJSON -> SQLite3)
+ *
+ * 【设计意图】
+ * 1. 本脚本负责将离线采集的 NDJSON 格式题库数据（categories / problems / problem-detail）
+ *    批量、事务性地导入并构建持久化的 SQLite 关系型数据库。
+ * 2. 采用流式行读取 (createNdjsonLineReader) 与分批事务 (batch transaction) 机制，
+ *    避免一次性加载数万条数据导致 Node.js 进程内存溢出 (OOM)。
+ * 3. 自动初始化数据库表结构 (Schema)，支持全量导入或按需单独导入（如仅导入分类或题目详情）。
+ *
+ * 【使用方式】
+ * - npm run import-data                 # 全量导入
+ * - npm run import-data:categories      # 仅导入分类
+ * - npm run import-data:problems        # 仅导入题目列表
+ * - npm run import-data:details         # 仅导入题目深度解析详情
+ * - node scripts/import-ndjson-to-sqlite.js --batch 1000 --limit 5000  # 自定义批次与上限
+ */
+
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -198,9 +217,15 @@ async function main() {
   const limit = args.get('limit') ? Number(args.get('limit')) : 0;
   const batchSize = Math.max(1, Number(args.get('batch')) || 500);
 
-  const categoriesPath = args.get('categories') || path.join(__dirname, '../../crawler/data/categories.ndjson');
-  const problemsPath = args.get('problems') || path.join(__dirname, '../../crawler/data/problems.ndjson');
-  const detailsPath = args.get('details') || path.join(__dirname, '../../crawler/data/problem-detail.ndjson');
+  function resolveDataPath(filename) {
+    const localPath = path.join(__dirname, '../data', filename);
+    const crawlerPath = path.join(__dirname, '../../crawler/data', filename);
+    return fs.existsSync(localPath) ? localPath : crawlerPath;
+  }
+
+  const categoriesPath = args.get('categories') || resolveDataPath('categories.ndjson');
+  const problemsPath = args.get('problems') || resolveDataPath('problems.ndjson');
+  const detailsPath = args.get('details') || resolveDataPath('problem-detail.ndjson');
 
   ensureDir(path.dirname(dbFile));
 

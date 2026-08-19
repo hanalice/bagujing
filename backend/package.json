@@ -1,14 +1,13 @@
 {
-  "name": "cluster-crawler",
+  "name": "bagujing-be",
   "version": "0.2.0",
   "private": true,
   "type": "module",
-  "main": "src/index.js",
+  "main": "src/server-express.js",
   "scripts": {
     "test": "node --test src/tests/llm.test.js",
     "start": "node src/server-express.js",
     "serve:express": "node src/server-express.js",
-    "serve:koa": "node src/server-koa.js",
     "lint": "eslint --ext .js src",
     "import-data": "node scripts/import-ndjson-to-sqlite.js",
     "import-data:categories": "node scripts/import-ndjson-to-sqlite.js --only categories",
