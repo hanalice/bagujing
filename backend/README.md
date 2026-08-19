@@ -1,6 +1,6 @@
-# Bagujing Backend (bagujing-be)
+# DevAsk Backend (职问AI 后端)
 
-> 八股晶核心后端 API 服务。基于 Node.js (ESM) + Express 5 + SQLite3 + LangChain 构建，负责面试题库检索、AI 助教流式问答、用户身份认证权限管理与工业级 AI 安全防护网关。
+> 职问AI (DevAsk) 核心后端 API 服务。基于 Node.js (ESM) + Express 5 + SQLite3 + LangChain 构建，负责面试题库检索、AI 助教流式问答、用户身份认证权限管理与工业级 AI 安全防护网关。
 
 ---
 

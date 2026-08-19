@@ -1,4 +1,4 @@
-# Bagujing 文档体系与维护规范 (Documentation Guidelines)
+# DevAsk (职问AI) 文档体系与维护规范 (Documentation Guidelines)
 
 > 本目录用于存放项目的**对外公开技术文档**与**内部研发过程档案**。为了保证开源交付的整洁性与内部敏感信息的安全性，项目采用**「动静分层、内部隔离」**的文档管理规范。
 

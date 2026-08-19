@@ -29,7 +29,7 @@ const handleRegister = async () => {
       <div class="w-20 h-20 bg-blue-500 rounded-3xl mx-auto flex items-center justify-center shadow-lg shadow-blue-500/20 mb-8">
         <div class="i-carbon-user-follow text-4xl text-white"></div>
       </div>
-      <h2 class="text-center text-3xl font-[900] text-[#0F172A] tracking-tight">Join Bagujing</h2>
+      <h2 class="text-center text-3xl font-[900] text-[#0F172A] tracking-tight">加入职问AI (Join DevAsk)</h2>
       <p class="mt-2 text-center text-sm font-medium text-slate-400">
         Create an account and wait for approval
       </p>

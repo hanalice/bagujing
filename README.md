@@ -1,4 +1,4 @@
-# Bagujing (八股晶)
+# DevAsk (职问AI)
 
 > 面试题库驱动的 AI 智能问答与练习平台。包含后端 API 服务（`bagujing-be`，Node.js + Express + SQLite）与前端单页应用（`bagujing-fe`，Vue 3 + Vite + TypeScript）。
 
@@ -148,8 +148,16 @@ cd backend && npm install && cd ../frontend && npm install && cd ..
 # 构建前端
 cd frontend && npm run build && cd ..
 
-# 启动 PM2 守护集群
-pm2 start ecosystem.config.cjs --env production
+# 启动 PM2 守护集群，仅仅启动后端环境
+pm2 start ecosystem.config.cjs
+
+# 启动前端static server， serve 前端产物
+PM2_SERVE_PATH=./frontend/dist \
+PM2_SERVE_PORT=8080 \
+PM2_SERVE_SPA=true \
+STATIC_API_PROXY_ENABLED=true \
+STATIC_API_PROXY_TARGET=http://127.0.0.1:3000 \
+node scripts/static-server.js
 ```
 
 ---
@@ -197,13 +205,13 @@ npm run lint
 
 ```bash
 # 后端生产环境配置
-cp backend/.env.example backend/.env.production
+cp backend/.env.example backend/.env
 
 # 前端生产构建配置
 cp frontend/.env.example frontend/.env.production
 ```
 
-**生产环境关键必填项（`backend/.env.production`）**：
+**生产环境关键必填项（`backend/.env`）**：
 
 | 配置项 | 说明 | 示例 |
 | :--- | :--- | :--- |

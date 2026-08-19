@@ -1,6 +1,6 @@
-# Bagujing Frontend (bagujing-fe)
+# DevAsk Frontend (职问AI 前端)
 
-> 八股晶前端单页应用 (SPA)。基于 Vue 3 + Vite 7 + TypeScript + UnoCSS + Pinia 构建，提供分类题库浏览、AI 助教流式交互、个人设置、权限控制与管理员监控大盘。
+> 职问AI (DevAsk) 前端单页应用 (SPA)。基于 Vue 3 + Vite 7 + TypeScript + UnoCSS + Pinia 构建，提供分类题库浏览、AI 助教流式交互、个人设置、权限控制与管理员监控大盘。
 
 ---
 

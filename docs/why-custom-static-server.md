@@ -1,6 +1,6 @@
 # 静态服务器 (static-server.js) 的演进历程与架构定位
 
-> 本文记录了 Bagujing 项目静态托管方案的**真实演进过程**、各阶段面临的工程痛点，以及 `scripts/static-server.js` 在当前三层服务体系中的精准定位。
+> 本文记录了 DevAsk (职问AI) 项目静态托管方案的**真实演进过程**、各阶段面临的工程痛点，以及 `scripts/static-server.js` 在当前三层服务体系中的精准定位。
 
 ---
 
