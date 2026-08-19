@@ -7,7 +7,6 @@
   "scripts": {
     "test": "node --test src/tests/llm.test.js",
     "start": "node src/server-express.js",
-    "serve:express": "node src/server-express.js",
     "lint": "eslint --ext .js src",
     "import-data": "node scripts/import-ndjson-to-sqlite.js",
     "import-data:categories": "node scripts/import-ndjson-to-sqlite.js --only categories",
@@ -18,17 +17,12 @@
   "dependencies": {
     "@langchain/core": "^1.1.40",
     "@langchain/openai": "^1.4.4",
-    "axios": "^1.13.2",
     "cors": "^2.8.5",
-    "cross-env": "^10.1.0",
     "dotenv": "^17.2.3",
     "express": "^5.2.1",
     "ioredis": "^5.10.0",
     "jsonwebtoken": "^9.0.3",
-    "koa": "^3.1.1",
-    "openai": "^6.16.0",
-    "sqlite3": "^5.1.7",
-    "winston": "^3.18.3"
+    "sqlite3": "^5.1.7"
   },
   "devDependencies": {
     "eslint": "^9.39.1",
