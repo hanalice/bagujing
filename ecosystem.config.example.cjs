@@ -1,3 +1,14 @@
+/**
+ * PM2 进程管理配置模板文件 (Ecosystem Config Example)
+ *
+ * 使用方法:
+ * 1. 复制本文件为 ecosystem.config.cjs:
+ *    cp ecosystem.config.example.cjs ecosystem.config.cjs
+ * 2. 根据实际生产/测试环境修改下方的域名、数据密钥、API Key 等私密参数
+ * 3. 运行 PM2:
+ *    pm2 start ecosystem.config.cjs --env production
+ */
+
 module.exports = {
     apps: [
         {

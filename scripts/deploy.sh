@@ -53,6 +53,13 @@ fi
 
 # 然后启动新的全量实例
 echo "启动新的 PM2 进程..."
+if [ ! -f "ecosystem.config.cjs" ]; then
+    if [ -f "ecosystem.config.example.cjs" ]; then
+        echo "❌ 错误: 未找到 ecosystem.config.cjs！"
+        echo "💡 请先复制并配置生产环境密钥与参数: cp ecosystem.config.example.cjs ecosystem.config.cjs"
+        exit 1
+    fi
+fi
 pm2 start ecosystem.config.cjs --env production
 
 # 保存开机自启状态

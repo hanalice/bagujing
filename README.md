@@ -2,23 +2,40 @@
 
 ## 快速开始 / Getting Started
 
-本项目包含后端服务 `bagujing-be` 和前端单页应用 `bagujing-fe`。本地开发与部署前，请按照以下步骤配置：
+本项目包含后端服务 `bagujing-be` 和前端单页应用 `bagujing-fe`。
 
-### 1. 配置环境文件 (Environment Files)
-分别进入前端与后端目录，基于各自的 `.env.example` 创建本地配置文件：
-- **后端**：
-  ```bash
-  cp backend/.env.example backend/.env
-  ```
-  然后编辑 `backend/.env`，配置 `OPENAI_API_KEY`（大模型 API 密钥）以及 `AI_CLIENT_CREDENTIALS` 等所需配置。
-- **前端**：
-  ```bash
-  cp frontend/.env.example frontend/.env.local
-  ```
-  配置前端访问的后端 API 接口地址与 AI 认证凭据。
+> ⚠️ **重要配置规范**：为了保证代码与私密信息安全，本项目所有包含数据密钥、API Key、环境参数的文件均采用 `.example` 模板方案（实际配置文件已被 `.gitignore` 忽略，不会提交至仓库）。
+> **在本地运行或生产部署前，必须基于各模板 copy 一份并修改为您自己的实际配置与密钥。**
+
+### 1. 配置环境与进程文件 (Configuration Files)
+
+基于模板文件复制并修改真实配置文件：
+
+1. **PM2 进程配置文件**（根目录下）：
+   ```bash
+   cp ecosystem.config.example.cjs ecosystem.config.cjs
+   ```
+   编辑 `ecosystem.config.cjs`，配置生产环境变量中的 `OPENAI_API_KEY`、`AI_CLIENT_CREDENTIALS`、`AI_ALLOWED_ORIGINS` 等生产密钥与域名。
+
+2. **后端环境配置文件**：
+   ```bash
+   cp backend/.env.example backend/.env
+   ```
+   编辑 `backend/.env`，配置大模型 API 密钥（如 `OPENAI_API_KEY`）、`AI_CLIENT_CREDENTIALS` 等。
+
+3. **前端环境配置文件**：
+   - 本地开发：
+     ```bash
+     cp frontend/.env.example frontend/.env.local
+     ```
+   - 生产环境构建：
+     ```bash
+     cp frontend/.env.example frontend/.env.production
+     ```
+   编辑配置文件，填入后端 API 接口地址与前端 AI 客户端认证密钥（`VITE_AI_CLIENT_SECRET` / `VITE_AI_CLIENT_ID` 等）。
 
 ### 2. 生成本地 SSL/TLS 证书 (Local Certificates)
-本地 HTTPS 静态服务器启动需要证书文件（由 `pm2.config.js` 指向 `certs/server.pem`）。项目已附带一键生成脚本：
+本地 HTTPS 静态服务器启动需要证书文件（指向 `certs/server.pem`）。项目已附带一键生成脚本：
 ```bash
 ./scripts/generate-certs.sh
 ```
@@ -32,8 +49,8 @@ cd backend && npm install
 cd ../frontend && npm install
 cd ..
 
-# 启动服务
-pm2 start pm2.config.js
+# 启动服务 (开发/生产环境)
+pm2 start ecosystem.config.cjs --env production
 ```
 
 ---
@@ -117,7 +134,7 @@ STATIC_CSP_CONNECT_SRC="http://10.240.207.15:3000"
 ```
 
 ## start projects
-`$pm2 start pm2.config.js`
+`$ pm2 start ecosystem.config.cjs --env production`
 
 ## AI 安全说明（已落地）
 
@@ -163,7 +180,7 @@ STATIC_CSP_CONNECT_SRC="http://10.240.207.15:3000"
 └────┴───────────────────┴─────────────┴─────────┴─────────┴──────────┴────────┴──────┴───────────┴──────────┴──────────┴──────────┴──────────┘
 
 ## stop projects
-`$pm2 stop pm2.config.js`
+`$ pm2 stop ecosystem.config.cjs`
 
 ## delete projects
-`$pm2 delete pm2.config.js`
+`$ pm2 delete ecosystem.config.cjs`

@@ -157,7 +157,7 @@
 
 ## 7. 当前配置基线（P0 + P1）
 
-已在 `pm2.config.js` 和 `backend/.env.example` 给出默认值，核心项包括：
+已在 `ecosystem.config.example.cjs` 和 `backend/.env.example` 给出默认值，核心项包括：
 
 - 鉴权开关：`AI_GUARD_ENABLED`
 - 允许来源：`AI_ALLOWED_ORIGINS`
@@ -189,7 +189,7 @@
    - `VITE_AI_CLIENT_ID=web`
    - `VITE_AI_CLIENT_TOKEN=<strong_token>`
 3. 重启进程并更新环境变量：
-   - `pm2 restart pm2.config.js --update-env`
+   - `pm2 restart ecosystem.config.cjs --update-env`
 4. 检查审计日志输出：
    - `backend/data/ai-audit.ndjson`
 

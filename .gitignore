@@ -54,13 +54,18 @@ logs/
 certs/
 .claude/
 backend/cookies.txt
-pm2.config.js
 
 # Broad environment rules
 .env
 .env.local
 .env.*
 !.env.example
+
+# PM2 Ecosystem Config (contains secrets/keys)
+ecosystem.config.js
+ecosystem.config.cjs
+!ecosystem.config.example.js
+!ecosystem.config.example.cjs
 
 # Databases & Data（数据为私有财产，只开源代码）
 backend/bagujing.db
