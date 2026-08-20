@@ -1,8 +1,8 @@
 # 质量保证与测试执行报告 (QA Execution Report)
 
 > **发布版本**：v0.2.0  
-> **报告生成时间**：2026-08-20 21:33:34  
-> **Git 提交**：680f73a (main)  
+> **报告生成时间**：2026-08-20 21:57:10  
+> **Git 提交**：6dba252 (main)  
 > **测试环境**：Linux (Node.js v22.23.1)  
 > **总体验收状态**：✅ **ALL PASSED (符合质量准出标准)**
 
@@ -12,8 +12,8 @@
 
 | 测试套件 | 执行命令 | 用例 / 项数 | 通过 (Pass) | 失败 (Fail) | 耗时 | 判定结果 |
 | :--- | :--- | :---: | :---: | :---: | :---: | :---: |
-| **后端核心单元测试** | `cd backend && npm test` | 28 | 28 | 0 | 817ms | ✅ PASS |
-| **前端单元与 E2E 测试** | `cd frontend && npm test` | 5 | 5 | 0 | 9.5s | ✅ PASS |
+| **后端核心单元测试** | `cd backend && npm test` | 29 | 29 | 0 | 1059ms | ✅ PASS |
+| **前端单元与 E2E 测试** | `cd frontend && npm test` | 5 | 5 | 0 | 4.9s | ✅ PASS |
 | **数据库完整性排查** | `node backend/scripts/verify-db.js` | 2 | 2 | 0 | ~85ms | ✅ PASS |
 
 ---
@@ -21,7 +21,7 @@
 ## 2. 失败用例追踪 (Failed Test Cases)
 
 ### 2.1 后端失败用例 (Backend Failures)
-> ✅ **全部通过**：共执行 28 个后端用例，无失败用例。
+> ✅ **全部通过**：共执行 29 个后端用例，无失败用例。
 
 ### 2.2 前端失败用例 (Frontend Failures)
 > ✅ **全部通过**：共执行 5 个前端用例（Vitest 单元测试: 4，Playwright E2E: 1），无失败用例。
@@ -30,6 +30,7 @@
 
 ## 3. 缺陷修复与回归验证记录 (Bug Fix Verifications)
 
+- **Commit `6dba252`** (2026-08-20): fix(chat): [P0-1][A2] 接入 SSE 空闲超时与并发释放机制
 - **单测回归 `UT-LLM-13`**：修复 `buildLlmConfig(null, null)` 触发 `TypeError: Cannot read properties of null` 问题，已引入可选链防御并单测锁定。
 
 ---

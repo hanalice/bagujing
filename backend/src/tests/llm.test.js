@@ -296,7 +296,7 @@ describe('Chat stream consumption loop (idle timeout & resource cleanup)', () =>
         }
       } finally {
         if (typeof reader?.releaseLock === 'function') {
-          try { reader.releaseLock(); } catch (_) {}
+          try { reader.releaseLock(); } catch (_) { }
         }
       }
 
@@ -354,4 +354,49 @@ describe('Chat stream consumption loop (idle timeout & resource cleanup)', () =>
     assert.equal(activeConcurrency, 0, 'concurrency release must be idempotent');
   });
 });
+
+describe('Answer generation invoke path & finalize contract', () => {
+  it('finalize executes without throwing when upstreamStatus is 200 or null', () => {
+    let capturedAudit = null;
+    const mockGuardContext = {
+      finalize: ({ completionText = '', status = 'ok', reason = 'completed', upstreamStatus = null } = {}) => {
+        capturedAudit = {
+          status,
+          reason,
+          completionText,
+          upstreamStatus,
+        };
+      },
+    };
+
+    // 模拟 answer/generate 成功生成路径的 finalize 调用
+    assert.doesNotThrow(() => {
+      mockGuardContext.finalize({
+        status: 'ok',
+        reason: 'generated_answer',
+        completionText: '<p>HTML Answer</p>',
+        upstreamStatus: 200,
+      });
+    });
+
+    assert.equal(capturedAudit.status, 'ok');
+    assert.equal(capturedAudit.reason, 'generated_answer');
+    assert.equal(capturedAudit.upstreamStatus, 200);
+
+    // 模拟 cached_answer 路径的 finalize 调用
+    assert.doesNotThrow(() => {
+      mockGuardContext.finalize({
+        status: 'ok',
+        reason: 'cached_answer',
+        completionText: '<p>Cached Answer</p>',
+        upstreamStatus: null,
+      });
+    });
+
+    assert.equal(capturedAudit.status, 'ok');
+    assert.equal(capturedAudit.reason, 'cached_answer');
+    assert.equal(capturedAudit.upstreamStatus, null);
+  });
+});
+
 

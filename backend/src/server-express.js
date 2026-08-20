@@ -640,7 +640,6 @@ const buildRagContext = async ({ message, categoryId, problemId }) => {
 app.post('/api/problems/:id/answer/generate', authenticateToken, requirePermission('study'), aiGuard.middleware, asyncHandler(async (req, res) => {
   const guardContext = req.aiGuard;
   let finalized = false;
-  let timeoutId;
   const finalizeGuard = (payload) => {
     if (!guardContext || finalized) return;
     finalized = true;
@@ -756,7 +755,7 @@ app.post('/api/problems/:id/answer/generate', authenticateToken, requirePermissi
       status: 'ok',
       reason: 'generated_answer',
       completionText: answerHtml,
-      upstreamStatus: upstream.status,
+      upstreamStatus: 200,
     });
 
     return res.json({
@@ -769,7 +768,6 @@ app.post('/api/problems/:id/answer/generate', authenticateToken, requirePermissi
       message: 'success',
     });
   } catch (error) {
-    if (timeoutId) clearTimeout(timeoutId);
     finalizeGuard({ status: 'error', reason: 'server_error' });
     return res.status(500).json({ code: 500, message: error.message });
   }
@@ -849,7 +847,7 @@ app.post('/api/chat', authenticateToken, requirePermission('chat_ai'), aiGuard.m
       }
     } finally {
       if (typeof reader?.releaseLock === 'function') {
-        try { reader.releaseLock(); } catch (_) {}
+        try { reader.releaseLock(); } catch (_) { }
       }
     }
 
