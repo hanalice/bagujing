@@ -1,5 +1,6 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { ChatOpenAI } from '@langchain/openai';
 import { buildLlmConfig, createLlmModel } from '../llm.js';
 
 const ENV_KEYS = ['OPENAI_API_KEY', 'OPENAI_BASE_URL', 'OPENAI_MODEL'];
@@ -82,6 +83,11 @@ describe('buildLlmConfig', () => {
     assert.equal(cfg.maxTokens, undefined);
     assert.equal(cfg.timeout, undefined);
   });
+
+  it('handles undefined/null arguments safely', () => {
+    assert.doesNotThrow(() => buildLlmConfig());
+    assert.doesNotThrow(() => buildLlmConfig(null, null));
+  });
 });
 
 describe('createLlmModel', () => {
@@ -92,6 +98,15 @@ describe('createLlmModel', () => {
 
   it('returns null when OPENAI_API_KEY is not set', () => {
     assert.equal(createLlmModel({}, {}), null);
+  });
+
+  it('returns ChatOpenAI instance with correct configuration when OPENAI_API_KEY is present', () => {
+    process.env.OPENAI_API_KEY = 'sk-test-key';
+    const model = createLlmModel({ maxCompletionTokens: 1024 }, { upstreamTimeoutMs: 5000 });
+    assert.ok(model instanceof ChatOpenAI, 'model must be an instance of ChatOpenAI');
+    assert.equal(model.temperature, 0.2);
+    assert.equal(model.maxTokens, 1024);
+    assert.equal(model.timeout, 5000);
   });
 });
 

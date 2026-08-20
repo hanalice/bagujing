@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# Git Pre-commit Hook: 全栈质量门禁与 QA 报告自动同步
+# ==============================================================================
+
+set -e
+
+PROJECT_ROOT="$(git rev-parse --show-toplevel)"
+cd "$PROJECT_ROOT"
+
+echo "🔍 [Git Hook] 正在执行提交前全栈测试校验 (qa-report.sh)..."
+
+# 1. 运行全栈测试并生成报告
+if ! ./scripts/qa-report.sh; then
+  echo ""
+  echo "❌ [Git Hook 拦截] 全栈测试未通过或存在质量阻碍项，提交已被取消！"
+  echo "👉 请排查测试错误或修复后再次尝试提交。"
+  exit 1
+fi
+
+# 2. 自动将最新生成的 docs/qa_report.md 加入当前暂存区
+if [ -f "$PROJECT_ROOT/docs/qa_report.md" ]; then
+  git add "$PROJECT_ROOT/docs/qa_report.md"
+  echo "📄 [Git Hook] 已自动将最新生成的 docs/qa_report.md 纳入当次提交暂存区。"
+fi
+
+echo "✅ [Git Hook] 全栈质量门禁校验通过，允许提交！"
+exit 0

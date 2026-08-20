@@ -8,8 +8,8 @@ export function buildLlmConfig(guardContext, defaultConfig = {}) {
     },
     modelName: process.env.OPENAI_MODEL || 'gpt-4o-mini',
     temperature: 0.2,
-    maxTokens: guardContext?.maxCompletionTokens ?? defaultConfig.maxCompletionTokens,
-    timeout: guardContext?.upstreamTimeoutMs ?? defaultConfig.upstreamTimeoutMs,
+    maxTokens: guardContext?.maxCompletionTokens ?? defaultConfig?.maxCompletionTokens,
+    timeout: guardContext?.upstreamTimeoutMs ?? defaultConfig?.upstreamTimeoutMs,
   };
 }
 

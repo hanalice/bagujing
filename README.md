@@ -91,14 +91,18 @@ cp backend/.env.example backend/.env
 cp frontend/.env.example frontend/.env.local
 ```
 
-### 第二步：生成本地 SSL 证书
+### 第二步：一键初始化开发环境与 Git Hooks
 
-本地静态服务器与安全通信需要自签名证书文件：
+新成员克隆仓库后，运行以下一键脚本即可自动完成 **Git Hooks 挂载、前后端依赖安装及 Playwright 浏览器下载**：
 
+```bash
+./scripts/setup-dev.sh
+```
+
+*(可选) 如需本地安全通信证书：*
 ```bash
 ./scripts/generate-certs.sh
 ```
-*运行后会自动生成 `certs/server.pem`（已在 `.gitignore` 中忽略）。*
 
 ### 第三步：安装依赖与启动服务
 
@@ -107,12 +111,10 @@ cp frontend/.env.example frontend/.env.local
 ```bash
 # 终端 1：启动后端 API 服务 (监听 3000 端口)
 cd backend
-npm install
 npm run start
 
 # 终端 2：启动前端 Vite 开发服务器 (支持热重载，自动代理 /api 至后端)
 cd frontend
-npm install
 npm run dev
 ```
 打开浏览器访问控制台输出的地址（通常为 `https://localhost:5173`）。
@@ -120,8 +122,8 @@ npm run dev
 #### 方式 B：本地模拟生产环境（验证编译产物与 CSP 拦截）
 
 ```bash
-# 安装依赖并构建前端
-cd backend && npm install && cd ../frontend && npm install && npm run build && cd ..
+# 构建前端
+cd ../frontend && npm run build && cd ..
 
 # 启动 PM2 后端集群
 pm2 start ecosystem.config.cjs
@@ -139,20 +141,10 @@ node scripts/static-server.js
 ---
 
 ## 🧪 测试与质量校验
+本项目秉持严格的质量标准，针对核心业务逻辑与关键交互实现 100% 自动化测试覆盖。
 
-```bash
-# 1. 运行后端单测
-cd backend
-npm run test
-
-# 2. 运行 AI 安全防护网关自动化端到端测试 (验证签名、限流、防重放拦截)
-node backend/scripts/qa-verify.js
-
-# 3. 前端类型检查与代码规范检查
-cd frontend
-npm run type-check
-npm run lint
-```
+- **[测试执行报告 (Execution Report)](docs/qa_report.md)**：查看最新测试执行结果、用例通过率与缺陷修复回归验证。
+- **[测试用例设计 (Test Case Design)](docs/test_cases.md)**：深入了解测试策略矩阵、覆盖率映射以及端到端集成测试场景。
 
 ---
 

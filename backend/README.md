@@ -106,7 +106,8 @@ npm run serve:express
 
 ---
 
-## 架构与安全参考
+## 架构与测试参考
 
-- **AI 防护网关设计**：详见 [docs/security-ai-guard.md](../docs/security-ai-guard.md)（含 HMAC 请求签名、时钟与 Nonce 防重放、动态配额与审计机制）
+- **测试用例设计规范 (Test Cases)**：详见 [../docs/test_cases.md](../docs/test_cases.md)（包含单元测试、契约测试与集成测试用例清单）
+- **AI 防护网关设计**：详见 [../docs/security-ai-guard.md](../docs/security-ai-guard.md)（含 HMAC 请求签名、时钟与 Nonce 防重放、动态配额与审计机制）
 - **环境变量 SSOT 规范**：详见根目录 [README.md](../README.md)
