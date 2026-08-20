@@ -347,8 +347,6 @@ app.post('/api/maf/missions/:id/complete', authenticateToken, requirePermission(
   res.json({ code: 0, message: 'Mission completed' });
 }));
 
-app.use(aiGuard.middleware);
-
 // 路由：根据 ID 获取单个题目
 app.get('/api/problems/:id', authenticateToken, requirePermission('study'), asyncHandler(async (req, res) => {
   try {
@@ -639,7 +637,7 @@ const buildRagContext = async ({ message, categoryId, problemId }) => {
   return snippets.slice(0, maxSnippets);
 };
 
-app.post('/api/problems/:id/answer/generate', authenticateToken, requirePermission('study'), asyncHandler(async (req, res) => {
+app.post('/api/problems/:id/answer/generate', authenticateToken, requirePermission('study'), aiGuard.middleware, asyncHandler(async (req, res) => {
   const guardContext = req.aiGuard;
   let finalized = false;
   let timeoutId;
@@ -777,7 +775,7 @@ app.post('/api/problems/:id/answer/generate', authenticateToken, requirePermissi
   }
 }));
 
-app.post('/api/chat', authenticateToken, requirePermission('chat_ai'), asyncHandler(async (req, res) => {
+app.post('/api/chat', authenticateToken, requirePermission('chat_ai'), aiGuard.middleware, asyncHandler(async (req, res) => {
   const guardContext = req.aiGuard;
   let finalized = false;
   const finalizeGuard = (payload) => {
@@ -833,12 +831,25 @@ app.post('/api/chat', authenticateToken, requirePermission('chat_ai'), asyncHand
     });
 
     let completionText = '';
+    const sseIdleTimeoutMs = guardContext?.sseIdleTimeoutMs || aiGuard.config.sseIdleTimeoutMs || 20000;
+    const reader = typeof stream?.getReader === 'function'
+      ? stream.getReader()
+      : (stream?.[Symbol.asyncIterator] ? stream[Symbol.asyncIterator]() : stream);
 
-    for await (const chunk of stream) {
-      const delta = chunk.content;
-      if (delta) {
-        completionText += delta;
-        sendSSE(res, { type: 'delta', text: delta });
+    try {
+      while (true) {
+        const { done, value } = await readStreamChunkWithTimeout(reader, sseIdleTimeoutMs);
+        if (done) break;
+        const chunk = value;
+        const delta = chunk?.content;
+        if (delta) {
+          completionText += delta;
+          sendSSE(res, { type: 'delta', text: delta });
+        }
+      }
+    } finally {
+      if (typeof reader?.releaseLock === 'function') {
+        try { reader.releaseLock(); } catch (_) {}
       }
     }
 
@@ -850,8 +861,13 @@ app.post('/api/chat', authenticateToken, requirePermission('chat_ai'), asyncHand
     sendSSE(res, { type: 'done' });
     return res.end();
   } catch (error) {
-    finalizeGuard({ status: 'error', reason: abortController.signal.aborted ? 'aborted_or_timeout' : 'server_error' });
-    const errorMsg = error?.message || String(error);
+    const isTimeout = error?.message === 'SSE idle timeout';
+    const isAborted = abortController.signal.aborted;
+    finalizeGuard({
+      status: 'error',
+      reason: (isAborted || isTimeout) ? 'aborted_or_timeout' : 'server_error',
+    });
+    const errorMsg = isTimeout ? 'Stream idle timeout' : (error?.message || String(error));
     if (!res.writableEnded) {
       sendSSE(res, { type: 'error', message: errorMsg });
       return res.end();

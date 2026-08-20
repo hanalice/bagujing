@@ -461,29 +461,18 @@ export function createAiGuard({ dbPool = null, redis = null, jwtSecret = null } 
       return reject({ req, res, status: 403, message: 'Origin not allowed', reason: 'origin_blocked', routeKey });
     }
 
-    const authHeader = req.header('authorization');
-    let session = null;
+    // Person identity is authenticateToken's job. Guard only consumes req.user.clientId.
+    const sessionClientId = String(req.user?.clientId ?? '').trim();
+    const headerClientId = String(req.header('x-client-id') || '').trim();
+    let clientId = sessionClientId || headerClientId;
 
-    if (authHeader && authHeader.startsWith('Bearer ')) {
-      const token = authHeader.slice(7);
-      try {
-        session = jwt.verify(token, JWT_SECRET);
-      } catch (err) {
-        return reject({ req, res, status: 401, message: 'Invalid or expired session', reason: 'invalid_jwt', routeKey });
-      }
-    }
-
-    // Unified clientId extraction
-    let clientId = session?.clientId || String(req.header('x-client-id') || '').trim();
-    
-    // Fallback for legacy tokens or missing clientId
-    if (!clientId && (session || !config.requireSignedHeaders)) {
+    if (!clientId && (req.user || !config.requireSignedHeaders)) {
       clientId = config.defaultClientId || 'web';
     }
 
-    const forceSignatureCheck = !session && !clientId && config.requireSignedHeaders;
+    const forceSignatureCheck = !req.user && config.requireSignedHeaders;
 
-    console.log(`[ai-guard-debug] requestId="${req.header('x-request-id')}" route="${routeKey}" clientId="${clientId}" session=${!!session} forceSig=${forceSignatureCheck}`);
+    console.log(`[ai-guard-debug] requestId="${req.header('x-request-id')}" route="${routeKey}" clientId="${clientId}" hasUser=${!!req.user} forceSig=${forceSignatureCheck}`);
 
     if (!clientId) {
       return reject({ req, res, status: 401, message: 'Missing client id', reason: 'missing_client_id', clientId, routeKey });
@@ -739,10 +728,13 @@ export async function readStreamChunkWithTimeout(reader, timeoutMs) {
     const timeoutPromise = new Promise((_, reject) => {
       timer = setTimeout(() => reject(new Error('SSE idle timeout')), timeoutMs);
     });
-    const readPromise = reader.read();
+    const readPromise = (typeof reader?.read === 'function')
+      ? reader.read()
+      : (typeof reader?.next === 'function' ? reader.next() : Promise.reject(new Error('Invalid stream reader')));
     const result = await Promise.race([readPromise, timeoutPromise]);
     return result;
   } finally {
     if (timer) clearTimeout(timer);
   }
 }
+

@@ -357,6 +357,26 @@ defineExpose({
       <pre class="text-xs text-gray-600 overflow-auto mt-2">{{ JSON.stringify(snippets, null, 2) }}</pre>
     </details>
 
+    <div
+      v-if="errorText"
+      class="p-2.5 bg-red-50 border border-red-200 text-red-600 text-xs rounded-lg flex items-center justify-between shadow-sm"
+      role="alert"
+    >
+      <div class="flex items-center gap-1.5 flex-1 min-w-0">
+        <span class="flex-shrink-0">⚠️</span>
+        <span class="truncate">{{ errorText }}</span>
+      </div>
+      <button
+        type="button"
+        class="text-red-400 hover:text-red-600 font-bold px-1 flex-shrink-0"
+        title="关闭提示"
+        aria-label="关闭提示"
+        @click="errorText = null"
+      >
+        ✕
+      </button>
+    </div>
+
     <div class="bg-white rounded-lg border border-gray-100 shadow-sm p-2 flex items-end gap-2">
       <textarea
         v-model="input"

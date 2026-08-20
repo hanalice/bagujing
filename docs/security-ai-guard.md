@@ -90,19 +90,20 @@
 
 - 文件：`backend/src/security/ai-guard.js`
 - 核心职责：
-  1. 解析与校验签名头。
+  1. 解析与校验签名头（无登录会话的机调）。
   2. 时间戳、nonce、防重放。
   3. Origin 校验。
   4. 限流、并发、配额控制。
   5. 审计记录写入。
   6. 向业务路由注入 `req.aiGuard` 上下文。
+  - 不校验登录 JWT：人的身份由路由级 `authenticateToken` / `requirePermission` 完成；Guard 只读取 `req.user.clientId`。
 
 ### 5.2 路由接入
 
 - 文件：`backend/src/server-express.js`
 - 关键接入点：
   - `app.use(cors(aiGuard.corsOptions))`
-  - `app.use(aiGuard.middleware)`
+  - 两条 AI 路由：`authenticateToken` → `requirePermission` → `aiGuard.middleware` → handler
   - 在 AI 路由中读取 `req.aiGuard`，执行：
     - 上游 timeout / SSE idle timeout
     - `max_tokens` 限制

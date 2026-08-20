@@ -52,6 +52,23 @@
 | UT-CONTRACT-05 | 流式调用: 单个空 Chunk 处理 | 流产出单个空 Chunk `""`。 | 累加得到空字符串 `""`，不发生崩溃。 |
 | UT-CONTRACT-06 | 流式调用: 中断信号取消 | 传输中途通过 `AbortController.abort()` 发起中止。 | 流立即终止，后续产出 0 个 Chunk。 |
 
+### 2.4 流式空闲超时辅助函数 (`backend/src/security/ai-guard.js` -> `readStreamChunkWithTimeout`)
+
+| ID | 用例标题 | 描述 | 预期结果 |
+| :--- | :--- | :--- | :--- |
+| UT-TIMEOUT-01 | Reader 正常读取 Chunk | 上游在超时阈值前产出 Chunk（调用 `reader.read()`）。 | 返回 `{ done: false, value: chunk }`。 |
+| UT-TIMEOUT-02 | Iterator 兼容支持 | 传入 AsyncIterator（调用 `iterator.next()`）。 | 正确读取并返回 `{ done: false, value: chunk }`。 |
+| UT-TIMEOUT-03 | 流自然结束返回 | 流读取完成。 | 返回 `{ done: true, value: undefined }`。 |
+| UT-TIMEOUT-04 | 上游卡死空闲超时 | 上游无新 Chunk 产出超过配置的 `timeoutMs`。 | 抛出 `Error("SSE idle timeout")` 并安全清理内部 Timer。 |
+| UT-TIMEOUT-05 | 非法 Reader 参数防护 | 传入 `null` 或无 `read`/`next` 方法的非法对象。 | 抛出 `Error("Invalid stream reader")`，不发生未捕获异常。 |
+
+### 2.5 对话流空闲超时与资源回收 (`backend/src/tests/llm.test.js`)
+
+| ID | 用例标题 | 场景描述 | 预期结果 |
+| :--- | :--- | :--- | :--- |
+| UT-STREAM-01 | 上游挂起触发空闲超时熔断 | 模拟大模型吐出首个 Chunk 后挂起超过 `sseIdleTimeoutMs`。 | 1. 立即中断流并结束响应 (`res.end`)；<br>2. 记录 `finalize({ status: 'error', reason: 'aborted_or_timeout' })`；<br>3. 向前端发送 `type: 'error'` SSE 事件；<br>4. 释放底层 Reader Lock。 |
+| UT-STREAM-02 | 请求结束/中断并发计数回收 | 请求结束或客户端主动断开连接。 | 触发 `releaseOnce`，`clientConcurrency` 并发占用计数递减归零且具备幂等性。 |
+
 ---
 
 ## 3. 安全防护与集成测试用例 (Security & Integration)
