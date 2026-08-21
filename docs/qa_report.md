@@ -21,7 +21,7 @@
 ## 2. 失败用例追踪 (Failed Test Cases)
 
 ### 2.1 后端失败用例 (Backend Failures)
-> ✅ **全部通过**：共执行 31 个后端用例，无失败用例。
+> ✅ **全部通过**：共执行 36 个后端用例，无失败用例。
 
 ### 2.2 前端失败用例 (Frontend Failures)
 > ✅ **全部通过**：共执行 5 个前端用例（Vitest 单元测试: 4，Playwright E2E: 1），无失败用例。
@@ -30,6 +30,7 @@
 
 ## 3. 缺陷修复与回归验证记录 (Bug Fix Verifications)
 
+- **Commit `4862f8e`** (2026-08-21): fix(ai-guard): [P0-4][A4] 配额保守预扣与失败回补
 - **Commit `af80ec6`** (2026-08-21): fix(ai-guard): [P0-3][A3] 移除 Guard 精确哈希内存短接，避免 chat SSE 被 JSON 短路
 - **Commit `28325db`** (2026-08-20): fix(answer): [P0-2][A1] 修复 answer/generate 审计记账中 upstream.status 未定义异常
 - **Commit `6dba252`** (2026-08-20): fix(chat): [P0-1][A2] 接入 SSE 空闲超时与并发释放机制
