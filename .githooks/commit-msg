@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
-# 去掉 Cursor Agent 自动注入的 Co-authored-by / Made-with 行。
+# ==============================================================================
+# Git Commit-msg Hook:
+# 1. 自动清理 Cursor / IDE 注入的水印标记
+# 2. 校验 Conventional Commits 格式与重要类型（fix / feat）的结构化正文
+# ==============================================================================
+
 set -euo pipefail
 
 msg_file="${1:-}"
@@ -7,10 +12,99 @@ if [ -z "$msg_file" ] || [ ! -f "$msg_file" ]; then
   exit 0
 fi
 
+# 1. 清理 Cursor / IDE 自动注入的水印行
 sed -i -E \
   -e '/^[[:space:]]*Co-authored-by:[[:space:]]*Cursor[[:space:]]*<cursoragent@cursor\.com>[[:space:]]*$/d' \
   -e '/^[[:space:]]*Made-with:[[:space:]]*Cursor[[:space:]]*$/d' \
   -e '/^[[:space:]]*Made with Cursor[[:space:]]*$/d' \
   "$msg_file"
+
+# 2. 允许通过环境变量临时跳过校验
+if [ "${COMMIT_MSG_GATE:-on}" = "off" ]; then
+  exit 0
+fi
+
+# 3. 读取并解析 Commit Message
+# 过滤单井号开头的 git 提示注释（如 "# Please enter the commit message..."），但保留 Markdown 标题 "## "
+cleaned_content=$(sed -E '/^[[:space:]]*#[^#]/d; /^[[:space:]]*#$/d' "$msg_file")
+first_line=$(echo "$cleaned_content" | sed -e '/^[[:space:]]*$/d' | head -n 1 || true)
+
+# 允许空的提交消息由 git 自行拦截
+if [ -z "$first_line" ]; then
+  exit 0
+fi
+
+# 豁免 Merge / Revert / 自动版本发布等提交
+if echo "$first_line" | grep -qE '^(Merge|Revert|Initial commit|Release|Version)'; then
+  exit 0
+fi
+
+# 4. 校验 Header 格式 (Conventional Commits)
+# 格式: <type>(<scope>): [可选前缀] <subject> 或 <type>: <subject>
+header_pattern='^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([a-zA-Z0-9_\/-]+\))?: .+$'
+
+if ! echo "$first_line" | grep -qE "$header_pattern"; then
+  echo ""
+  echo "❌ [Git Hook 拦截] Commit Message Header 不符合规范！"
+  echo "👉 当前 Header: $first_line"
+  echo "👉 正确格式: <type>(<scope>): <subject>  (例如: fix(ai-guard): 修复 SSE 超时未释放)"
+  echo "👉 允许的 type: feat, fix, refactor, docs, chore, test, perf, style, ci, build, revert"
+  echo "👉 详见文档: docs/git-commit-convention.md"
+  exit 1
+fi
+
+# 5. 校验特定 type 的结构化正文
+type_name=$(echo "$first_line" | sed -E 's/^([a-z]+)(\(.*\))?:.*/\1/')
+
+if [ "$type_name" = "fix" ]; then
+  missing_sections=()
+  if ! echo "$cleaned_content" | grep -qiE "问题现象|Symptoms"; then
+    missing_sections+=("【问题现象 (Symptoms)】")
+  fi
+  if ! echo "$cleaned_content" | grep -qiE "根因分析|Root Cause"; then
+    missing_sections+=("【根因分析 (Root Cause)】")
+  fi
+  if ! echo "$cleaned_content" | grep -qiE "解决方案|Solution"; then
+    missing_sections+=("【解决方案 (Solution)】")
+  fi
+
+  if [ ${#missing_sections[@]} -gt 0 ]; then
+    echo ""
+    echo "❌ [Git Hook 拦截] fix 类型的提交必须包含三段式结构化分析！"
+    echo "👉 缺失的关键小节: ${missing_sections[*]}"
+    echo "👉 规范模板参考 (推荐使用 【...】 避免 Git 注释剥离):"
+    echo "   【问题现象 (Symptoms)】"
+    echo "   - 描述用户可见异常与影响范围"
+    echo "   【根因分析 (Root Cause)】"
+    echo "   - 定位代码与导致异常的技术因果链"
+    echo "   【解决方案 (Solution)】"
+    echo "   - 列出改动点与测试验证结果"
+    echo "👉 详见文档: docs/git-commit-convention.md"
+    exit 1
+  fi
+fi
+
+if [ "$type_name" = "feat" ]; then
+  missing_sections=()
+  if ! echo "$cleaned_content" | grep -qiE "背景|Background"; then
+    missing_sections+=("【背景 (Background)】")
+  fi
+  if ! echo "$cleaned_content" | grep -qiE "设计|Design"; then
+    missing_sections+=("【设计概述 (Design)】")
+  fi
+
+  if [ ${#missing_sections[@]} -gt 0 ]; then
+    echo ""
+    echo "❌ [Git Hook 拦截] feat 类型的提交需包含特性背景与设计概述！"
+    echo "👉 缺失的关键小节: ${missing_sections[*]}"
+    echo "👉 规范模板参考 (推荐使用 【...】 避免 Git 注释剥离):"
+    echo "   【背景 (Background)】"
+    echo "   - 描述需求来源与痛点"
+    echo "   【设计概述 (Design)】"
+    echo "   - 核心方案、架构调整与取舍"
+    echo "👉 详见文档: docs/git-commit-convention.md"
+    exit 1
+  fi
+fi
 
 exit 0
