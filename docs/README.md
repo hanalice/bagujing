@@ -9,6 +9,7 @@
 ```
 docs/
 ├── README.md                       # 本规范说明文件（公开）
+├── git-commit-convention.md        # Git 提交规范与模板（公开）
 ├── security-ai-guard.md            # AI 网关安全防护专项白皮书（公开）
 ├── deployment-and-operations.md    # 生产部署与运维工程白皮书（公开）
 ├── why-custom-static-server.md     # 静态托管架构决策记录 ADR（公开）
