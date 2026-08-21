@@ -9,6 +9,8 @@
 #   ./scripts/automation/daily-fix.sh --yes --push    # 无人值守：提交、推送并用 gh 开 PR
 # 环境变量:
 #   ENGINE=cursor-agent|claude  指定编码 agent，默认优先 cursor-agent
+#   REVIEW_MODEL                审核 agent 的模型；不设则与编码 agent 同引擎但新开会话
+#   MAX_REVIEW_REPAIR           审核失败后允许编码 agent 返修的次数，默认 1
 #   GH_TOKEN / gh auth login    --push 时自动 gh pr create，需已登录
 # ==============================================================================
 
@@ -24,7 +26,9 @@ TASK_ID=""
 ASSUME_YES=0
 DRY_RUN=0
 DO_PUSH=0
+SKIP_REVIEW=0
 MAX_REPAIR="${MAX_REPAIR:-1}"
+MAX_REVIEW_REPAIR="${MAX_REVIEW_REPAIR:-1}"
 ENGINE="${ENGINE:-auto}"
 
 while [ $# -gt 0 ]; do
@@ -34,8 +38,9 @@ while [ $# -gt 0 ]; do
     --yes|-y) ASSUME_YES=1; shift ;;
     --dry-run) DRY_RUN=1; shift ;;
     --push) DO_PUSH=1; shift ;;
+    --skip-review) SKIP_REVIEW=1; shift ;;
     --engine) ENGINE="${2:?--engine 需要 cursor-agent|claude}"; shift 2 ;;
-    -h|--help) sed -n '2,14p' "${BASH_SOURCE[0]}"; exit 0 ;;
+    -h|--help) sed -n '2,16p' "${BASH_SOURCE[0]}"; exit 0 ;;
     *) echo "未知参数: $1" >&2; exit 2 ;;
   esac
 done
@@ -61,7 +66,7 @@ fi
 command -v "$ENGINE" >/dev/null 2>&1 || die "指定的引擎 $ENGINE 不在 PATH 中"
 [ -f "$HLD_PATH" ] || die "内部缺陷文档不存在: $HLD_PATH"
 
-# 以 stdin 接收 prompt，把补全内容打到 stdout
+# 编码 agent：可改文件、可跑测试。审核 agent：只读，禁止改代码。
 invoke_engine() {
   case "$ENGINE" in
     cursor-agent)
@@ -70,6 +75,20 @@ invoke_engine() {
     claude)
       claude -p --permission-mode acceptEdits \
         --allowedTools "Read Edit Write Grep Glob Bash(cd:*) Bash(npm test:*) Bash(npm run:*) Bash(node:*)"
+      ;;
+    *) die "不支持的引擎: $ENGINE" ;;
+  esac
+}
+
+invoke_review_engine() {
+  case "$ENGINE" in
+    cursor-agent)
+      # 新会话 + ask 模式：没有编码上下文，也不能把未完成的实现「改完再自称通过」
+      cursor-agent -p --trust --mode ask --output-format text ${REVIEW_MODEL:+--model "$REVIEW_MODEL"}
+      ;;
+    claude)
+      claude -p --permission-mode plan \
+        --allowedTools "Read Grep Glob Bash(git diff:*) Bash(git status:*) Bash(git log:*)"
       ;;
     *) die "不支持的引擎: $ENGINE" ;;
   esac
@@ -210,42 +229,141 @@ run_agent() {
   build_prompt | invoke_engine 2>&1 | tee -a "$RUN_LOG"
 }
 
-# ------------------------------------------------------------------------------
-# 4. 修复 → 质量门禁 →（失败时）有限次返修
-# ------------------------------------------------------------------------------
-run_agent
+build_review_prompt() {
+  cat <<EOF
+你是独立的代码审核员，不是这次改动的作者。仓库：$PROJECT_ROOT
+当前分支相对 $BASE_BRANCH 的 diff 就是待审对象。禁止修改任何文件，禁止 git add/commit/push。
 
-attempt=0
-while true; do
-  echo "🧪 执行质量门禁 ./scripts/qa-report.sh ..."
-  if ./scripts/qa-report.sh 2>&1 | tee -a "$RUN_LOG"; then
-    break
-  fi
+## 任务完成标准（必须逐条对照，缺一条就 FAIL）
+- 队列编号：$ID
+- 缺陷编号：$DEFECT_ID
+- 任务描述：$TASK_TEXT
 
-  attempt=$((attempt + 1))
-  if [ "$attempt" -gt "$MAX_REPAIR" ]; then
-    echo "🚫 门禁连续未通过，已保留改动在分支 $WORK_BRANCH 供人工接手。"
-    exit 1
-  fi
+## 内部设计文档中的原文
+$CONTEXT
 
-  echo "🔁 门禁未通过，发起第 $attempt 次返修..."
-  EXTRA_INSTRUCTION="## 上一轮结果
+## 请检查
+1. 用 \`git diff $BASE_BRANCH\` 看工作区相对基线的完整 diff（此时尚未 commit，不要只用 HEAD）。是否覆盖完成标准的全部动作，而不是只做了容易的一半。
+2. 新增测试是否锁住完成标准里的真正风险（例如把「失败应回补」测成正确行为、从而把洞固化下来，必须 FAIL）。
+3. 测试全绿不等于任务完成。实现与 HLD 完成标准不一致，即使测试通过也判 FAIL。
+
+## 输出格式（脚本只认最后一次出现的 REVIEW_VERDICT 行）
+先用中文写理由：对照了完成标准的哪几条、diff 里的证据、测试是否锁住了真正风险。
+然后单独一行：
+REVIEW_VERDICT: PASS
+或
+REVIEW_VERDICT: FAIL
+FAIL 时紧接着用 "- " 列出缺口，每条一行。不要在分析正文里写 REVIEW_VERDICT 示例。
+EOF
+}
+
+extract_review_verdict() {
+  local log="$1"
+  awk '
+    match($0, /REVIEW_VERDICT:[[:space:]]*(PASS|FAIL)/) {
+      line=$0
+      if (toupper(line) ~ /FAIL/) v="FAIL"
+      else if (toupper(line) ~ /PASS/) v="PASS"
+    }
+    END { print v }
+  ' "$log"
+}
+
+run_review() {
+  local review_log="$LOG_DIR/daily-fix-$ID-review-$(date +%Y%m%d-%H%M%S).log"
+  echo "🔎 独立审核 agent 对照完成标准审 diff（只读，日志：$review_log）..."
+  build_review_prompt | invoke_review_engine 2>&1 | tee -a "$RUN_LOG" | tee "$review_log"
+  local verdict_line
+  verdict_line="$(extract_review_verdict "$review_log")"
+  case "$(printf '%s' "$verdict_line" | tr '[:lower:]' '[:upper:]')" in
+    *PASS*)
+      echo "✅ 审核通过"
+      REVIEW_GAPS=""
+      return 0
+      ;;
+    *FAIL*)
+      REVIEW_GAPS="$(awk '
+        { buf[NR]=$0 }
+        /REVIEW_VERDICT:/ { last=NR }
+        END {
+          if (!last) exit
+          for (i=last+1; i<=NR; i++) if (buf[i] ~ /^- /) print buf[i]
+        }
+      ' "$review_log")"
+      [ -n "$REVIEW_GAPS" ] || REVIEW_GAPS="审核未列出具体缺口，请对照 HLD 完成标准自行补全。"
+      echo "🚫 审核未通过："
+      echo "$REVIEW_GAPS"
+      return 1
+      ;;
+    *)
+      REVIEW_GAPS="审核 agent 未输出可解析的 REVIEW_VERDICT 行，按失败处理（默认拒绝提交）。"
+      echo "🚫 $REVIEW_GAPS"
+      return 1
+      ;;
+  esac
+}
+
+run_gate_with_repair() {
+  local attempt=0
+  while true; do
+    echo "🧪 执行质量门禁 ./scripts/qa-report.sh ..."
+    if ./scripts/qa-report.sh 2>&1 | tee -a "$RUN_LOG"; then
+      echo "✅ 质量门禁通过"
+      return 0
+    fi
+    attempt=$((attempt + 1))
+    if [ "$attempt" -gt "$MAX_REPAIR" ]; then
+      echo "🚫 门禁连续未通过，已保留改动在分支 $WORK_BRANCH 供人工接手。"
+      return 1
+    fi
+    echo "🔁 门禁未通过，发起第 $attempt 次返修..."
+    EXTRA_INSTRUCTION="## 上一轮结果
 你的改动没有通过质量门禁。以下是 docs/qa_report.md 中的失败详情，请定位并修复，不要回退已完成的功能改动：
 
 $(sed -n '/## 2. 失败用例追踪/,/## 3./p' "$PROJECT_ROOT/docs/qa_report.md")"
-  run_agent
-done
-
-echo "✅ 质量门禁通过"
+    run_agent
+  done
+}
 
 # ------------------------------------------------------------------------------
-# 5. 展示改动并确认
+# 4. 修复 → 质量门禁 → 独立审核 →（失败时）有限次返修
 # ------------------------------------------------------------------------------
+run_agent
+
+run_gate_with_repair || exit 1
+
 if [ -z "$(git status --porcelain)" ]; then
   echo "⚠️ 没有产生任何代码改动，回退分支。"
   git checkout "$BASE_BRANCH" >/dev/null 2>&1
   git branch -D "$WORK_BRANCH" >/dev/null 2>&1
   exit 1
+fi
+
+if [ "$SKIP_REVIEW" = "1" ]; then
+  echo "⚠️ 已跳过独立审核（--skip-review），完成标准未由第二 agent 核对。"
+else
+  review_attempt=0
+  while true; do
+    if run_review; then
+      break
+    fi
+    review_attempt=$((review_attempt + 1))
+    if [ "$review_attempt" -gt "$MAX_REVIEW_REPAIR" ]; then
+      echo "🚫 审核未通过且返修次数用尽，拒绝提交。改动保留在 $WORK_BRANCH。"
+      echo "   缺口："
+      echo "$REVIEW_GAPS"
+      exit 1
+    fi
+    echo "🔁 按审核缺口发起第 $review_attempt 次返修..."
+    EXTRA_INSTRUCTION="## 独立审核未通过——禁止把当前实现当成已完成
+审核员对照 HLD 完成标准列出的缺口：
+
+$REVIEW_GAPS
+
+请补全实现与回归测试。不要修改 docs/internal/，不要 git commit。"
+    run_agent
+    run_gate_with_repair || exit 1
+  done
 fi
 
 echo ""
