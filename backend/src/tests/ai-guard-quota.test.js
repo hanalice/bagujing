@@ -37,6 +37,18 @@ function restoreEnv() {
   }
 }
 
+// 审计走的是异步落盘队列，读取前需等待写入完成
+async function readAuditLines(expectedCount, timeoutMs = 2000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const raw = fs.existsSync(AUDIT_FILE) ? fs.readFileSync(AUDIT_FILE, 'utf8').trim() : '';
+    const lines = raw ? raw.split('\n') : [];
+    if (lines.length >= expectedCount) return lines.map((line) => JSON.parse(line));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error(`审计日志在 ${timeoutMs}ms 内未写满 ${expectedCount} 条`);
+}
+
 function mockHttp({ method, path: reqPath, body }) {
   let statusCode = 200;
   const jsonCalls = [];
@@ -142,7 +154,7 @@ describe('A4: quota conservative pre-debit & refund on failure', () => {
     }
   });
 
-  it('failure/abort refunds pre-debit so daily quota can serve the next request', async () => {
+  it('failure before the upstream call refunds the pre-debit entirely', async () => {
     process.env.AI_AUDIT_FILE_PATH = AUDIT_FILE;
     process.env.AI_REQUIRE_SIGNED_HEADERS = 'false';
     process.env.AI_MAX_COMPLETION_TOKENS = '4096';
@@ -163,13 +175,89 @@ describe('A4: quota conservative pre-debit & refund on failure', () => {
     assert.equal(firstNext, 1);
     first.req.aiGuard.finalize({
       status: 'error',
-      reason: 'aborted_or_timeout',
+      reason: 'missing_api_key',
+      upstreamReached: false,
     });
 
     const second = mockHttp({ method: 'POST', path: '/api/chat', body: { message: 'hi again' } });
     let secondNext = 0;
     await guard.middleware(second.req, second.res, () => { secondNext += 1; });
-    assert.equal(secondNext, 1, 'after failure refund, next request must still be admitted');
+    assert.equal(secondNext, 1, 'nothing was consumed upstream, so the day quota must be intact');
     assert.equal(second.statusCode, 200);
+  });
+
+  it('abort after partial streaming still bills prompt plus what was streamed', async () => {
+    process.env.AI_AUDIT_FILE_PATH = AUDIT_FILE;
+    process.env.AI_REQUIRE_SIGNED_HEADERS = 'false';
+    process.env.AI_MAX_COMPLETION_TOKENS = '4096';
+    process.env.AI_QUOTA_CONSERVATIVE_COMPLETION_TOKENS = '400';
+    // Budget admits the first request; a full refund would let a second one in,
+    // while billing the partial stream (~250 tokens) must keep it out.
+    process.env.AI_GLOBAL_DAILY_TOKEN_LIMIT = '600';
+    process.env.AI_GLOBAL_DAILY_REQUEST_LIMIT = '100';
+    process.env.AI_RATE_LIMIT_CLIENT_PER_MINUTE = '100';
+    process.env.AI_RATE_LIMIT_CLIENT_PER_HOUR = '1000';
+    process.env.AI_RATE_LIMIT_IP_PER_MINUTE = '100';
+    process.env.AI_MAX_CONCURRENCY_PER_CLIENT = '10';
+
+    const guard = createAiGuard({ jwtSecret: 'test' });
+    const partialStream = 'x'.repeat(1000); // 已经流给客户端、上游照样计费的内容
+
+    const first = mockHttp({ method: 'POST', path: '/api/chat', body: { message: 'hi' } });
+    let firstNext = 0;
+    await guard.middleware(first.req, first.res, () => { firstNext += 1; });
+    assert.equal(firstNext, 1);
+    first.req.aiGuard.finalize({
+      status: 'error',
+      reason: 'aborted_or_timeout',
+      completionText: partialStream,
+      upstreamReached: true,
+    });
+
+    const second = mockHttp({ method: 'POST', path: '/api/chat', body: { message: 'hi again' } });
+    let secondNext = 0;
+    await guard.middleware(second.req, second.res, () => { secondNext += 1; });
+    assert.equal(secondNext, 0, '断流不应退还已经产生的消耗，否则可反复白嫖长回答');
+    assert.equal(second.statusCode, 429);
+  });
+
+  it('audit records zero tokens only when the upstream was never called', async () => {
+    process.env.AI_AUDIT_FILE_PATH = AUDIT_FILE;
+    process.env.AI_REQUIRE_SIGNED_HEADERS = 'false';
+    process.env.AI_QUOTA_CONSERVATIVE_COMPLETION_TOKENS = '400';
+    process.env.AI_GLOBAL_DAILY_TOKEN_LIMIT = '100000';
+    process.env.AI_GLOBAL_DAILY_REQUEST_LIMIT = '100';
+    process.env.AI_RATE_LIMIT_CLIENT_PER_MINUTE = '100';
+    process.env.AI_RATE_LIMIT_CLIENT_PER_HOUR = '1000';
+    process.env.AI_RATE_LIMIT_IP_PER_MINUTE = '100';
+    process.env.AI_MAX_CONCURRENCY_PER_CLIENT = '10';
+
+    const guard = createAiGuard({ jwtSecret: 'test' });
+
+    const aborted = mockHttp({ method: 'POST', path: '/api/chat', body: { message: 'hi' } });
+    await guard.middleware(aborted.req, aborted.res, () => {});
+    aborted.req.aiGuard.finalize({
+      status: 'error',
+      reason: 'aborted_or_timeout',
+      completionText: 'partial answer',
+      upstreamReached: true,
+    });
+
+    const rejected = mockHttp({ method: 'POST', path: '/api/chat', body: { message: 'hi' } });
+    await guard.middleware(rejected.req, rejected.res, () => {});
+    rejected.req.aiGuard.finalize({
+      status: 'error',
+      reason: 'missing_api_key',
+      upstreamReached: false,
+    });
+
+    const lines = await readAuditLines(2);
+    const abortedLog = lines.find((l) => l.reason === 'aborted_or_timeout');
+    const rejectedLog = lines.find((l) => l.reason === 'missing_api_key');
+
+    assert.ok(abortedLog.totalTokens > 0, '已发往上游的请求必须留下真实消耗记录，供后续对账');
+    assert.ok(abortedLog.completionTokens > 0);
+    assert.equal(rejectedLog.totalTokens, 0);
+    assert.equal(rejectedLog.promptTokens, 0);
   });
 });

@@ -626,7 +626,7 @@ export function createAiGuard({ dbPool = null, redis = null, jwtSecret = null } 
       maxCompletionTokens: config.maxCompletionTokens,
       upstreamTimeoutMs: config.upstreamTimeoutMs,
       sseIdleTimeoutMs: config.sseIdleTimeoutMs,
-      finalize: ({ completionText = '', status = 'ok', reason = 'completed', upstreamStatus = null } = {}) => {
+      finalize: ({ completionText = '', status = 'ok', reason = 'completed', upstreamStatus = null, upstreamReached = true } = {}) => {
         metrics.totalRequests += 1;
         const duration = Date.now() - startedAt;
         if (duration < 1000) metrics.latencyBuckets[0]++;
@@ -634,23 +634,25 @@ export function createAiGuard({ dbPool = null, redis = null, jwtSecret = null } 
         else if (duration < 10000) metrics.latencyBuckets[2]++;
         else metrics.latencyBuckets[3]++;
 
-        const isFailure = status === 'error';
-        const completionTokens = isFailure
-          ? 0
-          : estimateTokensByText(completionText);
-        const totalTokens = isFailure ? 0 : (promptTokens + completionTokens);
+        // 只有请求根本没发到上游（缺 Key、参数非法等）才全额回补预扣。一旦已经发出，
+        // 即便中途 abort 或超时，prompt 与已流出的内容供应商照样计费，必须按实结算，
+        // 否则客户端读到九成再断流即可零配额白嫖。
+        const completionTokens = upstreamReached ? estimateTokensByText(completionText) : 0;
+        const billedPromptTokens = upstreamReached ? promptTokens : 0;
+        const totalTokens = billedPromptTokens + completionTokens;
 
         if (!quotaFinalized) {
           quotaFinalized = true;
-          if (isFailure) {
-            adjustQuotaTokens({ clientId, projectedTokens, actualTokens: 0, refund: true });
-          } else {
-            adjustQuotaTokens({ clientId, projectedTokens, actualTokens: totalTokens, refund: false });
-          }
+          adjustQuotaTokens({
+            clientId,
+            projectedTokens,
+            actualTokens: totalTokens,
+            refund: !upstreamReached,
+          });
         }
 
         metrics.totalTokens += totalTokens;
-        if (isFailure) metrics.totalErrors++;
+        if (status === 'error') metrics.totalErrors++;
 
         if (missionId && currentDbPool) {
           updateMissionTokens(currentDbPool, missionId, totalTokens).catch(err => {
@@ -669,7 +671,7 @@ export function createAiGuard({ dbPool = null, redis = null, jwtSecret = null } 
           ipHash: sha256Hex(ip),
           method: req.method,
           path: req.path,
-          promptTokens,
+          promptTokens: billedPromptTokens,
           completionTokens,
           totalTokens,
           upstreamStatus,
