@@ -125,6 +125,23 @@
 
 > 说明：当前已通过 `JWT (JSON Web Token)` 完成用户身份上浮。AI 路由优先校验 `Authorization: Bearer <token>`，并结合 `ai-guard` 中间件实现“身份 + 签名”的双重验证。
 
+### 5.4 回答缓存（精确哈希 vs SQLite，二选一）
+
+Guard **不再**对 AI 路由做进程内响应短接。
+
+| 路由 | 缓存 | 说明 |
+|---|---|---|
+| `POST /api/chat` | 无 | 必须是 SSE。禁止缓存命中后 `res.json`（协议会错乱）。 |
+| `POST /api/problems/:id/answer/generate` | SQLite `details.answer` | 题已有非空解析且未 `force` 时 `finalize({ reason: 'cached_answer' })` 后返回 JSON。 |
+
+已删除的 `semanticCache` **不是**语义相似缓存，key 本就是精确哈希：
+
+```text
+sha256Hex(`${method}:${path}:${JSON.stringify(body)}`)
+```
+
+同一路径下只有完全相同的 JSON body 才会命中。它与 SQLite 题解缓存并存时会双源、过期不一致，故只保留 SQLite。
+
 ---
 
 ## 6. 为什么这样设计（设计决策解释）

@@ -204,7 +204,6 @@ export function createAiGuard({ dbPool = null, redis = null, jwtSecret = null } 
   const routeIpMinute = new Map();
   const clientConcurrency = new Map();
   const riskEvents = new Map();
-  const semanticCache = new Map(); // Simple in-memory cache for now
   const nonceCache = new Set(); // Fallback for when Redis is missing
 
   // Prometheus-style metrics
@@ -585,27 +584,8 @@ export function createAiGuard({ dbPool = null, redis = null, jwtSecret = null } 
     res.once('close', releaseOnce);
     res.once('finish', releaseOnce);
 
-    // 0. Check Semantic Cache
-    const bodyTextForCache = JSON.stringify(req.body ?? {});
-    const cacheKey = sha256Hex(`${req.method}:${req.path}:${bodyTextForCache}`);
-    const cached = semanticCache.get(cacheKey);
-    if (cached && (now - cached.ts < 24 * 60 * 60 * 1000)) { // 24h cache
-      releaseOnce();
-      appendAudit({
-        ts: new Date().toISOString(), requestId, decision: 'allow', status: 'ok',
-        reason: 'semantic_cache_hit', route: routeKey, clientId, ipHash: sha256Hex(ip),
-        method: req.method, path: req.path, totalTokens: 0, durationMs: 0
-      });
-      res.setHeader('X-Cache', 'HIT');
-      // For answer_generate, we need to return the ID as well to match frontend expectations
-      let data = { answer: cached.text, cached: true };
-      if (routeKey === 'answer_generate') {
-        const parts = req.path.split('/');
-        const id = parts[parts.length - 3]; // URL: /api/problems/:id/answer/generate
-        data.id = Number(id);
-      }
-      return res.json({ code: 0, data, message: 'success' });
-    }
+    // Chat is SSE: never short-circuit with res.json.
+    // answer/generate cache is SQLite `details.answer` (see server-express), not an in-memory body hash.
 
     const missionId = req.header('x-maf-mission-id');
 
@@ -634,14 +614,6 @@ export function createAiGuard({ dbPool = null, redis = null, jwtSecret = null } 
         metrics.totalTokens += promptTokens + completionTokens;
 
         if (status === 'error') metrics.totalErrors++;
-
-        // Cache successful non-streaming responses if applicable
-        if (status === 'ok' && completionText && (routeKey === 'answer_generate' || routeKey === 'chat')) {
-          // Use the same strong cache key logic
-          const bodyTextForCache = JSON.stringify(req.body ?? {});
-          const cacheKey = sha256Hex(`${req.method}:${req.path}:${bodyTextForCache}`);
-          semanticCache.set(cacheKey, { text: completionText, ts: Date.now() });
-        }
 
         const totalTokens = promptTokens + completionTokens;
 

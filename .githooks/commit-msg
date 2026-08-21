@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# 去掉 Cursor Agent 自动注入的 Co-authored-by / Made-with 行。
+set -euo pipefail
+
+msg_file="${1:-}"
+if [ -z "$msg_file" ] || [ ! -f "$msg_file" ]; then
+  exit 0
+fi
+
+sed -i -E \
+  -e '/^[[:space:]]*Co-authored-by:[[:space:]]*Cursor[[:space:]]*<cursoragent@cursor\.com>[[:space:]]*$/d' \
+  -e '/^[[:space:]]*Made-with:[[:space:]]*Cursor[[:space:]]*$/d' \
+  -e '/^[[:space:]]*Made with Cursor[[:space:]]*$/d' \
+  "$msg_file"
+
+exit 0

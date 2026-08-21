@@ -5,9 +5,11 @@
   "type": "module",
   "main": "src/server-express.js",
   "scripts": {
-    "test": "node --test src/tests/llm.test.js",
     "start": "node src/server-express.js",
     "lint": "eslint --ext .js src",
+    "test": "node --test \"src/tests/**/*.test.js\"",
+    "test:watch": "node --test --watch \"src/tests/**/*.test.js\"",
+    "test:coverage": "node --test --experimental-test-coverage --test-coverage-include=src/** --test-coverage-exclude=src/tests/** \"src/tests/**/*.test.js\"",
     "import-data": "node scripts/import-ndjson-to-sqlite.js",
     "import-data:categories": "node scripts/import-ndjson-to-sqlite.js --only categories",
     "import-data:problems": "node scripts/import-ndjson-to-sqlite.js --only problems",

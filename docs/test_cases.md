@@ -76,6 +76,13 @@
 | UT-AUDIT-01 | 生成成功安全记账 | 同步 `invoke` 成功生成 HTML 答案并传入 `upstreamStatus: 200` 调用 `finalize`。 | 正常完成审计记录与 Token 统计，无未定义变量异常。 |
 | UT-AUDIT-02 | 缓存命中安全记账 | 命中已有缓存答案并传入 `upstreamStatus: null` 调用 `finalize`。 | 正常完成 `cached_answer` 记账，无异常抛出。 |
 
+### 2.7 Guard 响应缓存策略 (`backend/src/tests/ai-guard-cache.test.js`)
+
+| ID | 用例标题 | 场景描述 | 预期结果 |
+| :--- | :--- | :--- | :--- |
+| UT-CACHE-01 | chat 禁止 JSON 短接, 禁止缓存 | 相同 body 连续两次 `POST /api/chat`，第一次 `finalize` 成功。 | 两次都 `next()`；中间件从不 `res.json`。 |
+| UT-CACHE-02 | generate 不走 Guard 内存短接 | 相同 body 连续两次 `POST /api/problems/:id/answer/generate`。 | 两次都进入 handler；JSON 缓存由 SQLite `cached_answer` 负责。 |
+
 ---
 
 ## 3. 安全防护与集成测试用例 (Security & Integration)
