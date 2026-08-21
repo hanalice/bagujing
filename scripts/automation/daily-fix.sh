@@ -6,9 +6,10 @@
 #   ./scripts/automation/daily-fix.sh                 # 取队列中第一个 auto/todo 项，提交前人工确认
 #   ./scripts/automation/daily-fix.sh --task A4       # 指定任务号
 #   ./scripts/automation/daily-fix.sh --dry-run       # 只打印将要下发的 prompt
-#   ./scripts/automation/daily-fix.sh --yes --push    # 无人值守（供 cron 使用）
+#   ./scripts/automation/daily-fix.sh --yes --push    # 无人值守：提交、推送并用 gh 开 PR
 # 环境变量:
 #   ENGINE=cursor-agent|claude  指定编码 agent，默认优先 cursor-agent
+#   GH_TOKEN / gh auth login    --push 时自动 gh pr create，需已登录
 # ==============================================================================
 
 set -euo pipefail
@@ -86,6 +87,13 @@ check_auth() {
       die "claude 登录态失效，请先执行 claude login（cron 场景改用 ANTHROPIC_API_KEY）"
       ;;
   esac
+}
+
+check_gh() {
+  command -v gh >/dev/null 2>&1 || die "未找到 gh CLI（已安装位置: ~/.local/bin/gh），请确认 PATH"
+  if ! gh auth status -h github.com >/dev/null 2>&1; then
+    die "gh 未登录，无法自动开 PR。请先执行: gh auth login --hostname github.com --git-protocol ssh --web"
+  fi
 }
 
 # ------------------------------------------------------------------------------
@@ -188,6 +196,7 @@ fi
 # ------------------------------------------------------------------------------
 [ -z "$(git status --porcelain)" ] || die "工作区有未提交改动，请先处理干净再运行"
 check_auth
+[ "$DO_PUSH" = "1" ] && check_gh
 
 BASE_BRANCH="$(git rev-parse --abbrev-ref HEAD)"
 WORK_BRANCH="auto-fix/${ID,,}-$(date +%Y%m%d)"
@@ -298,7 +307,17 @@ echo "📄 已将 $ID 在内部队列中标记为 done"
 
 if [ "$DO_PUSH" = "1" ]; then
   git push -u origin "$WORK_BRANCH"
-  echo "🚀 已推送分支 $WORK_BRANCH，请在 GitHub 上发起 PR 合入 $BASE_BRANCH"
+  echo "🚀 已推送分支 $WORK_BRANCH"
+
+  pr_title="$(head -n 1 "$MSG_FILE")"
+  if gh pr view --json url -q .url 2>/dev/null; then
+    echo "ℹ️ 该分支已有 PR，跳过创建。"
+  else
+    pr_url="$(gh pr create --base "$BASE_BRANCH" --head "$WORK_BRANCH" --title "$pr_title" --body-file "$MSG_FILE")"
+    echo "📬 已自动创建 PR: $pr_url"
+  fi
 else
-  echo "ℹ️ 未推送。确认无误后执行：git push -u origin $WORK_BRANCH"
+  echo "ℹ️ 未推送。确认无误后执行："
+  echo "    git push -u origin $WORK_BRANCH"
+  echo "    gh pr create --base $BASE_BRANCH --head $WORK_BRANCH --fill"
 fi
