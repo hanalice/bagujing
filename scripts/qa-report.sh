@@ -83,9 +83,18 @@ const payload = {
 fs.writeFileSync('$TEMP_JSON', JSON.stringify(payload));
 "
 
-# 5. 调用格式化解析器生成 docs/qa_report.md
+# 5. 调用格式化解析器生成 docs/qa_report.md（其退出码即为质量门禁裁决）
+set +e
 node "$PROJECT_ROOT/scripts/format-qa-report.js" "$TEMP_JSON"
+GATE_CODE=$?
+set -e
 
 echo "========================================================"
-echo "🎉 全栈 QA 测试流程执行完毕！"
+if [ $GATE_CODE -eq 0 ]; then
+  echo "🎉 全栈 QA 测试流程执行完毕！"
+else
+  echo "🚫 全栈 QA 未通过质量门禁（如需强行放行：QA_GATE=off git commit ...）"
+fi
 echo "========================================================"
+
+exit $GATE_CODE

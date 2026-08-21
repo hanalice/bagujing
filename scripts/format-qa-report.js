@@ -120,6 +120,17 @@ function extractBackendFailures(rawOutput, stats) {
   return `> ⚠️ **检测到 ${stats.fail} 个后端失败用例**：\n\n\`\`\`\n${failureBlocks.join('\n---\n')}\n\`\`\``;
 }
 
+// 工具链缺失（未装 vitest / 未下载 Playwright 浏览器）不算质量缺陷，不应阻断提交
+function isToolchainMissing(clean) {
+  return /vitest: not found|Executable doesn't exist at|npx playwright install/i.test(clean);
+}
+
+function renderStatusCell(status) {
+  if (status === 'PASS') return '✅ PASS';
+  if (status === 'SKIP') return '⚪ SKIPPED';
+  return `❌ ${status}`;
+}
+
 // 5. 解析前端测试输出 (Vitest + Playwright)
 function parseFrontendOutput(rawOutput, exitCode) {
   const clean = stripAnsi(rawOutput);
@@ -144,7 +155,10 @@ function parseFrontendOutput(rawOutput, exitCode) {
   const pwDurationMatch = clean.match(/passed\s+\(([\d\.]+s)\)/i);
   const duration = pwDurationMatch ? pwDurationMatch[1] : '~3.5s';
 
-  const status = exitCode === 0 && totalFail === 0 ? 'PASS' : 'FAIL';
+  let status = exitCode === 0 && totalFail === 0 ? 'PASS' : 'FAIL';
+  if (status === 'FAIL' && isToolchainMissing(clean)) {
+    status = 'SKIP';
+  }
 
   return {
     total: total > 0 ? total : (exitCode === 0 ? 5 : 1),
@@ -164,6 +178,9 @@ function extractFrontendFailures(rawOutput, stats) {
   }
 
   const clean = stripAnsi(rawOutput).trim();
+  if (stats.status === 'SKIP') {
+    return `> ⚪ **已跳过**：本机缺少前端测试工具链（vitest 未安装或 Playwright 浏览器未下载），未纳入准出判定。\n\n\`\`\`\n${clean}\n\`\`\``;
+  }
   return `> ❌ **前端测试执行失败 (Fail: ${stats.fail})**：\n\n\`\`\`\n${clean}\n\`\`\``;
 }
 
@@ -190,14 +207,18 @@ function renderMarkdownReport(data) {
     frontendFailuresText,
     gitFixesText,
     allPassed,
+    hasBlockingFailure,
   } = data;
 
-  const overallStatus = allPassed
-    ? '✅ **ALL PASSED (符合质量准出标准)**'
-    : '⚠️ **FAIL (存在未通过项，需排查)**';
-  const goDecision = allPassed
-    ? '🟢 **GO（符合发布质量标准，准予交付部署）**'
-    : '🔴 **NO-GO（存在测试阻碍项，禁止发布）**';
+  let overallStatus = '⚠️ **PARTIAL (存在跳过项，未完整验证)**';
+  let goDecision = '🟡 **CONDITIONAL GO（存在未执行的测试项，需人工确认）**';
+  if (hasBlockingFailure) {
+    overallStatus = '❌ **FAIL (存在未通过项，需排查)**';
+    goDecision = '🔴 **NO-GO（存在测试阻碍项，禁止发布）**';
+  } else if (allPassed) {
+    overallStatus = '✅ **ALL PASSED (符合质量准出标准)**';
+    goDecision = '🟢 **GO（符合发布质量标准，准予交付部署）**';
+  }
 
   return `# 质量保证与测试执行报告 (QA Execution Report)
 
@@ -213,9 +234,9 @@ function renderMarkdownReport(data) {
 
 | 测试套件 | 执行命令 | 用例 / 项数 | 通过 (Pass) | 失败 (Fail) | 耗时 | 判定结果 |
 | :--- | :--- | :---: | :---: | :---: | :---: | :---: |
-| **后端核心单元测试** | \`cd backend && npm test\` | ${backendStats.total} | ${backendStats.pass} | ${backendStats.fail} | ${backendStats.duration} | ${backendStats.status === 'PASS' ? '✅ PASS' : '❌ ' + backendStats.status} |
-| **前端单元与 E2E 测试** | \`cd frontend && npm test\` | ${frontendStats.total} | ${frontendStats.pass} | ${frontendStats.fail} | ${frontendStats.duration} | ${frontendStats.status === 'PASS' ? '✅ PASS' : '❌ ' + frontendStats.status} |
-| **数据库完整性排查** | \`node backend/scripts/verify-db.js\` | ${dbStats.items} | ${dbStats.status === 'PASS' ? dbStats.items : 0} | ${dbStats.status === 'PASS' ? 0 : 1} | ~85ms | ${dbStats.status === 'PASS' ? '✅ PASS' : '❌ FAIL'} |
+| **后端核心单元测试** | \`cd backend && npm test\` | ${backendStats.total} | ${backendStats.pass} | ${backendStats.fail} | ${backendStats.duration} | ${renderStatusCell(backendStats.status)} |
+| **前端单元与 E2E 测试** | \`cd frontend && npm test\` | ${frontendStats.total} | ${frontendStats.pass} | ${frontendStats.fail} | ${frontendStats.duration} | ${renderStatusCell(frontendStats.status)} |
+| **数据库完整性排查** | \`node backend/scripts/verify-db.js\` | ${dbStats.items} | ${dbStats.status === 'PASS' ? dbStats.items : 0} | ${dbStats.status === 'PASS' ? 0 : 1} | ~85ms | ${renderStatusCell(dbStats.status)} |
 
 ---
 
@@ -237,10 +258,10 @@ ${gitFixesText}
 
 ## 4. 上线准出门禁结论 (DoD Sign-off)
 
-- [x] **无高危缺陷**：所有核心逻辑及边界条件均通过严格单测与安全渗透验证。
-- [x] **测试覆盖完备**：核心大模型适配层、前端主路径 E2E 达到 100% 自动化覆盖。
-- [x] **架构自愈机制生效**：防空指针、防时钟漂移、防流式悬挂机制全部在列。
-- [x] **最终交付裁决**：${goDecision}
+- [${backendStats.status === 'PASS' ? 'x' : ' '}] **后端核心用例通过**：LLM 适配层、AI Guard 记账与流式生命周期单测全绿。
+- [${frontendStats.status === 'PASS' ? 'x' : ' '}] **前端单测与 E2E 通过**：主路径鉴权与助教流式渲染自动化覆盖。
+- [${dbStats.status === 'PASS' ? 'x' : ' '}] **数据库完整性校验通过**：AI Clients 与 AI Audit Logs 表结构与数据可读。
+- [${allPassed ? 'x' : ' '}] **最终交付裁决**：${goDecision}
 `;
 }
 
@@ -267,7 +288,9 @@ function main() {
   const frontendFailuresText = extractFrontendFailures(rawData.frontendOutput || '', frontendStats);
   const gitFixesText = extractGitFixes();
 
-  const allPassed = backendStats.status === 'PASS' && frontendStats.status === 'PASS' && dbStats.status === 'PASS';
+  const allStats = [backendStats, frontendStats, dbStats];
+  const allPassed = allStats.every((s) => s.status === 'PASS');
+  const hasBlockingFailure = allStats.some((s) => s.status === 'FAIL');
 
   const reportMarkdown = renderMarkdownReport({
     version,
@@ -280,10 +303,21 @@ function main() {
     frontendFailuresText,
     gitFixesText,
     allPassed,
+    hasBlockingFailure,
   });
 
   fs.writeFileSync(REPORT_PATH, reportMarkdown, 'utf8');
   console.log(`\n📄 QA 报告已生成: ${REPORT_PATH}`);
+
+  if (!hasBlockingFailure) return;
+
+  if (process.env.QA_GATE === 'off') {
+    console.warn('⚠️ 存在未通过项，但 QA_GATE=off 已放行（不计入准出）。');
+    return;
+  }
+
+  console.error('❌ 质量门禁未通过：存在失败的测试套件，详见上方报告。');
+  process.exit(1);
 }
 
 main();
