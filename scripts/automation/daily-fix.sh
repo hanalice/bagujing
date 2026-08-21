@@ -157,9 +157,22 @@ $CONTEXT
 3. 后端测试命令是 \`cd backend && npm test\`（node:test），自己跑一遍确认通过。
 4. 不要修改 docs/internal/ 下的任何文件，状态回写由调用方脚本负责。
 5. 不要执行任何 git 命令（add / commit / push / checkout 一律禁止）。
-6. 完成后，把一行符合 Conventional Commits 的提交标题写入文件 $MSG_FILE，
-   格式为：fix(<scope>): [$DEFECT_ID][$ID] <不超过 40 字的中文摘要>
-   scope 取主要改动模块，例如 ai-guard / chat / answer / llm。
+6. 完成后，把**完整的提交信息**（标题加正文）写入文件 $MSG_FILE，格式必须满足
+   docs/git-commit-convention.md 与 .githooks/commit-msg 的校验，否则提交会被拦下：
+
+   第一行：fix(<scope>): [$DEFECT_ID][$ID] <不超过 40 字的中文摘要>
+   （scope 取主要改动模块，例如 ai-guard / chat / answer / llm）
+   第二行：空行
+   之后依次给出三个小节，小节标题必须使用【】包裹，不要用 # 开头：
+
+   【问题现象 (Symptoms)】
+   - 用户可见的异常表现与影响范围
+   【根因分析 (Root Cause)】
+   - 定位到的代码位置与导致异常的因果链
+   【解决方案 (Solution)】
+   - 具体改动点，以及新增/修改了哪些测试、验证结果如何
+
+   正文用中文，只陈述这次改动的事实，不要写推销式总结。
 
 ${EXTRA_INSTRUCTION:-}
 EOF
@@ -232,13 +245,38 @@ git --no-pager diff --stat
 echo "==========================================="
 git --no-pager diff
 
-COMMIT_MSG="$(head -n 1 "$MSG_FILE" 2>/dev/null | tr -d '\r' || true)"
-if ! printf '%s' "$COMMIT_MSG" | grep -qE '^(feat|fix|chore|refactor|test|docs|perf)(\(.+\))?: '; then
-  COMMIT_MSG="fix(llm-pipeline): [$DEFECT_ID][$ID] $TASK_TEXT"
+# commit-msg 钩子要求 fix 类型带三段式正文，兜底信息也必须满足，否则提交会被拦下
+write_fallback_msg() {
+  cat > "$MSG_FILE" <<EOF
+fix(llm-pipeline): [$DEFECT_ID][$ID] $TASK_TEXT
+
+【问题现象 (Symptoms)】
+- 内部缺陷队列登记项 $ID（缺陷号 $DEFECT_ID）：$TASK_TEXT
+
+【根因分析 (Root Cause)】
+- 详见 docs/internal/HLD-llm-call-pipeline.md 中 $DEFECT_ID 的证据与影响说明。
+
+【解决方案 (Solution)】
+- 由 scripts/automation/daily-fix.sh 驱动 $ENGINE 完成改动，已通过全栈质量门禁。
+- 注意：agent 未按规范写出提交信息，本条为脚本兜底生成，建议人工补充细节。
+EOF
+}
+
+msg_header="$(head -n 1 "$MSG_FILE" 2>/dev/null | tr -d '\r' || true)"
+msg_body="$(cat "$MSG_FILE" 2>/dev/null || true)"
+if ! printf '%s' "$msg_header" | grep -qE '^(feat|fix|chore|refactor|test|docs|perf)(\(.+\))?: ' \
+  || ! printf '%s' "$msg_body" | grep -qE '问题现象|Symptoms' \
+  || ! printf '%s' "$msg_body" | grep -qE '根因分析|Root Cause' \
+  || ! printf '%s' "$msg_body" | grep -qE '解决方案|Solution'; then
+  echo "⚠️ agent 给出的提交信息不符合 docs/git-commit-convention.md，改用脚本兜底模板。"
+  write_fallback_msg
 fi
 
 echo ""
-echo "📝 提交信息：$COMMIT_MSG"
+echo "📝 提交信息："
+echo "-------------------------------------------"
+cat "$MSG_FILE"
+echo "-------------------------------------------"
 
 if [ "$ASSUME_YES" != "1" ]; then
   # 非交互环境（stdin 非终端）读不到输入时视为不确认，改动保留在分支上
@@ -251,7 +289,7 @@ fi
 # 6. 提交与状态回写
 # ------------------------------------------------------------------------------
 git add -A
-git commit -m "$COMMIT_MSG"
+git commit -F "$MSG_FILE"
 echo "✅ 已提交到 $WORK_BRANCH"
 
 # HLD 被 gitignore，状态回写只影响本地视图；真相源是 git log
