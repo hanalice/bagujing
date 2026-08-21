@@ -1,8 +1,8 @@
 # 质量保证与测试执行报告 (QA Execution Report)
 
 > **发布版本**：v0.2.0  
-> **报告生成时间**：2026-08-21 21:52:08  
-> **Git 提交**：5db6b50 (feat/git-commit-convention)  
+> **报告生成时间**：2026-08-21 22:12:23  
+> **Git 提交**：4040cbb (HEAD)  
 > **测试环境**：Linux (Node.js v22.23.1)  
 > **总体验收状态**：✅ **ALL PASSED (符合质量准出标准)**
 
@@ -12,8 +12,8 @@
 
 | 测试套件 | 执行命令 | 用例 / 项数 | 通过 (Pass) | 失败 (Fail) | 耗时 | 判定结果 |
 | :--- | :--- | :---: | :---: | :---: | :---: | :---: |
-| **后端核心单元测试** | `cd backend && npm test` | 31 | 31 | 0 | 952ms | ✅ PASS |
-| **前端单元与 E2E 测试** | `cd frontend && npm test` | 5 | 5 | 0 | 7.6s | ✅ PASS |
+| **后端核心单元测试** | `cd backend && npm test` | 34 | 34 | 0 | 969ms | ✅ PASS |
+| **前端单元与 E2E 测试** | `cd frontend && npm test` | 5 | 5 | 0 | 6.1s | ✅ PASS |
 | **数据库完整性排查** | `node backend/scripts/verify-db.js` | 2 | 2 | 0 | ~85ms | ✅ PASS |
 
 ---
@@ -21,7 +21,7 @@
 ## 2. 失败用例追踪 (Failed Test Cases)
 
 ### 2.1 后端失败用例 (Backend Failures)
-> ✅ **全部通过**：共执行 31 个后端用例，无失败用例。
+> ✅ **全部通过**：共执行 34 个后端用例，无失败用例。
 
 ### 2.2 前端失败用例 (Frontend Failures)
 > ✅ **全部通过**：共执行 5 个前端用例（Vitest 单元测试: 4，Playwright E2E: 1），无失败用例。

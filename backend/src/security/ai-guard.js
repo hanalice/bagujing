@@ -183,6 +183,9 @@ export function createAiGuard({ dbPool = null, redis = null, jwtSecret = null } 
     nonceTtlMs: parseIntSafe(process.env.AI_NONCE_TTL_MS, 10 * 60 * 1000),
     maxInputChars: parseIntSafe(process.env.AI_MAX_INPUT_CHARS, 1200),
     maxCompletionTokens: parseIntSafe(process.env.AI_MAX_COMPLETION_TOKENS, 4096),
+    // Admission pre-debit uses this cap (not full maxCompletionTokens) so short replies
+    // do not burn the daily quota as if every call used the model max.
+    conservativeCompletionTokens: parseIntSafe(process.env.AI_QUOTA_CONSERVATIVE_COMPLETION_TOKENS, 512),
     upstreamTimeoutMs: parseIntSafe(process.env.AI_UPSTREAM_TIMEOUT_MS, 30 * 1000),
     sseIdleTimeoutMs: parseIntSafe(process.env.AI_SSE_IDLE_TIMEOUT_MS, 20 * 1000),
     minuteLimitPerClient: parseIntSafe(process.env.AI_RATE_LIMIT_CLIENT_PER_MINUTE, 10),
@@ -430,6 +433,20 @@ export function createAiGuard({ dbPool = null, redis = null, jwtSecret = null } 
     return { ok: true };
   };
 
+  /** Refund pre-debit (failure/abort) or settle to estimated/actual usage (success). */
+  const adjustQuotaTokens = ({ clientId, projectedTokens, actualTokens, refund }) => {
+    refreshDailyStateIfNeeded(Date.now());
+    const clientUsage = getClientUsage(clientId);
+    if (refund) {
+      usage.globalTokens = Math.max(0, usage.globalTokens - projectedTokens);
+      clientUsage.tokens = Math.max(0, clientUsage.tokens - projectedTokens);
+      return;
+    }
+    const delta = actualTokens - projectedTokens;
+    usage.globalTokens = Math.max(0, usage.globalTokens + delta);
+    clientUsage.tokens = Math.max(0, clientUsage.tokens + delta);
+  };
+
   const trackRisk = ({ clientId, signature }) => {
     const key = `${clientId}:${signature}`;
     const prev = riskEvents.get(key) || 0;
@@ -563,7 +580,11 @@ export function createAiGuard({ dbPool = null, redis = null, jwtSecret = null } 
     }
 
     const promptTokens = estimatePromptTokens(req.body);
-    const projectedTokens = promptTokens + config.maxCompletionTokens;
+    const conservativeCompletion = Math.min(
+      config.maxCompletionTokens,
+      config.conservativeCompletionTokens,
+    );
+    const projectedTokens = promptTokens + conservativeCompletion;
     const quotaResult = await checkAndConsumeQuota({ clientId, projectedTokens, now });
     if (!quotaResult.ok) {
       return reject({ req, res, status: 429, message: 'Quota exceeded', reason: quotaResult.reason, clientId, routeKey });
@@ -589,11 +610,14 @@ export function createAiGuard({ dbPool = null, redis = null, jwtSecret = null } 
 
     const missionId = req.header('x-maf-mission-id');
 
+    let quotaFinalized = false;
+
     req.aiGuard = {
       clientId,
       routeKey,
       missionId,
       promptTokens,
+      projectedTokens,
       userIdentifier: req.header('x-user-id') || sha256Hex(ip).slice(0, 16),
       pagePath: req.header('x-page-path') || req.path,
       pageTitle: req.header('x-page-title') || '',
@@ -610,12 +634,23 @@ export function createAiGuard({ dbPool = null, redis = null, jwtSecret = null } 
         else if (duration < 10000) metrics.latencyBuckets[2]++;
         else metrics.latencyBuckets[3]++;
 
-        const completionTokens = estimateTokensByText(completionText);
-        metrics.totalTokens += promptTokens + completionTokens;
+        const isFailure = status === 'error';
+        const completionTokens = isFailure
+          ? 0
+          : estimateTokensByText(completionText);
+        const totalTokens = isFailure ? 0 : (promptTokens + completionTokens);
 
-        if (status === 'error') metrics.totalErrors++;
+        if (!quotaFinalized) {
+          quotaFinalized = true;
+          if (isFailure) {
+            adjustQuotaTokens({ clientId, projectedTokens, actualTokens: 0, refund: true });
+          } else {
+            adjustQuotaTokens({ clientId, projectedTokens, actualTokens: totalTokens, refund: false });
+          }
+        }
 
-        const totalTokens = promptTokens + completionTokens;
+        metrics.totalTokens += totalTokens;
+        if (isFailure) metrics.totalErrors++;
 
         if (missionId && currentDbPool) {
           updateMissionTokens(currentDbPool, missionId, totalTokens).catch(err => {
