@@ -640,6 +640,7 @@ const buildRagContext = async ({ message, categoryId, problemId }) => {
 app.post('/api/problems/:id/answer/generate', authenticateToken, requirePermission('study'), aiGuard.middleware, asyncHandler(async (req, res) => {
   const guardContext = req.aiGuard;
   let finalized = false;
+  let upstreamReached = false;
   const finalizeGuard = (payload) => {
     if (!guardContext || finalized) return;
     finalized = true;
@@ -652,14 +653,14 @@ app.post('/api/problems/:id/answer/generate', authenticateToken, requirePermissi
     const pool = await getSqlitePool();
 
     if (!pool) {
-      finalizeGuard({ status: 'error', reason: 'sqlite_required' });
+      finalizeGuard({ status: 'error', reason: 'sqlite_required', upstreamReached: false });
       return res.status(400).json({ code: 400, message: 'SQLite mode is required' });
     }
 
     const detail = await getProblemDetailById(pool, id);
     const problem = await getProblemById(pool, id);
     if (!problem) {
-      finalizeGuard({ status: 'error', reason: 'problem_not_found' });
+      finalizeGuard({ status: 'error', reason: 'problem_not_found', upstreamReached: false });
       return res.status(404).json({ code: 404, message: 'Problem not found' });
     }
 
@@ -707,7 +708,7 @@ app.post('/api/problems/:id/answer/generate', authenticateToken, requirePermissi
 
     const model = getLlmModel(guardContext);
     if (!model) {
-      finalizeGuard({ status: 'error', reason: 'missing_api_key' });
+      finalizeGuard({ status: 'error', reason: 'missing_api_key', upstreamReached: false });
       return res.status(400).json({ code: 400, message: 'OPENAI_API_KEY is required' });
     }
 
@@ -728,6 +729,7 @@ app.post('/api/problems/:id/answer/generate', authenticateToken, requirePermissi
       `题目：${title}\n\n`
       + `上下文（可参考）：\n${JSON.stringify(snippets, null, 2)}`;
 
+    upstreamReached = true;
     const response = await model.invoke([
       new SystemMessage(systemPrompt),
       new HumanMessage(userPrompt),
@@ -768,7 +770,7 @@ app.post('/api/problems/:id/answer/generate', authenticateToken, requirePermissi
       message: 'success',
     });
   } catch (error) {
-    finalizeGuard({ status: 'error', reason: 'server_error' });
+    finalizeGuard({ status: 'error', reason: 'server_error', upstreamReached });
     return res.status(500).json({ code: 500, message: error.message });
   }
 }));
@@ -776,6 +778,8 @@ app.post('/api/problems/:id/answer/generate', authenticateToken, requirePermissi
 app.post('/api/chat', authenticateToken, requirePermission('chat_ai'), aiGuard.middleware, asyncHandler(async (req, res) => {
   const guardContext = req.aiGuard;
   let finalized = false;
+  let upstreamReached = false;
+  let completionText = '';
   const finalizeGuard = (payload) => {
     if (!guardContext || finalized) return;
     finalized = true;
@@ -788,7 +792,7 @@ app.post('/api/chat', authenticateToken, requirePermission('chat_ai'), aiGuard.m
 
   const model = getLlmModel(guardContext);
   if (!model) {
-    finalizeGuard({ status: 'error', reason: 'missing_api_key' });
+    finalizeGuard({ status: 'error', reason: 'missing_api_key', upstreamReached: false });
     return res.end();
   }
 
@@ -798,7 +802,7 @@ app.post('/api/chat', authenticateToken, requirePermission('chat_ai'), aiGuard.m
 
   if (!message.trim()) {
     sendSSE(res, { type: 'error', message: 'Empty message' });
-    finalizeGuard({ status: 'error', reason: 'empty_message' });
+    finalizeGuard({ status: 'error', reason: 'empty_message', upstreamReached: false });
     return res.end();
   }
 
@@ -821,6 +825,7 @@ app.post('/api/chat', authenticateToken, requirePermission('chat_ai'), aiGuard.m
       + `相关背景知识片段（可参考）：\n${JSON.stringify(snippets, null, 2)}\n`
       + '请结合背景知识，以资深面试官的角度回答用户的问题。';
 
+    upstreamReached = true;
     const stream = await model.stream([
       new SystemMessage(systemPrompt),
       new HumanMessage(userPrompt),
@@ -828,7 +833,6 @@ app.post('/api/chat', authenticateToken, requirePermission('chat_ai'), aiGuard.m
       signal: abortController.signal,
     });
 
-    let completionText = '';
     const sseIdleTimeoutMs = guardContext?.sseIdleTimeoutMs || aiGuard.config.sseIdleTimeoutMs || 20000;
     const reader = typeof stream?.getReader === 'function'
       ? stream.getReader()
@@ -864,6 +868,8 @@ app.post('/api/chat', authenticateToken, requirePermission('chat_ai'), aiGuard.m
     finalizeGuard({
       status: 'error',
       reason: (isAborted || isTimeout) ? 'aborted_or_timeout' : 'server_error',
+      completionText,
+      upstreamReached,
     });
     const errorMsg = isTimeout ? 'Stream idle timeout' : (error?.message || String(error));
     if (!res.writableEnded) {
