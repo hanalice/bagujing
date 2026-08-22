@@ -5,7 +5,7 @@
 # 使用方式:
 #   ./scripts/automation/daily-fix.sh                 # 取队列中第一个 auto/todo 项，提交前人工确认
 #   ./scripts/automation/daily-fix.sh --task A4       # 指定任务号
-#   ./scripts/automation/daily-fix.sh --dry-run       # 只打印将要下发的 prompt
+#   ./scripts/automation/daily-fix.sh --dry-run       # 只打印规格阶段 + 编码阶段将要下发的 prompt
 #   ./scripts/automation/daily-fix.sh --yes --push    # 无人值守：提交、推送并用 gh 开 PR
 # 环境变量:
 #   ENGINE=cursor-agent|claude  指定编码 agent，默认优先 cursor-agent
@@ -166,6 +166,49 @@ MSG_FILE="$LOG_DIR/.daily-fix-commit-msg"
 rm -f "$MSG_FILE"
 trap 'rm -f "$MSG_FILE"' EXIT
 
+# 相对基线的已跟踪改动 + 未跟踪文件
+list_worktree_paths() {
+  {
+    git diff --name-only "$BASE_BRANCH"
+    git diff --cached --name-only "$BASE_BRANCH"
+    git ls-files --others --exclude-standard
+  } | sort -u
+}
+
+spec_doc_changed() {
+  list_worktree_paths | grep -qx 'docs/test_cases.md'
+}
+
+tests_source_changed() {
+  list_worktree_paths | grep -qE '^(backend/src/tests/|frontend/.+\.spec\.ts$|frontend/e2e/)'
+}
+
+build_spec_prompt() {
+  cat <<EOF
+你在 DevAsk（职问AI）仓库中做**测试设计**，还不是写实现。仓库根目录：$PROJECT_ROOT
+
+## 待修任务
+- 队列编号：$ID
+- 缺陷编号：$DEFECT_ID
+- 任务描述：$TASK_TEXT
+
+## 内部设计文档（$HLD_PATH）中与该任务相关的原文
+$CONTEXT
+
+## 本阶段唯一交付
+只改 \`docs/test_cases.md\`。先读现有编号与章节（UT / IT / SEC / E2E / UT-FE），找出覆盖本次完成标准所缺的用例。
+
+## 硬性要求
+1. **禁止**修改任何代码、测试文件、\`docs/internal/\`、其它文档。不要 git。
+2. 若现有表格已完整覆盖本任务的风险与期望，仍须把对应用例的「描述 / 预期结果」对齐本次完成标准（补测试文件路径、补时序/协议细节），保证本阶段 \`docs/test_cases.md\` 相对工作区基线有改动。
+3. 新增行遵循现有 ID 规则：\`层级-主题-序号\`（如 UT-CHAT-SSE-01）。能并入现有小节就并入，否则在对应大章下开新小节。
+4. 每一行必须写清：场景（输入/前置）和可判定的预期结果（含关键报文、状态码或调用顺序）。不要写「应表现正常」这类空话。
+5. 这些 ID 是下一阶段测试代码的契约：\`it()\` 标题必须包含该 ID。
+
+${EXTRA_INSTRUCTION:-}
+EOF
+}
+
 build_prompt() {
   cat <<EOF
 你在 DevAsk（职问AI）仓库中修复一个已登记的缺陷。仓库根目录：$PROJECT_ROOT
@@ -178,9 +221,14 @@ build_prompt() {
 ## 内部设计文档（$HLD_PATH）中与该任务相关的原文
 $CONTEXT
 
+## 工作顺序（必须按序，禁止先写测试再补文档）
+1. 打开 \`docs/test_cases.md\`，确认上一阶段已登记的、覆盖本任务的用例 ID、场景与预期结果。若仍缺行，先补文档再写代码。
+2. 再改生产代码。
+3. 最后在 \`backend/src/tests/\` 新增或扩展单测：每个新 \`it()\` 标题包含文档中的用例 ID（如 \`UT-CHAT-SSE-01: ...\`），断言必须与表格「预期结果」一致。测试不联网、不调真实上游（沿用现有 mock 风格）。
+
 ## 硬性要求
 1. 只修这一个任务，不要顺手改无关代码、不要重排格式、不要升级依赖。
-2. 必须在 backend/src/tests/ 下新增或扩展单元测试锁定本次行为，测试要能在不联网、不调真实上游的前提下跑过（沿用现有 mock 风格）。
+2. 必须同步 \`docs/test_cases.md\` 与可执行单测；只写测试不改文档、或只改文档不写测试，均视为未完成。
 3. 后端测试命令是 \`cd backend && npm test\`（node:test），自己跑一遍确认通过。
 4. 不要修改 docs/internal/ 下的任何文件，状态回写由调用方脚本负责。
 5. 不要执行任何 git 命令（add / commit / push / checkout 一律禁止）。
@@ -197,7 +245,7 @@ $CONTEXT
    【根因分析 (Root Cause)】
    - 定位到的代码位置与导致异常的因果链
    【解决方案 (Solution)】
-   - 具体改动点，以及新增/修改了哪些测试、验证结果如何
+   - 具体改动点，以及新增/修改了哪些测试与 \`docs/test_cases.md\` 中的用例 ID、验证结果如何
 
    正文用中文，只陈述这次改动的事实，不要写推销式总结。
 
@@ -206,6 +254,10 @@ EOF
 }
 
 if [ "$DRY_RUN" = "1" ]; then
+  echo "===== 阶段 1：测试设计（只改 docs/test_cases.md） ====="
+  build_spec_prompt
+  echo ""
+  echo "===== 阶段 2：实现 + 按 ID 写测试 ====="
   build_prompt
   exit 0
 fi
@@ -229,6 +281,35 @@ run_agent() {
   build_prompt | invoke_engine 2>&1 | tee -a "$RUN_LOG"
 }
 
+run_spec_agent() {
+  echo "📋 阶段 1：登记 docs/test_cases.md（日志：$RUN_LOG）..."
+  build_spec_prompt | invoke_engine 2>&1 | tee -a "$RUN_LOG"
+}
+
+run_spec_phase() {
+  EXTRA_INSTRUCTION=""
+  run_spec_agent
+  local attempt=0
+  while ! spec_doc_changed; do
+    attempt=$((attempt + 1))
+    if [ "$attempt" -gt "$MAX_REPAIR" ]; then
+      die "规格阶段未更新 docs/test_cases.md，拒绝继续编码。"
+    fi
+    echo "🔁 docs/test_cases.md 无改动，发起第 $attempt 次规格返修..."
+    EXTRA_INSTRUCTION="你没有改 docs/test_cases.md。本阶段禁止写代码。必须在该文件中新增或修订覆盖 $ID / $DEFECT_ID 的用例行（ID、场景、可判定的预期结果）。"
+    run_spec_agent
+  done
+  EXTRA_INSTRUCTION=""
+  echo "✅ 已更新 docs/test_cases.md，进入实现阶段"
+}
+
+ensure_spec_synced_with_tests() {
+  if tests_source_changed && ! spec_doc_changed; then
+    return 1
+  fi
+  return 0
+}
+
 build_review_prompt() {
   cat <<EOF
 你是独立的代码审核员，不是这次改动的作者。仓库：$PROJECT_ROOT
@@ -244,8 +325,9 @@ $CONTEXT
 
 ## 请检查
 1. 用 \`git diff $BASE_BRANCH\` 看工作区相对基线的完整 diff（此时尚未 commit，不要只用 HEAD）。是否覆盖完成标准的全部动作，而不是只做了容易的一半。
-2. 新增测试是否锁住完成标准里的真正风险（例如把「失败应回补」测成正确行为、从而把洞固化下来，必须 FAIL）。
-3. 测试全绿不等于任务完成。实现与 HLD 完成标准不一致，即使测试通过也判 FAIL。
+2. \`docs/test_cases.md\` 是否先登记了本任务的用例（ID、场景、可判定预期结果）。只有测试代码、没有文档行，必须 FAIL。
+3. 新增测试的 \`it()\` 标题是否包含文档中的用例 ID，断言是否与表格预期一致；是否锁住真正风险（例如把「失败应回补」测成正确行为，必须 FAIL）。
+4. 测试全绿不等于任务完成。实现与 HLD 完成标准不一致，即使测试通过也判 FAIL。
 
 ## 输出格式（脚本只认最后一次出现的 REVIEW_VERDICT 行）
 先用中文写理由：对照了完成标准的哪几条、diff 里的证据、测试是否锁住了真正风险。
@@ -326,8 +408,9 @@ $(sed -n '/## 2. 失败用例追踪/,/## 3./p' "$PROJECT_ROOT/docs/qa_report.md"
 }
 
 # ------------------------------------------------------------------------------
-# 4. 修复 → 质量门禁 → 独立审核 →（失败时）有限次返修
+# 4. 测试设计 → 修复 → 质量门禁 → 独立审核 →（失败时）有限次返修
 # ------------------------------------------------------------------------------
+run_spec_phase
 run_agent
 
 run_gate_with_repair || exit 1
@@ -337,6 +420,14 @@ if [ -z "$(git status --porcelain)" ]; then
   git checkout "$BASE_BRANCH" >/dev/null 2>&1
   git branch -D "$WORK_BRANCH" >/dev/null 2>&1
   exit 1
+fi
+
+if ! ensure_spec_synced_with_tests; then
+  echo "🚫 测试源码有改动但 docs/test_cases.md 相对基线无改动，回喂编码 agent..."
+  EXTRA_INSTRUCTION="测试文件已改，但 docs/test_cases.md 没有同步。先补文档中的用例 ID / 场景 / 预期结果，再让 it() 标题包含这些 ID。不要修改 docs/internal/，不要 git commit。"
+  run_agent
+  run_gate_with_repair || exit 1
+  ensure_spec_synced_with_tests || die "返修后仍未同步 docs/test_cases.md，拒绝提交。"
 fi
 
 if [ "$SKIP_REVIEW" = "1" ]; then
@@ -360,11 +451,10 @@ else
 
 $REVIEW_GAPS
 
-请补全实现与回归测试。不要修改 docs/internal/，不要 git commit。"
+请补全实现、\`docs/test_cases.md\` 用例行与回归测试（it 标题含用例 ID）。不要修改 docs/internal/，不要 git commit。"
     run_agent
     run_gate_with_repair || exit 1
-  done
-fi
+    ensure_spec_synced_with_tests || die "返修后测试已改但 docs/test_cases.md 仍未同步，拒绝提交。"
 
 echo ""
 echo "================= 本次改动 ================="
