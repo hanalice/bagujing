@@ -1,10 +1,10 @@
 # 质量保证与测试执行报告 (QA Execution Report)
 
 > **发布版本**：v0.2.0  
-> **报告生成时间**：2026-08-22 13:06:18  
-> **Git 提交**：73bce64 (main)  
+> **报告生成时间**：2026-08-22 13:23:43  
+> **Git 提交**：6225e49 (auto-fix/a5-20260822)  
 > **测试环境**：Linux (Node.js v22.23.1)  
-> **总体验收状态**：✅ **ALL PASSED (符合质量准出标准)**
+> **总体验收状态**：⚠️ **PARTIAL (存在跳过项，未完整验证)**
 
 ---
 
@@ -12,8 +12,8 @@
 
 | 测试套件 | 执行命令 | 用例 / 项数 | 通过 (Pass) | 失败 (Fail) | 耗时 | 判定结果 |
 | :--- | :--- | :---: | :---: | :---: | :---: | :---: |
-| **后端核心单元测试** | `cd backend && npm test` | 36 | 36 | 0 | 955ms | ✅ PASS |
-| **前端单元与 E2E 测试** | `cd frontend && npm test` | 5 | 5 | 0 | 4.1s | ✅ PASS |
+| **后端核心单元测试** | `cd backend && npm test` | 38 | 38 | 0 | 819ms | ✅ PASS |
+| **前端单元与 E2E 测试** | `cd frontend && npm test` | 5 | 4 | 1 | ~3.5s | ⚪ SKIPPED |
 | **数据库完整性排查** | `node backend/scripts/verify-db.js` | 2 | 2 | 0 | ~85ms | ✅ PASS |
 
 ---
@@ -21,10 +21,49 @@
 ## 2. 失败用例追踪 (Failed Test Cases)
 
 ### 2.1 后端失败用例 (Backend Failures)
-> ✅ **全部通过**：共执行 36 个后端用例，无失败用例。
+> ✅ **全部通过**：共执行 38 个后端用例，无失败用例。
 
 ### 2.2 前端失败用例 (Frontend Failures)
-> ✅ **全部通过**：共执行 5 个前端用例（Vitest 单元测试: 4，Playwright E2E: 1），无失败用例。
+> ⚪ **已跳过**：本机缺少前端测试工具链（vitest 未安装或 Playwright 浏览器未下载），未纳入准出判定。
+
+```
+> frontend@0.2.0 test
+> vitest run && playwright test
+
+
+ RUN  v4.1.11 /home/alice/workspace/bagujing/frontend
+
+
+ Test Files  1 passed (1)
+      Tests  4 passed (4)
+   Start at  13:23:40
+   Duration  657ms (transform 54ms, setup 0ms, import 113ms, tests 14ms, environment 435ms)
+
+
+Running 1 test using 1 worker
+
+(node:67353) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ✘  1 [chromium] › e2e/main-path.spec.ts:74:3 › 前端业务主路径端到端测试 (Main Path E2E) › E2E-MAIN-01 & E2E-MAIN-04: 路由鉴权拦截 -> 登录 -> AI 面试助手流式打字机问答 (2ms)
+
+
+  1) [chromium] › e2e/main-path.spec.ts:74:3 › 前端业务主路径端到端测试 (Main Path E2E) › E2E-MAIN-01 & E2E-MAIN-04: 路由鉴权拦截 -> 登录 -> AI 面试助手流式打字机问答 
+
+    Error: browserType.launch: Executable doesn't exist at /tmp/cursor-sandbox-cache/5754d95281377a0e5944022fa2e06fd9/playwright/chromium_headless_shell-1234/chrome-headless-shell-linux64/chrome-headless-shell
+    ╔════════════════════════════════════════════════════════════╗
+    ║ Looks like Playwright was just installed or updated.       ║
+    ║ Please run the following command to download new browsers: ║
+    ║                                                            ║
+    ║     npx playwright install                                 ║
+    ║                                                            ║
+    ║ <3 Playwright Team                                         ║
+    ╚════════════════════════════════════════════════════════════╝
+
+    Error Context: test-results/main-path-前端业务主路径端到端测试-Mai-e721d-由鉴权拦截---登录---AI-面试助手流式打字机问答-chromium/error-context.md
+
+  1 failed
+    [chromium] › e2e/main-path.spec.ts:74:3 › 前端业务主路径端到端测试 (Main Path E2E) › E2E-MAIN-01 & E2E-MAIN-04: 路由鉴权拦截 -> 登录 -> AI 面试助手流式打字机问答
+```
 
 ---
 
@@ -45,6 +84,6 @@
 ## 4. 上线准出门禁结论 (DoD Sign-off)
 
 - [x] **后端核心用例通过**：LLM 适配层、AI Guard 记账与流式生命周期单测全绿。
-- [x] **前端单测与 E2E 通过**：主路径鉴权与助教流式渲染自动化覆盖。
+- [ ] **前端单测与 E2E 通过**：主路径鉴权与助教流式渲染自动化覆盖。
 - [x] **数据库完整性校验通过**：AI Clients 与 AI Audit Logs 表结构与数据可读。
-- [x] **最终交付裁决**：🟢 **GO（符合发布质量标准，准予交付部署）**
+- [ ] **最终交付裁决**：🟡 **CONDITIONAL GO（存在未执行的测试项，需人工确认）**
