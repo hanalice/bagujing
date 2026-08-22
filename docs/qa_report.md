@@ -1,8 +1,8 @@
 # 质量保证与测试执行报告 (QA Execution Report)
 
 > **发布版本**：v0.2.0  
-> **报告生成时间**：2026-08-22 13:23:43  
-> **Git 提交**：6225e49 (auto-fix/a5-20260822)  
+> **报告生成时间**：2026-08-22 20:55:48  
+> **Git 提交**：7ec8fa2 (auto-fix/a5-20260822)  
 > **测试环境**：Linux (Node.js v22.23.1)  
 > **总体验收状态**：⚠️ **PARTIAL (存在跳过项，未完整验证)**
 
@@ -12,7 +12,7 @@
 
 | 测试套件 | 执行命令 | 用例 / 项数 | 通过 (Pass) | 失败 (Fail) | 耗时 | 判定结果 |
 | :--- | :--- | :---: | :---: | :---: | :---: | :---: |
-| **后端核心单元测试** | `cd backend && npm test` | 38 | 38 | 0 | 819ms | ✅ PASS |
+| **后端核心单元测试** | `cd backend && npm test` | 38 | 38 | 0 | 974ms | ✅ PASS |
 | **前端单元与 E2E 测试** | `cd frontend && npm test` | 5 | 4 | 1 | ~3.5s | ⚪ SKIPPED |
 | **数据库完整性排查** | `node backend/scripts/verify-db.js` | 2 | 2 | 0 | ~85ms | ✅ PASS |
 
@@ -36,13 +36,13 @@
 
  Test Files  1 passed (1)
       Tests  4 passed (4)
-   Start at  13:23:40
-   Duration  657ms (transform 54ms, setup 0ms, import 113ms, tests 14ms, environment 435ms)
+   Start at  20:55:44
+   Duration  1.13s (transform 65ms, setup 0ms, import 140ms, tests 15ms, environment 867ms)
 
 
 Running 1 test using 1 worker
 
-(node:67353) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(node:274333) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
 (Use `node --trace-warnings ...` to show where the warning was created)
   ✘  1 [chromium] › e2e/main-path.spec.ts:74:3 › 前端业务主路径端到端测试 (Main Path E2E) › E2E-MAIN-01 & E2E-MAIN-04: 路由鉴权拦截 -> 登录 -> AI 面试助手流式打字机问答 (2ms)
 
@@ -69,6 +69,7 @@ Running 1 test using 1 worker
 
 ## 3. 缺陷修复与回归验证记录 (Bug Fix Verifications)
 
+- **Commit `7ec8fa2`** (2026-08-22): fix(chat): [P2-5][A5] 缺 Key 或空消息时先发 SSE error 再 end
 - **Commit `531ce43`** (2026-08-22): Merge pull request #3 from hanalice/chore/daily-fix-commit-message
 - **Commit `a9e9734`** (2026-08-21): Merge pull request #2 from hanalice/auto-fix/a4-20260821
 - **Commit `acebcc1`** (2026-08-21): fix(automation): daily-fix 生成符合仓库规范的完整提交信息

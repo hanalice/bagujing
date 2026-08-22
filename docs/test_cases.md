@@ -83,6 +83,15 @@
 | UT-CACHE-01 | chat 禁止 JSON 短接, 禁止缓存 | 相同 body 连续两次 `POST /api/chat`，第一次 `finalize` 成功。 | 两次都 `next()`；中间件从不 `res.json`。 |
 | UT-CACHE-02 | generate 不走 Guard 内存短接 | 相同 body 连续两次 `POST /api/problems/:id/answer/generate`。 | 两次都进入 handler；JSON 缓存由 SQLite `cached_answer` 负责。 |
 
+### 2.8 Chat SSE 早退错误协议 (`backend/src/tests/chat-sse-error.test.js`)
+
+覆盖 `/api/chat` 在已设置 SSE 响应头后的两条早退路径。须经 `app.handle` 走完整中间件链（鉴权 → Guard → 处理器），禁止在测试里复刻一份 `sendSSE` 逻辑。空消息指 `message.trim()` 后长度为 0（含 `""` 与仅空白）。
+
+| ID | 用例标题 | 场景描述 | 预期结果 |
+| :--- | :--- | :--- | :--- |
+| UT-CHAT-SSE-01 | 缺 Key：SSE 头后发 type:error 再 end | 未配置 `OPENAI_API_KEY`，已登录用户 POST `/api/chat` 且消息非空。 | 1. 先写入 `Content-Type: text/event-stream`、`Cache-Control`、`Connection`；<br>2. 再写入 SSE 帧 `{ type: 'error', message: 'OPENAI_API_KEY is required' }`；<br>3. 最后 `res.end()`；全程不静默关连接。 |
+| UT-CHAT-SSE-02 | 空/空白消息：SSE 头后发 type:error 再 end | 已配置 Key，请求体 `message` 为空白字符串（如 `'   '`）。 | 1. SSE 头时序同 UT-CHAT-SSE-01；<br>2. 再写入 `{ type: 'error', message: 'Empty message' }`；<br>3. 最后 `res.end()`。 |
+
 ---
 
 ## 3. 安全防护与集成测试用例 (Security & Integration)
