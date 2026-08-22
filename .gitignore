@@ -76,3 +76,14 @@ backend/data/
 # Logs
 backend/*.log
 scripts/*.log
+
+# agent-hub 本机物化视图（由 init-project.sh 生成，不要提交）
+.agent-hub.lock
+.agent-hub-assets/
+.agents/skills/devops_expert
+.agents/skills/product_designer
+.agents/skills/project_manager
+.agents/skills/qa_expert
+.agents/skills/security_expert
+.agents/skills/system_architect
+.cursor/rules/hub-global-rules.mdc
