@@ -36,10 +36,27 @@ else
   echo "❌ FAIL (退出码: $BE_CODE)"
 fi
 
-# 2. 运行前端单元测试
+# Playwright 浏览器二进制在 ~/.cache/ms-playwright，不在 frontend/node_modules。
+# Cursor Agent 沙箱会注入 PLAYWRIGHT_BROWSERS_PATH=/tmp/cursor-sandbox-cache/...（空目录），
+# 导致 chrome-headless-shell 找不到。门禁必须改回本机已安装目录。
+pin_playwright_browsers() {
+  local default_dir="${HOME}/.cache/ms-playwright"
+  case "${PLAYWRIGHT_BROWSERS_PATH:-}" in
+    *cursor-sandbox-cache*|/tmp/*)
+      if [ -d "$default_dir" ]; then
+        export PLAYWRIGHT_BROWSERS_PATH="$default_dir"
+      else
+        unset PLAYWRIGHT_BROWSERS_PATH
+      fi
+      ;;
+  esac
+}
+
+# 2. 运行前端单元测试 + E2E
 echo -n "🎨 [2/3] 正在运行前端单元测试 (frontend npm test)... "
 FE_OUT_FILE="$TEMP_DIR/fe_out.txt"
 set +e
+pin_playwright_browsers
 (cd "$PROJECT_ROOT/frontend" && npm test) > "$FE_OUT_FILE" 2>&1
 FE_CODE=$?
 set -e

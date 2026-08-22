@@ -1,8 +1,8 @@
 # 质量保证与测试执行报告 (QA Execution Report)
 
 > **发布版本**：v0.2.0  
-> **报告生成时间**：2026-08-22 20:55:48  
-> **Git 提交**：7ec8fa2 (auto-fix/a5-20260822)  
+> **报告生成时间**：2026-08-22 20:59:29  
+> **Git 提交**：4fc8673 (chore/daily-fix-test-cases-first)  
 > **测试环境**：Linux (Node.js v22.23.1)  
 > **总体验收状态**：⚠️ **PARTIAL (存在跳过项，未完整验证)**
 
@@ -12,8 +12,8 @@
 
 | 测试套件 | 执行命令 | 用例 / 项数 | 通过 (Pass) | 失败 (Fail) | 耗时 | 判定结果 |
 | :--- | :--- | :---: | :---: | :---: | :---: | :---: |
-| **后端核心单元测试** | `cd backend && npm test` | 38 | 38 | 0 | 974ms | ✅ PASS |
-| **前端单元与 E2E 测试** | `cd frontend && npm test` | 5 | 4 | 1 | ~3.5s | ⚪ SKIPPED |
+| **后端核心单元测试** | `cd backend && npm test` | 36 | 36 | 0 | 818ms | ✅ PASS |
+| **前端单元与 E2E 测试** | `cd frontend && npm test` | 5 | 5 | 0 | 3.4s | ✅ PASS |
 | **数据库完整性排查** | `node backend/scripts/verify-db.js` | 2 | 2 | 0 | ~85ms | ✅ PASS |
 
 ---
