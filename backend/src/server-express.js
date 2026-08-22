@@ -792,6 +792,7 @@ app.post('/api/chat', authenticateToken, requirePermission('chat_ai'), aiGuard.m
 
   const model = getLlmModel(guardContext);
   if (!model) {
+    sendSSE(res, { type: 'error', message: 'OPENAI_API_KEY is required' });
     finalizeGuard({ status: 'error', reason: 'missing_api_key', upstreamReached: false });
     return res.end();
   }
@@ -893,17 +894,21 @@ app.use((error, req, res, next) => {
   });
 });
 
-// 启动服务
-app.listen(PORT, async () => {
-  console.log(`[BOOT][PID:${process.pid}] Express server running at http://localhost:${PORT}`);
-  try {
-    await getSqlitePool();
-    console.log(`[BOOT][PID:${process.pid}] Database pool initialized successfully.`);
-    // 通知 PM2 服务已就绪，从而完成 zero-downtime 启动
-    if (process.send) {
-      process.send('ready');
+export { app };
+
+// 启动服务（单测通过 BAGUJING_SKIP_LISTEN=1 跳过 listen，便于离线挂载 /api/chat）
+if (process.env.BAGUJING_SKIP_LISTEN !== '1') {
+  app.listen(PORT, async () => {
+    console.log(`[BOOT][PID:${process.pid}] Express server running at http://localhost:${PORT}`);
+    try {
+      await getSqlitePool();
+      console.log(`[BOOT][PID:${process.pid}] Database pool initialized successfully.`);
+      // 通知 PM2 服务已就绪，从而完成 zero-downtime 启动
+      if (process.send) {
+        process.send('ready');
+      }
+    } catch (err) {
+      console.error(`[BOOT][PID:${process.pid}] Failed to initialize database pool:`, err.message);
     }
-  } catch (err) {
-    console.error(`[BOOT][PID:${process.pid}] Failed to initialize database pool:`, err.message);
-  }
-});
+  });
+}
