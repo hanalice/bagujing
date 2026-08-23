@@ -85,12 +85,13 @@
 
 ### 2.8 Chat SSE 早退错误协议 (`backend/src/tests/chat-sse-error.test.js`)
 
-覆盖 `/api/chat` 在已设置 SSE 响应头后的两条早退路径。须经 `app.handle` 走完整中间件链（鉴权 → Guard → 处理器），禁止在测试里复刻一份 `sendSSE` 逻辑。空消息指 `message.trim()` 后长度为 0（含 `""` 与仅空白）。
+对应 **A5 / P2-5**：缺 Key 或空消息时，禁止「未设 SSE 头就 `res.end()`」（客户端将收不到任何错误事件）；必须先设 SSE 头 → 再发一条 `type:error` → 最后 `end`，以便前端解析并展示 `message`。须经 `app.handle` 走完整中间件链（鉴权 → Guard → 处理器），禁止在测试里复刻一份 `sendSSE`。空消息判定：`sanitizeUserText` 之后 `message.trim()` 长度为 0（含省略/`null`/`undefined` 等非字符串、`""`、仅空白）。`it()` 标题须包含下表 ID。
 
 | ID | 用例标题 | 场景描述 | 预期结果 |
 | :--- | :--- | :--- | :--- |
-| UT-CHAT-SSE-01 | 缺 Key：SSE 头后发 type:error 再 end | 未配置 `OPENAI_API_KEY`，已登录用户 POST `/api/chat` 且消息非空。 | 1. 先写入 `Content-Type: text/event-stream`、`Cache-Control`、`Connection`；<br>2. 再写入 SSE 帧 `{ type: 'error', message: 'OPENAI_API_KEY is required' }`；<br>3. 最后 `res.end()`；全程不静默关连接。 |
-| UT-CHAT-SSE-02 | 空/空白消息：SSE 头后发 type:error 再 end | 已配置 Key，请求体 `message` 为空白字符串（如 `'   '`）。 | 1. SSE 头时序同 UT-CHAT-SSE-01；<br>2. 再写入 `{ type: 'error', message: 'Empty message' }`；<br>3. 最后 `res.end()`。 |
+| UT-CHAT-SSE-01 | 缺 Key：SSE 头后发 type:error 再 end | 前置：未设置 `OPENAI_API_KEY`；已登录且具备 `chat_ai`；`POST /api/chat`，JSON body `{ "message": "hello" }`（非空）。探针记录 `setHeader` / `write` / `end` 调用序。 | 1. 不走 `res.status(400).json(...)`（对比 generate 缺 Key 的 JSON 路径）；<br>2. 依次写入头且均早于首次 `write`：`Content-Type: text/event-stream; charset=utf-8`、`Cache-Control: no-cache, no-transform`、`Connection: keep-alive`；<br>3. 恰好一次 `write`，线格式为 `data: {"type":"error","message":"OPENAI_API_KEY is required"}\n\n`；<br>4. 随后 `res.end()`（`end` 下标 > `write`）；无 `context` / `delta` / `done` 帧。 |
+| UT-CHAT-SSE-02 | 空白消息：SSE 头后发 type:error 再 end | 前置：已配置有效 `OPENAI_API_KEY`；已登录；`POST /api/chat`，body `{ "message": "   " }`（仅空白）。 | 头与时序同 UT-CHAT-SSE-01；恰好一次 `write`，线格式为 `data: {"type":"error","message":"Empty message"}\n\n`；再 `res.end()`；不发起上游 LLM 调用。 |
+| UT-CHAT-SSE-03 | 空串或缺 message：同 Empty message 协议 | 前置：已配置 Key；已登录；分别覆盖 body `{ "message": "" }` 与省略 `message` 字段（经 sanitize 得 `''`）。 | 与 UT-CHAT-SSE-02 相同契约：SSE 三头 → 唯一 `type:error`/`Empty message` 帧 → `end`；禁止静默关连接、禁止 JSON 错误体。 |
 
 ---
 
@@ -129,6 +130,7 @@
 | `E2E-MAIN-03` | 题目详情浏览与解析切换 | 在列表中点击具体题目卡片 | 拦截 `/api/problems/:id` 返回题目详情 | 路由跳转至 `/problem-detail`，完整呈现题目背景、难度徽标及参考答案/解析面板 |
 | `E2E-MAIN-04` | AI 面试助手流式交互主流程 | 导航至 `/assistant` 并在输入框发送提问 | 利用 Playwright `page.route` 拦截 `/api/chat/stream`，模拟返回 `text/event-stream` 分块数据 | 1. 触发发送后输入框禁用且按钮显示加载状态<br>2. 界面接收流式 Chunk 呈打字机增量渲染<br>3. 完成传输后渲染为安全 Markdown（经 DOMPurify 过滤，无 XSS 隐患） |
 | `E2E-MAIN-05` | 个人设置与模型偏好持久化 | 进入 `/settings` 修改大模型供应商与参数并保存 | 操作 LocalStorage 结合表单提交 | 页面提示保存成功，刷新浏览器后配置项维持更新后的自定义状态 |
+| `E2E-CHAT-01` | chat 早退 type:error 时界面展示原因 | 已登录进入 `/assistant`；用户发送任意非空提问（A5 完成标准：前端能展示原因） | `page.route` 拦截 `POST /api/chat`：status 200，`Content-Type: text/event-stream`，body **仅** `data: {"type":"error","message":"OPENAI_API_KEY is required"}\n\n` 后结束（模拟缺 Key 早退） | 1. 页面错误提示区（`errorText` / 可见错误条）文案等于 `OPENAI_API_KEY is required`；<br>2. 该文案不作为助手正常回复气泡内容；<br>3. 流式加载态结束，可再次发送。 |
 
 ### 4.2 Vitest 状态机与核心逻辑测试用例 (Pinia Stores & Utilities)
 

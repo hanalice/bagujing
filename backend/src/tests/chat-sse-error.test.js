@@ -73,9 +73,10 @@ function makeAuthToken() {
 
 /**
  * 构造 POST /api/chat 请求，走 Express 中间件链（含 JSON 解析）。
+ * omitMessage=true 时 body 不含 message 字段（覆盖 sanitize 得 ''）。
  */
-function createChatRequest({ message, token = makeAuthToken() }) {
-  const body = { message };
+function createChatRequest({ message, omitMessage = false, token = makeAuthToken() }) {
+  const body = omitMessage ? {} : { message };
   const payload = JSON.stringify(body);
   const req = Readable.from([payload]);
   req.method = 'POST';
@@ -106,7 +107,7 @@ function createChatRequest({ message, token = makeAuthToken() }) {
 }
 
 /**
- * 记录 setHeader / write / end 调用顺序，用于断言 SSE 头先于 error 事件。
+ * 记录 setHeader / write / end / status / json，用于断言 SSE 协议与禁止 JSON 错误体。
  */
 function createTrackingResponse() {
   const callOrder = [];
@@ -116,6 +117,7 @@ function createTrackingResponse() {
 
   const res = {
     callOrder,
+    statusCode: 200,
     get ended() {
       return ended;
     },
@@ -138,10 +140,13 @@ function createTrackingResponse() {
       callOrder.push({ op: 'end' });
       for (const listener of finishListeners) listener();
     },
-    status() {
+    status(code) {
+      callOrder.push({ op: 'status', code });
+      this.statusCode = code;
       return this;
     },
-    json() {
+    json(payload) {
+      callOrder.push({ op: 'json', payload });
       return this;
     },
     once(event, listener) {
@@ -154,8 +159,8 @@ function createTrackingResponse() {
   return res;
 }
 
-async function invokeChatRoute(app, { message }) {
-  const req = createChatRequest({ message });
+async function invokeChatRoute(app, { message, omitMessage = false }) {
+  const req = createChatRequest({ message, omitMessage });
   const res = createTrackingResponse();
 
   await new Promise((resolve, reject) => {
@@ -173,48 +178,54 @@ async function invokeChatRoute(app, { message }) {
   return res;
 }
 
-function parseSsePayload(raw) {
-  const match = raw.match(/^data: (.+)\n\n$/);
-  assert.ok(match, `invalid SSE frame: ${raw}`);
-  return JSON.parse(match[1]);
-}
-
-function collectSsePayloads(callOrder) {
-  return callOrder
-    .filter((entry) => entry.op === 'write')
-    .map((entry) => parseSsePayload(entry.data));
-}
-
 function findOpIndex(callOrder, op, predicate = () => true) {
   return callOrder.findIndex((entry) => entry.op === op && predicate(entry));
 }
 
+function collectWriteFrames(callOrder) {
+  return callOrder.filter((entry) => entry.op === 'write').map((entry) => entry.data);
+}
+
 /**
- * 锁定 P2-5：SSE 响应头全部写入后，才发送 type:error，最后 end。
+ * 锁定 P2-5 / docs UT-CHAT-SSE-*：SSE 三头 → 唯一 type:error 线格式 → end；禁止 JSON 错误体。
  */
-function assertSseHeadersBeforeError(callOrder, expectedError) {
+function assertSseErrorProtocol(callOrder, expectedWireFrame) {
+  assert.equal(
+    callOrder.filter((e) => e.op === 'status').length,
+    0,
+    'must not use res.status(...) for chat early-exit errors',
+  );
+  assert.equal(
+    callOrder.filter((e) => e.op === 'json').length,
+    0,
+    'must not use res.json(...) for chat early-exit errors',
+  );
+
   const contentTypeIdx = findOpIndex(
     callOrder,
     'setHeader',
     (entry) => entry.name.toLowerCase() === 'content-type'
-      && String(entry.value).includes('text/event-stream'),
+      && entry.value === 'text/event-stream; charset=utf-8',
   );
   const cacheControlIdx = findOpIndex(
     callOrder,
     'setHeader',
-    (entry) => entry.name.toLowerCase() === 'cache-control',
+    (entry) => entry.name.toLowerCase() === 'cache-control'
+      && entry.value === 'no-cache, no-transform',
   );
   const connectionIdx = findOpIndex(
     callOrder,
     'setHeader',
-    (entry) => entry.name.toLowerCase() === 'connection',
+    (entry) => entry.name.toLowerCase() === 'connection'
+      && entry.value === 'keep-alive',
   );
   const firstWriteIdx = findOpIndex(callOrder, 'write');
   const endIdx = findOpIndex(callOrder, 'end');
+  const writes = collectWriteFrames(callOrder);
 
-  assert.ok(contentTypeIdx >= 0, 'must set Content-Type to text/event-stream');
-  assert.ok(cacheControlIdx >= 0, 'must set Cache-Control header');
-  assert.ok(connectionIdx >= 0, 'must set Connection header');
+  assert.ok(contentTypeIdx >= 0, 'must set Content-Type: text/event-stream; charset=utf-8');
+  assert.ok(cacheControlIdx >= 0, 'must set Cache-Control: no-cache, no-transform');
+  assert.ok(connectionIdx >= 0, 'must set Connection: keep-alive');
   assert.ok(firstWriteIdx >= 0, 'must write SSE error event before end');
   assert.ok(endIdx >= 0, 'must end response');
 
@@ -223,9 +234,16 @@ function assertSseHeadersBeforeError(callOrder, expectedError) {
   assert.ok(connectionIdx < firstWriteIdx, 'Connection must precede first SSE write');
   assert.ok(endIdx > firstWriteIdx, 'end must follow SSE error write');
 
-  const payloads = collectSsePayloads(callOrder);
-  assert.equal(payloads.length, 1);
-  assert.deepEqual(payloads[0], expectedError);
+  assert.equal(writes.length, 1, 'exactly one SSE write frame');
+  assert.equal(writes[0], expectedWireFrame);
+
+  for (const forbidden of ['"type":"context"', '"type":"delta"', '"type":"done"']) {
+    assert.equal(
+      writes.some((frame) => frame.includes(forbidden)),
+      false,
+      `must not emit ${forbidden} frames`,
+    );
+  }
 }
 
 describe('A5/P2-5: /api/chat early exit emits type:error after SSE headers', () => {
@@ -247,25 +265,43 @@ describe('A5/P2-5: /api/chat early exit emits type:error after SSE headers', () 
     try { fs.unlinkSync(AUDIT_FILE); } catch { /* ignore */ }
   });
 
-  it('missing OPENAI_API_KEY: SSE headers then type:error then end', async () => {
+  it('UT-CHAT-SSE-01: 缺 Key：SSE 头后发 type:error 再 end', async () => {
     const res = await invokeChatRoute(app, { message: 'hello' });
 
     assert.equal(res.ended, true);
-    assertSseHeadersBeforeError(res.callOrder, {
-      type: 'error',
-      message: 'OPENAI_API_KEY is required',
-    });
+    assertSseErrorProtocol(
+      res.callOrder,
+      'data: {"type":"error","message":"OPENAI_API_KEY is required"}\n\n',
+    );
   });
 
-  it('empty message: SSE headers then type:error then end', async () => {
+  it('UT-CHAT-SSE-02: 空白消息：SSE 头后发 type:error 再 end', async () => {
     process.env.OPENAI_API_KEY = 'sk-test';
 
     const res = await invokeChatRoute(app, { message: '   ' });
 
     assert.equal(res.ended, true);
-    assertSseHeadersBeforeError(res.callOrder, {
-      type: 'error',
-      message: 'Empty message',
-    });
+    assertSseErrorProtocol(
+      res.callOrder,
+      'data: {"type":"error","message":"Empty message"}\n\n',
+    );
+  });
+
+  it('UT-CHAT-SSE-03: 空串或缺 message：同 Empty message 协议', async () => {
+    process.env.OPENAI_API_KEY = 'sk-test';
+
+    const emptyRes = await invokeChatRoute(app, { message: '' });
+    assert.equal(emptyRes.ended, true);
+    assertSseErrorProtocol(
+      emptyRes.callOrder,
+      'data: {"type":"error","message":"Empty message"}\n\n',
+    );
+
+    const omittedRes = await invokeChatRoute(app, { omitMessage: true });
+    assert.equal(omittedRes.ended, true);
+    assertSseErrorProtocol(
+      omittedRes.callOrder,
+      'data: {"type":"error","message":"Empty message"}\n\n',
+    );
   });
 });
