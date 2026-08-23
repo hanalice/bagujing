@@ -455,6 +455,8 @@ $REVIEW_GAPS
     run_agent
     run_gate_with_repair || exit 1
     ensure_spec_synced_with_tests || die "返修后测试已改但 docs/test_cases.md 仍未同步，拒绝提交。"
+  done
+fi
 
 echo ""
 echo "================= 本次改动 ================="
