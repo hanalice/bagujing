@@ -199,6 +199,8 @@ export function createAiGuard({ dbPool = null, redis = null, jwtSecret = null } 
     auditFilePath: process.env.AI_AUDIT_FILE_PATH
       ? path.resolve(process.cwd(), process.env.AI_AUDIT_FILE_PATH)
       : path.resolve(process.cwd(), 'data/ai-audit.ndjson'),
+    // 生产默认关闭；仅 AI_GUARD_DEBUG=true 时输出 [ai-guard-debug]（用 console.debug，避免 info 通道刷屏）
+    debug: String(process.env.AI_GUARD_DEBUG ?? '').toLowerCase() === 'true',
   };
 
   const nonces = new Map();
@@ -488,7 +490,10 @@ export function createAiGuard({ dbPool = null, redis = null, jwtSecret = null } 
 
     const forceSignatureCheck = !req.user && config.requireSignedHeaders;
 
-    console.log(`[ai-guard-debug] requestId="${req.header('x-request-id')}" route="${routeKey}" clientId="${clientId}" hasUser=${!!req.user} forceSig=${forceSignatureCheck}`);
+    if (config.debug) {
+      // 仅元数据：禁止写入 token / signature / Authorization 原文
+      console.debug(`[ai-guard-debug] requestId="${req.header('x-request-id')}" route="${routeKey}" clientId="${clientId}" hasUser=${!!req.user} forceSig=${forceSignatureCheck}`);
+    }
 
     if (!clientId) {
       return reject({ req, res, status: 401, message: 'Missing client id', reason: 'missing_client_id', clientId, routeKey });

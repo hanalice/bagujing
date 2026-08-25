@@ -1,8 +1,8 @@
 # 质量保证与测试执行报告 (QA Execution Report)
 
 > **发布版本**：v0.2.0  
-> **报告生成时间**：2026-08-23 22:50:06  
-> **Git 提交**：f40c193 (main)  
+> **报告生成时间**：2026-08-25 11:22:06  
+> **Git 提交**：3872e68 (auto-fix/a6-20260825)  
 > **测试环境**：Linux (Node.js v22.23.1)  
 > **总体验收状态**：✅ **ALL PASSED (符合质量准出标准)**
 
@@ -12,8 +12,8 @@
 
 | 测试套件 | 执行命令 | 用例 / 项数 | 通过 (Pass) | 失败 (Fail) | 耗时 | 判定结果 |
 | :--- | :--- | :---: | :---: | :---: | :---: | :---: |
-| **后端核心单元测试** | `cd backend && npm test` | 39 | 39 | 0 | 997ms | ✅ PASS |
-| **前端单元与 E2E 测试** | `cd frontend && npm test` | 5 | 5 | 0 | 7.0s | ✅ PASS |
+| **后端核心单元测试** | `cd backend && npm test` | 42 | 42 | 0 | 956ms | ✅ PASS |
+| **前端单元与 E2E 测试** | `cd frontend && npm test` | 5 | 5 | 0 | 6.2s | ✅ PASS |
 | **数据库完整性排查** | `node backend/scripts/verify-db.js` | 2 | 2 | 0 | ~85ms | ✅ PASS |
 
 ---
@@ -21,7 +21,7 @@
 ## 2. 失败用例追踪 (Failed Test Cases)
 
 ### 2.1 后端失败用例 (Backend Failures)
-> ✅ **全部通过**：共执行 39 个后端用例，无失败用例。
+> ✅ **全部通过**：共执行 42 个后端用例，无失败用例。
 
 ### 2.2 前端失败用例 (Frontend Failures)
 > ✅ **全部通过**：共执行 5 个前端用例（Vitest 单元测试: 4，Playwright E2E: 1），无失败用例。
@@ -30,6 +30,8 @@
 
 ## 3. 缺陷修复与回归验证记录 (Bug Fix Verifications)
 
+- **Commit `3872e68`** (2026-08-23): Merge pull request #10 from hanalice/fix/daily-fix-review-loop-close
+- **Commit `83743cd`** (2026-08-23): fix(automation): 补全 daily-fix 审核返修循环的 done/fi 闭合
 - **Commit `1a3f3db`** (2026-08-22): Merge pull request #7 from hanalice/auto-fix/a5-20260822
 - **Commit `7ec8fa2`** (2026-08-22): fix(chat): [P2-5][A5] 缺 Key 或空消息时先发 SSE error 再 end
 - **Commit `531ce43`** (2026-08-22): Merge pull request #3 from hanalice/chore/daily-fix-commit-message
