@@ -139,6 +139,23 @@ read_queue_row() {
   ' "$HLD_PATH"
 }
 
+# HLD 被 gitignore，状态回写只影响本地视图。队列表有对齐空格，不能要求「恰好一格」。
+writeback_queue_done() {
+  local tmp="${HLD_PATH}.tmp"
+  awk -v id="$ID" '
+    /^##[[:space:]]/ { in_queue = ($0 ~ /自动化修复队列/) }
+    in_queue && $0 ~ ("^\\|[[:space:]]*" id "[[:space:]]*\\|") {
+      if ($0 ~ /\|[[:space:]]*todo[[:space:]]*\|/) {
+        sub(/\|[[:space:]]*todo[[:space:]]*\|/, "| done |")
+        changed = 1
+      }
+    }
+    { print }
+    END { if (!changed) exit 1 }
+  ' "$HLD_PATH" > "$tmp" || { rm -f "$tmp"; die "未能把 $ID 从 todo 改为 done，请检查 $HLD_PATH 第 6 节表格对齐"; }
+  mv "$tmp" "$HLD_PATH"
+}
+
 ROW="$(read_queue_row "$TASK_ID" "$LEVEL")"
 [ -n "$ROW" ] || die "队列中没有可执行任务（--task='$TASK_ID' --level='$LEVEL'）"
 
@@ -511,8 +528,7 @@ git add -A
 git commit -F "$MSG_FILE"
 echo "✅ 已提交到 $WORK_BRANCH"
 
-# HLD 被 gitignore，状态回写只影响本地视图；真相源是 git log
-sed -i -E "s/^(\| $ID \| $DEFECT_ID \| $ROW_LEVEL \| )todo( \|)/\1done\2/" "$HLD_PATH"
+writeback_queue_done
 echo "📄 已将 $ID 在内部队列中标记为 done"
 
 if [ "$DO_PUSH" = "1" ]; then
