@@ -93,6 +93,16 @@
 | UT-CHAT-SSE-02 | 空白消息：SSE 头后发 type:error 再 end | 前置：已配置有效 `OPENAI_API_KEY`；已登录；`POST /api/chat`，body `{ "message": "   " }`（仅空白）。 | 头与时序同 UT-CHAT-SSE-01；恰好一次 `write`，线格式为 `data: {"type":"error","message":"Empty message"}\n\n`；再 `res.end()`；不发起上游 LLM 调用。 |
 | UT-CHAT-SSE-03 | 空串或缺 message：同 Empty message 协议 | 前置：已配置 Key；已登录；分别覆盖 body `{ "message": "" }` 与省略 `message` 字段（经 sanitize 得 `''`）。 | 与 UT-CHAT-SSE-02 相同契约：SSE 三头 → 唯一 `type:error`/`Empty message` 帧 → `end`；禁止静默关连接、禁止 JSON 错误体。 |
 
+### 2.9 Guard 调试日志降级 (`backend/src/tests/ai-guard-debug.test.js`)
+
+对应 **A6 / P2-3**：`backend/src/security/ai-guard.js` 中间件内带前缀 `[ai-guard-debug]` 的调试输出（当前为无条件 `console.log`，含 `requestId` / `route` / `clientId` / `hasUser` / `forceSig`）在生产默认路径下不得进入标准日志，避免 token/header 身份噪音刷屏。完成标准：生产关闭该调试行，或降为仅 debug 级别；**默认**（未显式开启调试）捕获 `console.log` / `console.debug` / `console.info` 时，零条消息包含子串 `[ai-guard-debug]`。测试通过 stub `console.*` + 直接调用 `createAiGuard(...).middleware`（参考 `ai-guard-cache.test.js` 的 `mockHttp`），命中 AI 路由（如 `POST /api/chat`），`AI_REQUIRE_SIGNED_HEADERS=false` 且 `req.user.clientId` 已设以便 `next()`。`it()` 标题须包含下表 ID。
+
+| ID | 用例标题 | 场景描述 | 预期结果 |
+| :--- | :--- | :--- | :--- |
+| UT-GUARD-DEBUG-01 | 生产默认：无 `[ai-guard-debug]` 输出 | 前置：`NODE_ENV=production`；未设置任何显式开启 Guard 调试的开关（若实现使用 `AI_GUARD_DEBUG` 等，则保持未设或 `false`）；stub `console.log`/`console.debug`/`console.info`；`createAiGuard` 后对 `POST /api/chat` 走一次 middleware（合法 `clientId`，可 `next()`）。 | 1. middleware 调用 `next()`（不因关日志而拒请求）；<br>2. 上述三个 console 方法的全部参数拼接串中，**零次**出现子串 `[ai-guard-debug]`；<br>3. 请求仍可正常进入后续 handler（本用例不断言业务响应体）。 |
+| UT-GUARD-DEBUG-02 | 显式开启调试：允许一条 `[ai-guard-debug]` | 前置：按实现约定开启调试（例如 `AI_GUARD_DEBUG=true`，或文档约定的非生产 + debug 级别）；同样 stub console；对 `POST /api/chat` 走 middleware，请求头带 `x-request-id: req-debug-1`。 | 1. `console.log` 或 `console.debug`（不得用默认生产 info 通道刷屏）**至少一次**参数含 `[ai-guard-debug]`；<br>2. 该条须同时能观察到 `route` 与 chat 路由标识（如 `chat` / `/api/chat` 的 routeKey）以及 `requestId`/`req-debug-1` 相关字段；<br>3. middleware 仍 `next()`，行为与关日志时一致。 |
+| UT-GUARD-DEBUG-03 | 调试开启时正文不含签名/Token 原文 | 前置：调试已开启（同 UT-GUARD-DEBUG-02）；`req.header` 可返回非空的 `x-client-token`、`x-signature`、`authorization`（或 `Authorization`）伪造敏感值（如 `secret-token-value`、`sig-leak-probe`、`Bearer leak-jwt`）；走 `POST /api/chat` middleware。 | 1. 所有含 `[ai-guard-debug]` 的 console 调用参数拼接后，**均不包含**上述敏感原文子串（`secret-token-value` / `sig-leak-probe` / `leak-jwt` / 完整 `Bearer ...`）；<br>2. 允许出现布尔或枚举型元数据（如 `hasUser`、`forceSig`），但禁止把签名头或 client token 原文写入日志。 |
+
 ---
 
 ## 3. 安全防护与集成测试用例 (Security & Integration)
