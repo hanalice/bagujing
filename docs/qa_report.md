@@ -1,8 +1,8 @@
 # 质量保证与测试执行报告 (QA Execution Report)
 
 > **发布版本**：v0.2.0  
-> **报告生成时间**：2026-08-25 13:13:50  
-> **Git 提交**：1d7fb94 (fix/daily-fix-hld-writeback)  
+> **报告生成时间**：2026-08-26 10:09:40  
+> **Git 提交**：d7cb8f2 (auto-fix/a7-20260826)  
 > **测试环境**：Linux (Node.js v22.23.1)  
 > **总体验收状态**：✅ **ALL PASSED (符合质量准出标准)**
 
@@ -12,8 +12,8 @@
 
 | 测试套件 | 执行命令 | 用例 / 项数 | 通过 (Pass) | 失败 (Fail) | 耗时 | 判定结果 |
 | :--- | :--- | :---: | :---: | :---: | :---: | :---: |
-| **后端核心单元测试** | `cd backend && npm test` | 42 | 42 | 0 | 975ms | ✅ PASS |
-| **前端单元与 E2E 测试** | `cd frontend && npm test` | 5 | 5 | 0 | 3.9s | ✅ PASS |
+| **后端核心单元测试** | `cd backend && npm test` | 50 | 50 | 0 | 972ms | ✅ PASS |
+| **前端单元与 E2E 测试** | `cd frontend && npm test` | 5 | 5 | 0 | 9.6s | ✅ PASS |
 | **数据库完整性排查** | `node backend/scripts/verify-db.js` | 2 | 2 | 0 | ~85ms | ✅ PASS |
 
 ---
@@ -21,7 +21,7 @@
 ## 2. 失败用例追踪 (Failed Test Cases)
 
 ### 2.1 后端失败用例 (Backend Failures)
-> ✅ **全部通过**：共执行 42 个后端用例，无失败用例。
+> ✅ **全部通过**：共执行 50 个后端用例，无失败用例。
 
 ### 2.2 前端失败用例 (Frontend Failures)
 > ✅ **全部通过**：共执行 5 个前端用例（Vitest 单元测试: 4，Playwright E2E: 1），无失败用例。
@@ -30,6 +30,7 @@
 
 ## 3. 缺陷修复与回归验证记录 (Bug Fix Verifications)
 
+- **Commit `d7cb8f2`** (2026-08-25): Merge pull request #12 from hanalice/fix/daily-fix-hld-writeback
 - **Commit `1d7fb94`** (2026-08-25): fix(automation): 队列回写容忍表格对齐空格，匹配失败则报错
 - **Commit `db4e708`** (2026-08-25): Merge pull request #11 from hanalice/auto-fix/a6-20260825
 - **Commit `76c23a6`** (2026-08-25): fix(ai-guard): [P2-3][A6] 生产默认关闭 ai-guard-debug 调试日志
