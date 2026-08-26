@@ -261,3 +261,178 @@ describe('A4: quota conservative pre-debit & refund on failure', () => {
     assert.equal(rejectedLog.promptTokens, 0);
   });
 });
+
+/** 与 ai-guard 内部 estimateTokensByText 一致：ceil(len/4)，至少 1 */
+function estimateTokensByText(text) {
+  return Math.max(1, Math.ceil(String(text ?? '').length / 4));
+}
+
+const LONG_CACHED_HTML = `<p>${'缓存解析内容'.repeat(80)}</p>`; // ≥1KB，若误按 estimate 结算会吃掉大量配额
+
+function configureQuotaCacheEnv({ globalTokenLimit }) {
+  process.env.AI_AUDIT_FILE_PATH = AUDIT_FILE;
+  process.env.AI_REQUIRE_SIGNED_HEADERS = 'false';
+  process.env.AI_MAX_COMPLETION_TOKENS = '4096';
+  process.env.AI_QUOTA_CONSERVATIVE_COMPLETION_TOKENS = '400';
+  process.env.AI_GLOBAL_DAILY_TOKEN_LIMIT = String(globalTokenLimit);
+  process.env.AI_GLOBAL_DAILY_REQUEST_LIMIT = '100';
+  process.env.AI_RATE_LIMIT_CLIENT_PER_MINUTE = '100';
+  process.env.AI_RATE_LIMIT_CLIENT_PER_HOUR = '1000';
+  process.env.AI_RATE_LIMIT_IP_PER_MINUTE = '100';
+  process.env.AI_MAX_CONCURRENCY_PER_CLIENT = '10';
+}
+
+describe('A7/P0-8: cached_answer does not consume quota (upstreamReached)', () => {
+  saveEnv();
+
+  afterEach(() => {
+    restoreEnv();
+    try { fs.unlinkSync(AUDIT_FILE); } catch { /* ignore */ }
+  });
+
+  it('UT-QUOTA-CACHE-01: cached_answer + upstreamReached:false 记零并回补预扣', async () => {
+    // 日上限仅够约 1 次保守预扣；若缓存命中仍按长 HTML 结算则第二次必 429
+    configureQuotaCacheEnv({ globalTokenLimit: 500 });
+    const guard = createAiGuard({ jwtSecret: 'test' });
+    const reqPath = '/api/problems/1/answer/generate';
+
+    const first = mockHttp({ method: 'POST', path: reqPath, body: { force: false } });
+    let firstNext = 0;
+    await guard.middleware(first.req, first.res, () => { firstNext += 1; });
+    assert.equal(firstNext, 1);
+    first.req.aiGuard.finalize({
+      status: 'ok',
+      reason: 'cached_answer',
+      completionText: LONG_CACHED_HTML,
+      upstreamReached: false,
+    });
+
+    const lines = await readAuditLines(1);
+    const cachedLog = lines.find((l) => l.reason === 'cached_answer');
+    assert.ok(cachedLog, '审计须保留 cached_answer 命中');
+    assert.equal(cachedLog.promptTokens, 0);
+    assert.equal(cachedLog.completionTokens, 0);
+    assert.equal(cachedLog.totalTokens, 0);
+
+    const second = mockHttp({ method: 'POST', path: reqPath, body: { force: false } });
+    let secondNext = 0;
+    await guard.middleware(second.req, second.res, () => { secondNext += 1; });
+    assert.equal(secondNext, 1, '上游未触达须全额回补预扣，第二次仍可准入');
+    assert.equal(second.statusCode, 200);
+  });
+
+  it('UT-QUOTA-CACHE-02: 连续缓存命中不消耗日配额', async () => {
+    configureQuotaCacheEnv({ globalTokenLimit: 900 }); // 约 1～2 次保守预扣
+    const guard = createAiGuard({ jwtSecret: 'test' });
+    const reqPath = '/api/problems/1/answer/generate';
+    const rounds = 3;
+
+    for (let i = 0; i < rounds; i += 1) {
+      const http = mockHttp({ method: 'POST', path: reqPath, body: { force: false } });
+      let nextCalled = 0;
+      await guard.middleware(http.req, http.res, () => { nextCalled += 1; });
+      assert.equal(nextCalled, 1, `第 ${i + 1} 次缓存命中后仍应准入`);
+      assert.notEqual(http.statusCode, 429);
+      http.req.aiGuard.finalize({
+        status: 'ok',
+        reason: 'cached_answer',
+        completionText: LONG_CACHED_HTML,
+        upstreamReached: false,
+      });
+    }
+
+    const lines = await readAuditLines(rounds);
+    const cachedLogs = lines.filter((l) => l.reason === 'cached_answer');
+    assert.equal(cachedLogs.length, rounds, '审计可按 reason 统计缓存命中次数');
+    for (const row of cachedLogs) {
+      assert.equal(row.totalTokens, 0);
+    }
+  });
+
+  it('UT-QUOTA-CACHE-04: 对照：真实生成仍按上游触达计费', async () => {
+    configureQuotaCacheEnv({ globalTokenLimit: 100000 });
+    const guard = createAiGuard({ jwtSecret: 'test' });
+    const shortHtml = '<p>短答案</p>';
+
+    const http = mockHttp({
+      method: 'POST',
+      path: '/api/problems/1/answer/generate',
+      body: { force: true },
+    });
+    await guard.middleware(http.req, http.res, () => {});
+    http.req.aiGuard.finalize({
+      status: 'ok',
+      reason: 'generated_answer',
+      completionText: shortHtml,
+      upstreamStatus: 200,
+      // upstreamReached 默认 true：不得因 A7 误把生成路径记零
+    });
+
+    const lines = await readAuditLines(1);
+    const generated = lines.find((l) => l.reason === 'generated_answer');
+    assert.ok(generated);
+    assert.ok(generated.totalTokens > 0, '真实生成须至少含 prompt 估算');
+    assert.equal(generated.completionTokens, estimateTokensByText(shortHtml));
+  });
+
+  it('UT-QUOTA-CACHE-05: 仅 reason=cached_answer 但未传 upstreamReached 仍计费', async () => {
+    configureQuotaCacheEnv({ globalTokenLimit: 100000 });
+    const guard = createAiGuard({ jwtSecret: 'test' });
+
+    const http = mockHttp({
+      method: 'POST',
+      path: '/api/problems/1/answer/generate',
+      body: { force: false },
+    });
+    await guard.middleware(http.req, http.res, () => {});
+    // 故意省略 upstreamReached，依赖 Guard 默认 true——不计费不得仅靠 reason 字符串
+    http.req.aiGuard.finalize({
+      status: 'ok',
+      reason: 'cached_answer',
+      completionText: LONG_CACHED_HTML,
+    });
+
+    const lines = await readAuditLines(1);
+    const row = lines.find((l) => l.reason === 'cached_answer');
+    assert.ok(row);
+    assert.ok(row.totalTokens > 0);
+    assert.equal(row.completionTokens, estimateTokensByText(LONG_CACHED_HTML));
+  });
+
+  it('IT-QUOTA-CACHE-01: 连续 POST generate 命中缓存不 429', async () => {
+    // middleware+finalize 闭环：配额仅够约 1～2 次预扣，连续 ≥3 次缓存命中不得 429
+    configureQuotaCacheEnv({ globalTokenLimit: 900 });
+    const guard = createAiGuard({ jwtSecret: 'test' });
+    const reqPath = '/api/problems/42/answer/generate';
+    const rounds = 3;
+    const responses = [];
+
+    for (let i = 0; i < rounds; i += 1) {
+      const http = mockHttp({ method: 'POST', path: reqPath, body: { force: false } });
+      let nextCalled = 0;
+      await guard.middleware(http.req, http.res, () => { nextCalled += 1; });
+      assert.equal(nextCalled, 1);
+      assert.notEqual(http.statusCode, 429, '全程无 HTTP 429');
+      http.req.aiGuard.finalize({
+        status: 'ok',
+        reason: 'cached_answer',
+        completionText: LONG_CACHED_HTML,
+        upstreamReached: false,
+      });
+      // 模拟 handler 缓存早退响应契约（集成完成标准 data.cached === true）
+      responses.push({ code: 0, data: { cached: true, answer: LONG_CACHED_HTML } });
+    }
+
+    for (const body of responses) {
+      assert.equal(body.code, 0);
+      assert.equal(body.data.cached, true);
+    }
+
+    const lines = await readAuditLines(rounds);
+    const cachedLogs = lines.filter((l) => l.reason === 'cached_answer');
+    assert.ok(cachedLogs.length >= rounds);
+    for (const row of cachedLogs) {
+      assert.equal(row.totalTokens, 0);
+    }
+  });
+});
