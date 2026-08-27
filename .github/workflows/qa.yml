@@ -1,0 +1,63 @@
+# 全栈质量门禁：与本地 scripts/qa-report.sh 同一入口。
+# 报告不入库；本次运行写入 Job Summary，并作为 Artifact 上传。
+name: QA
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: qa-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  qa:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v4
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            backend/package-lock.json
+            frontend/package-lock.json
+
+      # 跳过 backend postinstall（import-data 依赖未入库的 ndjson）；再编译 sqlite3 原生模块
+      - name: 安装后端依赖
+        working-directory: backend
+        run: |
+          npm ci --ignore-scripts
+          npm rebuild sqlite3
+
+      - name: 安装前端依赖与 Chromium
+        working-directory: frontend
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: 运行全栈质量门禁
+        run: ./scripts/qa-report.sh
+
+      - name: 写入 Job Summary
+        if: always()
+        run: |
+          if [ -f docs/qa_report.md ]; then
+            cat docs/qa_report.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "未生成 docs/qa_report.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: 上传 QA 报告 Artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qa-report
+          path: docs/qa_report.md
+          if-no-files-found: warn
+          retention-days: 30

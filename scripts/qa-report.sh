@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # ==============================================================================
 # 脚本名称: qa-report.sh
-# 脚本作用: 全栈测试一键聚合执行并生成固定格式的 docs/qa_report.md 质量报告
+# 脚本作用: 全栈测试一键聚合执行并生成本地 docs/qa_report.md（该文件已 gitignore）
 # 使用方式: ./scripts/qa-report.sh
+# CI=true 时跳过依赖本机 sqlite 的数据库诊断（GitHub Actions 会自动设置 CI）
 # ==============================================================================
 
 set -u
@@ -72,18 +73,24 @@ else
   fi
 fi
 
-# 3. 运行数据库完整性校验
+# 3. 运行数据库完整性校验（CI 无本机 sqlite，跳过且不阻断门禁）
 echo -n "🗄️ [3/3] 正在运行 SQLite 数据库完整性排查... "
 DB_OUT_FILE="$TEMP_DIR/db_out.txt"
-set +e
-(cd "$PROJECT_ROOT/backend" && node scripts/verify-db.js) > "$DB_OUT_FILE" 2>&1
-DB_CODE=$?
-set -e
-
-if [ $DB_CODE -eq 0 ]; then
-  echo "✅ PASS"
+if [ "${CI:-}" = "true" ]; then
+  echo "QA_DB_VERIFY_SKIPPED" > "$DB_OUT_FILE"
+  DB_CODE=0
+  echo "⚪ SKIPPED (CI 不依赖本机 sqlite)"
 else
-  echo "❌ FAIL (退出码: $DB_CODE)"
+  set +e
+  (cd "$PROJECT_ROOT/backend" && node scripts/verify-db.js) > "$DB_OUT_FILE" 2>&1
+  DB_CODE=$?
+  set -e
+
+  if [ $DB_CODE -eq 0 ]; then
+    echo "✅ PASS"
+  else
+    echo "❌ FAIL (退出码: $DB_CODE)"
+  fi
 fi
 
 # 4. 组装临时 JSON 数据并调用生成器
