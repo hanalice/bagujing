@@ -685,10 +685,13 @@ app.post('/api/problems/:id/answer/generate', authenticateToken, requirePermissi
         years,
       });
 
+      // 业务缓存命中未触达上游：沿用 A4 upstreamReached 判据，不计配额、全额回补预扣
       finalizeGuard({
         status: 'ok',
         reason: 'cached_answer',
         completionText: detail.answer,
+        upstreamStatus: null,
+        upstreamReached: false,
       });
 
       return res.json({

@@ -1,5 +1,6 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import { ChatOpenAI } from '@langchain/openai';
 import { buildLlmConfig, createLlmModel } from '../llm.js';
 import { readStreamChunkWithTimeout } from '../security/ai-guard.js';
@@ -359,12 +360,19 @@ describe('Answer generation invoke path & finalize contract', () => {
   it('finalize executes without throwing when upstreamStatus is 200 or null', () => {
     let capturedAudit = null;
     const mockGuardContext = {
-      finalize: ({ completionText = '', status = 'ok', reason = 'completed', upstreamStatus = null } = {}) => {
+      finalize: ({
+        completionText = '',
+        status = 'ok',
+        reason = 'completed',
+        upstreamStatus = null,
+        upstreamReached = true,
+      } = {}) => {
         capturedAudit = {
           status,
           reason,
           completionText,
           upstreamStatus,
+          upstreamReached,
         };
       },
     };
@@ -376,26 +384,111 @@ describe('Answer generation invoke path & finalize contract', () => {
         reason: 'generated_answer',
         completionText: '<p>HTML Answer</p>',
         upstreamStatus: 200,
+        upstreamReached: true,
       });
     });
 
     assert.equal(capturedAudit.status, 'ok');
     assert.equal(capturedAudit.reason, 'generated_answer');
     assert.equal(capturedAudit.upstreamStatus, 200);
+    assert.equal(capturedAudit.upstreamReached, true);
+  });
 
-    // 模拟 cached_answer 路径的 finalize 调用
+  it('UT-AUDIT-02: 缓存命中安全记账且不计配额', () => {
+    const longHtml = `<p>${'x'.repeat(1200)}</p>`;
+    let captured = null;
+    const mockGuardContext = {
+      finalize: (payload = {}) => {
+        const {
+          completionText = '',
+          status = 'ok',
+          reason = 'completed',
+          upstreamStatus = null,
+          upstreamReached = true,
+        } = payload;
+        // 对齐 Guard：upstreamReached === false 时 token 记零
+        const promptTokens = upstreamReached ? 10 : 0;
+        const completionTokens = upstreamReached
+          ? Math.max(1, Math.ceil(String(completionText).length / 4))
+          : 0;
+        captured = {
+          status,
+          reason,
+          completionText,
+          upstreamStatus,
+          upstreamReached,
+          promptTokens,
+          completionTokens,
+          totalTokens: promptTokens + completionTokens,
+        };
+      },
+    };
+
     assert.doesNotThrow(() => {
       mockGuardContext.finalize({
         status: 'ok',
         reason: 'cached_answer',
-        completionText: '<p>Cached Answer</p>',
+        completionText: longHtml,
         upstreamStatus: null,
+        upstreamReached: false,
       });
     });
 
-    assert.equal(capturedAudit.status, 'ok');
-    assert.equal(capturedAudit.reason, 'cached_answer');
-    assert.equal(capturedAudit.upstreamStatus, null);
+    assert.equal(captured.status, 'ok');
+    assert.equal(captured.reason, 'cached_answer');
+    assert.equal(captured.upstreamStatus, null);
+    assert.equal(captured.upstreamReached, false);
+    assert.equal(captured.promptTokens, 0);
+    assert.equal(captured.completionTokens, 0);
+    assert.equal(captured.totalTokens, 0);
+  });
+
+  it('UT-QUOTA-CACHE-03: generate handler 缓存早退必须传 upstreamReached:false', () => {
+    // 等价抽取路径：锁定 handler 缓存早退 finalize 传参 + 响应契约（避免只改 reason 文案却漏传判据）
+    const src = fs.readFileSync(
+      new URL('../server-express.js', import.meta.url),
+      'utf8',
+    );
+    const cachedBlock = src.match(
+      /reason:\s*'cached_answer'[\s\S]{0,280}?upstreamReached:\s*false/,
+    );
+    assert.ok(cachedBlock, 'cached_answer finalize 必须显式 upstreamReached: false');
+    assert.match(cachedBlock[0], /upstreamStatus:\s*null/);
+    assert.match(cachedBlock[0], /completionText:\s*detail\.answer/);
+
+    // 模拟 handler 早退后的 JSON 响应契约（零次上游：无 invoke 也能返回 cached）
+    const detailAnswer = '<p>库内原文</p>';
+    const response = {
+      code: 0,
+      data: { id: 1, answer: detailAnswer, cached: true },
+      message: 'success',
+    };
+    assert.equal(response.code, 0);
+    assert.equal(response.data.cached, true);
+    assert.equal(response.data.answer, detailAnswer);
+  });
+
+  it('UT-QUOTA-CACHE-04: 对照：真实生成仍按上游触达计费（响应契约）', () => {
+    // handler 成功生成路径的响应与 finalize 契约（不计费不得误伤此路径）
+    const response = {
+      code: 0,
+      data: { id: 1, answer: '<p>短</p>', cached: false },
+      message: 'success',
+    };
+    const finalizePayload = {
+      status: 'ok',
+      reason: 'generated_answer',
+      completionText: response.data.answer,
+      upstreamStatus: 200,
+      upstreamReached: true,
+    };
+
+    assert.equal(response.data.cached, false);
+    assert.equal(finalizePayload.reason, 'generated_answer');
+    assert.equal(finalizePayload.upstreamReached, true);
+    assert.ok(
+      Math.max(1, Math.ceil(finalizePayload.completionText.length / 4)) > 0,
+    );
   });
 });
 

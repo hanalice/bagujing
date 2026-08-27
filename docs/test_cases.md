@@ -74,7 +74,7 @@
 | ID | 用例标题 | 场景描述 | 预期结果 |
 | :--- | :--- | :--- | :--- |
 | UT-AUDIT-01 | 生成成功安全记账 | 同步 `invoke` 成功生成 HTML 答案并传入 `upstreamStatus: 200` 调用 `finalize`。 | 正常完成审计记录与 Token 统计，无未定义变量异常。 |
-| UT-AUDIT-02 | 缓存命中安全记账 | 命中已有缓存答案并传入 `upstreamStatus: null` 调用 `finalize`。 | 正常完成 `cached_answer` 记账，无异常抛出。 |
+| UT-AUDIT-02 | 缓存命中安全记账且不计配额 | 命中已有缓存答案；调用 `finalize({ status: 'ok', reason: 'cached_answer', completionText: 长 HTML, upstreamStatus: null, upstreamReached: false })`（对齐 A7 / P0-8，测试文件可同目录扩展或见 `ai-guard-quota.test.js`）。 | 1. 不抛异常；2. 审计/结算 `promptTokens`、`completionTokens`、`totalTokens` 均为 `0`（不得按 `estimate(answer)` 扣配额）；3. 与 A4「上游未触达即不计费」判据一致。 |
 
 ### 2.7 Guard 响应缓存策略 (`backend/src/tests/ai-guard-cache.test.js`)
 
@@ -103,6 +103,18 @@
 | UT-GUARD-DEBUG-02 | 显式开启调试：允许一条 `[ai-guard-debug]` | 前置：按实现约定开启调试（例如 `AI_GUARD_DEBUG=true`，或文档约定的非生产 + debug 级别）；同样 stub console；对 `POST /api/chat` 走 middleware，请求头带 `x-request-id: req-debug-1`。 | 1. `console.log` 或 `console.debug`（不得用默认生产 info 通道刷屏）**至少一次**参数含 `[ai-guard-debug]`；<br>2. 该条须同时能观察到 `route` 与 chat 路由标识（如 `chat` / `/api/chat` 的 routeKey）以及 `requestId`/`req-debug-1` 相关字段；<br>3. middleware 仍 `next()`，行为与关日志时一致。 |
 | UT-GUARD-DEBUG-03 | 调试开启时正文不含签名/Token 原文 | 前置：调试已开启（同 UT-GUARD-DEBUG-02）；`req.header` 可返回非空的 `x-client-token`、`x-signature`、`authorization`（或 `Authorization`）伪造敏感值（如 `secret-token-value`、`sig-leak-probe`、`Bearer leak-jwt`）；走 `POST /api/chat` middleware。 | 1. 所有含 `[ai-guard-debug]` 的 console 调用参数拼接后，**均不包含**上述敏感原文子串（`secret-token-value` / `sig-leak-probe` / `leak-jwt` / 完整 `Bearer ...`）；<br>2. 允许出现布尔或枚举型元数据（如 `hasUser`、`forceSig`），但禁止把签名头或 client token 原文写入日志。 |
 
+### 2.10 `cached_answer` 命中不计配额 (`backend/src/tests/ai-guard-quota.test.js` / handler 契约)
+
+对应 **A7 / P0-8**：`POST /api/problems/:id/answer/generate` 在题详情已有非空 `details.answer` 且未 `force` 时走 SQLite 业务缓存早退，**未触达上游模型**。须沿用 A4 判据，由 handler 显式 `finalize({ status: 'ok', reason: 'cached_answer', upstreamReached: false, ... })`（可附 `upstreamStatus: null`、`completionText` 为库内原文）。Guard 在 `upstreamReached === false` 时：`billedPromptTokens`/`completionTokens`/`totalTokens` 记 `0`，并对准入预扣全额回补（`refund: true`）；审计行仍写入 `reason: 'cached_answer'`，以便统计命中次数。完成标准：连续命中缓存不再消耗日配额；审计仍可统计命中次数。配额/审计结算优先落在 `backend/src/tests/ai-guard-quota.test.js`（复用 A4 的 `mockHttp` + 审计 NDJSON）；handler 传参契约可落在 `backend/src/tests/llm.test.js` 或同主题新测文件。`it()` 标题须包含下表 ID。
+
+| ID | 用例标题 | 场景描述 | 预期结果 |
+| :--- | :--- | :--- | :--- |
+| UT-QUOTA-CACHE-01 | cached_answer + upstreamReached:false 记零并回补预扣 | 前置：`AI_REQUIRE_SIGNED_HEADERS=false`；无 dbPool 走内存日配额；`AI_GLOBAL_DAILY_TOKEN_LIMIT` 仅够约 1 次保守预扣（同 A4 失败回补手法）；对 `POST /api/problems/1/answer/generate` 走 `createAiGuard().middleware` 准入后，调用 `finalize({ status: 'ok', reason: 'cached_answer', completionText: 很长的 HTML（≥1KB）, upstreamReached: false })`；再发第二次同路由 middleware。 | 1. 审计 NDJSON 存在 `reason === 'cached_answer'` 的行，且 `promptTokens === 0`、`completionTokens === 0`、`totalTokens === 0`（长 `completionText` 不得按 `ceil(len/4)` 结算）；2. 第二次 `next()` 被调用、HTTP 状态保持可准入（非 429）；3. 证明「上游未触达」路径全额回补预扣。 |
+| UT-QUOTA-CACHE-02 | 连续缓存命中不消耗日配额 | 前置：日 token 上限约等于 1～2 次保守预扣；同一 `clientId` 连续 ≥3 次：middleware 准入 `answer/generate` → `finalize({ status: 'ok', reason: 'cached_answer', completionText: 长 HTML, upstreamReached: false })`。 | 1. ≥3 次全部 `next()`，无一次 `statusCode === 429` / `client_daily_token_limit`；2. 审计中 `reason === 'cached_answer'` 的条数等于请求次数（可统计命中）；3. 每条上述审计的 `totalTokens === 0`。 |
+| UT-QUOTA-CACHE-03 | generate handler 缓存早退必须传 upstreamReached:false | 前置：SQLite 题详情已有非空 `answer`；请求 body 未设 `force`（或 `force !== true`）；spy/stub `model.invoke`（或 `getLlmModel`）与 `req.aiGuard.finalize`；经 handler（或等价抽取路径）处理 `POST /api/problems/:id/answer/generate`。 | 1. **零次**上游 `invoke`/`stream`；2. `finalize` 恰好一次，payload 含 `status: 'ok'`、`reason: 'cached_answer'`、`upstreamReached: false`（`upstreamStatus` 为 `null` 或不计费语义）；3. 响应 HTTP 200，JSON：`code === 0`、`data.cached === true`、`data.answer` 等于库内原文。 |
+| UT-QUOTA-CACHE-04 | 对照：真实生成仍按上游触达计费 | 前置：题无可用缓存答案，或 body `{ "force": true }`；mock `invoke` 返回非空短 HTML；成功路径 `finalize` 走 `reason: 'generated_answer'`（`upstreamReached` 默认 `true` 或显式 `true`，可带 `upstreamStatus: 200`）。 | 1. 审计 `reason === 'generated_answer'`（或成功生成等价 reason）；2. `totalTokens > 0`（至少含 prompt 估算，不得因 A7 误把生成路径也记零）；3. 响应 `data.cached === false`。 |
+| UT-QUOTA-CACHE-05 | 仅 reason=cached_answer 但未传 upstreamReached 仍计费 | 前置：同 UT-QUOTA-CACHE-01 的 Guard 环境；`finalize({ status: 'ok', reason: 'cached_answer', completionText: 长 HTML })`，**故意省略** `upstreamReached`（依赖 Guard 默认 `upstreamReached = true`）。 | 1. 审计该行 `totalTokens > 0` 且 `completionTokens === estimateTokensByText(completionText)`；2. 说明不计费**不**由 `reason` 字符串单独决定，必须由调用方显式传 `upstreamReached: false`（护栏：防止只改 reason 文案却漏传判据）。 |
+
 ---
 
 ## 3. 安全防护与集成测试用例 (Security & Integration)
@@ -126,6 +138,14 @@
 | IT-AUTH-01 | 无 Token 访问保护接口 | 未携带 `Authorization: Bearer` 访问需要登录的 API。 | 返回 HTTP 401，提示认证缺失。 |
 | IT-AUTH-02 | 非 Admin 访问管理端点 | 普通用户 Token 访问 `/api/admin/*` 端点。 | 返回 HTTP 403，提示需要管理员权限。 |
 | IT-CHAT-01 | 流式问答客户端断开取消 | 客户端在 SSE 传输中途关闭连接 (`req.on('close')`)。 | 触发 `AbortController.abort()`，立即终止上游 LLM 生成。 |
+
+### 3.3 `cached_answer` 配额与审计集成（A7 / P0-8）
+
+对应完成标准「连续命中缓存不再消耗日配额；审计仍可统计命中次数」。可在 `backend/src/tests/ai-guard-quota.test.js` 用 middleware+finalize 闭环验证，或经 `app.handle` 打真实 `answer/generate`（题已有长解析、无 `force`）。`it()` 标题须包含下表 ID。
+
+| ID | 用例标题 | 场景描述 | 预期结果 |
+| :--- | :--- | :--- | :--- |
+| IT-QUOTA-CACHE-01 | 连续 POST generate 命中缓存不 429 | 前置：同一 `clientId`；日 token 配额仅够约 1～2 次保守预扣；目标题 `details.answer` 已是长非空 HTML；已登录且具备 `study`；连续 ≥3 次 `POST /api/problems/:id/answer/generate`（body 无 `force` 或 `force: false`）；上游 LLM 可用 stub 断言未被调用。 | 1. 每次 HTTP 200，body `code === 0` 且 `data.cached === true`；2. 全程无 HTTP 429 / `Quota exceeded`；3. 审计中可数出 ≥3 条 `reason === 'cached_answer'`，且每条 `totalTokens === 0`。 |
 
 ---
 
