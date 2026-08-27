@@ -143,7 +143,8 @@ node scripts/static-server.js
 ## 🧪 测试与质量校验
 本项目秉持严格的质量标准，针对核心业务逻辑与关键交互实现 100% 自动化测试覆盖。
 
-- **[测试执行报告 (Execution Report)](docs/qa_report.md)**：查看最新测试执行结果、用例通过率与缺陷修复回归验证。
+- **质量门禁**：[![QA](https://github.com/hanalice/bagujing/actions/workflows/qa.yml/badge.svg)](https://github.com/hanalice/bagujing/actions/workflows/qa.yml) 打开最新一次 Run 的 Job Summary / Artifact 即可查看报告（`docs/qa_report.md` 由脚本生成，不入库）。
+- **本地报告**：`./scripts/qa-report.sh` 会在工作区生成 `docs/qa_report.md`，请勿提交。
 - **[测试用例设计 (Test Case Design)](docs/test_cases.md)**：深入了解测试策略矩阵、覆盖率映射以及端到端集成测试场景。
 
 ---

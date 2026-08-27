@@ -187,11 +187,14 @@ function extractFrontendFailures(rawOutput, stats) {
 // 7. 解析数据库完整性输出
 function parseDbVerifyOutput(rawOutput, exitCode) {
   const clean = stripAnsi(rawOutput);
+  if (clean.includes('QA_DB_VERIFY_SKIPPED')) {
+    return { status: 'SKIP', items: 0, duration: '-' };
+  }
   const hasClients = clean.includes('AI Clients');
   const hasLogs = clean.includes('AI Audit Logs');
 
   const status = exitCode === 0 && hasClients && hasLogs ? 'PASS' : 'FAIL';
-  return { status, items: 2 };
+  return { status, items: 2, duration: '~85ms' };
 }
 
 // 8. 渲染 Markdown 模板
@@ -236,7 +239,7 @@ function renderMarkdownReport(data) {
 | :--- | :--- | :---: | :---: | :---: | :---: | :---: |
 | **后端核心单元测试** | \`cd backend && npm test\` | ${backendStats.total} | ${backendStats.pass} | ${backendStats.fail} | ${backendStats.duration} | ${renderStatusCell(backendStats.status)} |
 | **前端单元与 E2E 测试** | \`cd frontend && npm test\` | ${frontendStats.total} | ${frontendStats.pass} | ${frontendStats.fail} | ${frontendStats.duration} | ${renderStatusCell(frontendStats.status)} |
-| **数据库完整性排查** | \`node backend/scripts/verify-db.js\` | ${dbStats.items} | ${dbStats.status === 'PASS' ? dbStats.items : 0} | ${dbStats.status === 'PASS' ? 0 : 1} | ~85ms | ${renderStatusCell(dbStats.status)} |
+| **数据库完整性排查** | \`node backend/scripts/verify-db.js\` | ${dbStats.items} | ${dbStats.status === 'PASS' ? dbStats.items : 0} | ${dbStats.status === 'FAIL' ? 1 : 0} | ${dbStats.duration || '-'} | ${renderStatusCell(dbStats.status)} |
 
 ---
 
@@ -260,7 +263,7 @@ ${gitFixesText}
 
 - [${backendStats.status === 'PASS' ? 'x' : ' '}] **后端核心用例通过**：LLM 适配层、AI Guard 记账与流式生命周期单测全绿。
 - [${frontendStats.status === 'PASS' ? 'x' : ' '}] **前端单测与 E2E 通过**：主路径鉴权与助教流式渲染自动化覆盖。
-- [${dbStats.status === 'PASS' ? 'x' : ' '}] **数据库完整性校验通过**：AI Clients 与 AI Audit Logs 表结构与数据可读。
+- [${dbStats.status === 'PASS' ? 'x' : ' '}] **数据库完整性校验${dbStats.status === 'SKIP' ? '（CI 已跳过本机 sqlite）' : '通过'}**：AI Clients 与 AI Audit Logs 表结构与数据可读。
 - [${allPassed ? 'x' : ' '}] **最终交付裁决**：${goDecision}
 `;
 }
@@ -289,8 +292,12 @@ function main() {
   const gitFixesText = extractGitFixes();
 
   const allStats = [backendStats, frontendStats, dbStats];
-  const allPassed = allStats.every((s) => s.status === 'PASS');
   const hasBlockingFailure = allStats.some((s) => s.status === 'FAIL');
+  // 后端+前端通过即可准出；DB SKIP（CI）不降级为 CONDITIONAL GO，工具链 SKIP 仍走 PARTIAL
+  const allPassed =
+    backendStats.status === 'PASS' &&
+    frontendStats.status === 'PASS' &&
+    (dbStats.status === 'PASS' || dbStats.status === 'SKIP');
 
   const reportMarkdown = renderMarkdownReport({
     version,

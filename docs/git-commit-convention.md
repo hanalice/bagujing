@@ -131,5 +131,6 @@ refactor(backend): 清理后端遗留代码，完善专属说明文档
 
 ## 5. 自动化校验与工具支持
 
-1. **Git Hooks 兜底校验**：仓库配置了 `.githooks/commit-msg`，在执行 `git commit` 时会自动校验 Header 规范性，并针对较大改动的 `fix`/`feat` 检查关键段落完整性，同时自动清理第三方 IDE 的水印标记。
-2. **AI Agent Skill 赋能**：在 `.agents/skills/commit-message/SKILL.md` 中固化了本规范与分支自检动作，AI Agent 在执行提交任务时会自动加载并对齐标准。
+1. **Git Hooks 兜底校验**：仓库配置了 `.githooks/commit-msg`，在执行 `git commit` 时会自动校验 Header 规范性，并针对较大改动的 `fix`/`feat` 检查关键段落完整性，同时自动清理第三方 IDE 的水印标记。`.githooks/pre-commit` 会跑 `scripts/qa-report.sh` 作为全栈门禁；生成的 `docs/qa_report.md` 仅留在本地，不再暂存入库。
+2. **GitHub Actions**：`.github/workflows/qa.yml` 在 push/PR 上跑同一套门禁（CI 跳过本机 sqlite 诊断），报告写入 Job Summary 并作为 Artifact 上传。
+3. **AI Agent Skill 赋能**：在 `.agents/skills/commit-message/SKILL.md` 中固化了本规范与分支自检动作，AI Agent 在执行提交任务时会自动加载并对齐标准。

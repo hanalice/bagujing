@@ -40,6 +40,8 @@ Thumbs.db
 coverage/
 .nyc_output/
 backend/src/tests/diag-*.js
+# 本地/CI 生成的质量报告，不要入库（权威结果看 GitHub Actions）
+docs/qa_report.md
 
 # Database（路径跟随实际 src/db 结构）
 backend/src/db/*.sqlite3
