@@ -47,10 +47,11 @@ jobs:
       - name: 写入 Job Summary
         if: always()
         run: |
+          # 覆盖写入，避免 Vitest 等工具在 CI 中预先追加的 Summary 拼在报告前面
           if [ -f docs/qa_report.md ]; then
-            cat docs/qa_report.md >> "$GITHUB_STEP_SUMMARY"
+            cat docs/qa_report.md > "$GITHUB_STEP_SUMMARY"
           else
-            echo "未生成 docs/qa_report.md" >> "$GITHUB_STEP_SUMMARY"
+            echo "未生成 docs/qa_report.md" > "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: 上传 QA 报告 Artifact

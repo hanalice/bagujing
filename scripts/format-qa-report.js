@@ -32,28 +32,6 @@ function getGitInfo() {
   }
 }
 
-// 2. 从 Git Commit 历史中自动抽取近期 fix 记录
-function extractGitFixes() {
-  const fixes = [];
-  try {
-    const gitLog = execSync('git log -n 20 --grep="^fix" --date=short --pretty=format:"- **Commit \\`%h\\`** (%ad): %s"', {
-      cwd: PROJECT_ROOT,
-    }).toString().trim();
-    if (gitLog) {
-      fixes.push(gitLog);
-    }
-  } catch {
-    // ignore git error
-  }
-
-  // 始终包含核心质量守护的已验证项
-  fixes.push(
-    `- **单测回归 \`UT-LLM-13\`**：修复 \`buildLlmConfig(null, null)\` 触发 \`TypeError: Cannot read properties of null\` 问题，已引入可选链防御并单测锁定。`
-  );
-
-  return fixes.join('\n');
-}
-
 function getPackageVersion() {
   try {
     const pkgPath = path.join(PROJECT_ROOT, 'backend', 'package.json');
@@ -208,7 +186,6 @@ function renderMarkdownReport(data) {
     dbStats,
     backendFailuresText,
     frontendFailuresText,
-    gitFixesText,
     allPassed,
     hasBlockingFailure,
   } = data;
@@ -253,13 +230,7 @@ ${frontendFailuresText}
 
 ---
 
-## 3. 缺陷修复与回归验证记录 (Bug Fix Verifications)
-
-${gitFixesText}
-
----
-
-## 4. 上线准出门禁结论 (DoD Sign-off)
+## 3. 上线准出门禁结论 (DoD Sign-off)
 
 - [${backendStats.status === 'PASS' ? 'x' : ' '}] **后端核心用例通过**：LLM 适配层、AI Guard 记账与流式生命周期单测全绿。
 - [${frontendStats.status === 'PASS' ? 'x' : ' '}] **前端单测与 E2E 通过**：主路径鉴权与助教流式渲染自动化覆盖。
@@ -289,7 +260,6 @@ function main() {
   const dbStats = parseDbVerifyOutput(rawData.dbOutput || '', rawData.dbCode);
   const backendFailuresText = extractBackendFailures(rawData.backendOutput || '', backendStats);
   const frontendFailuresText = extractFrontendFailures(rawData.frontendOutput || '', frontendStats);
-  const gitFixesText = extractGitFixes();
 
   const allStats = [backendStats, frontendStats, dbStats];
   const hasBlockingFailure = allStats.some((s) => s.status === 'FAIL');
@@ -308,7 +278,6 @@ function main() {
     dbStats,
     backendFailuresText,
     frontendFailuresText,
-    gitFixesText,
     allPassed,
     hasBlockingFailure,
   });

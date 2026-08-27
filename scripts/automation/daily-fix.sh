@@ -325,7 +325,7 @@ repair_after_gate() {
   EXTRA_INSTRUCTION="## 上一轮结果
 你的改动没有通过质量门禁。以下是 docs/qa_report.md 中的失败详情，请定位并修复，不要回退已完成的功能改动：
 
-$(sed -n '/## 2. 失败用例追踪/,/## 3./p' "$PROJECT_ROOT/docs/qa_report.md")"
+$(sed -n '/## 2. 失败用例追踪/,/## 3. 上线准出门禁/p' "$PROJECT_ROOT/docs/qa_report.md")"
   run_agent
 }
 
