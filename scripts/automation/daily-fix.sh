@@ -82,18 +82,39 @@ read_queue_row() {
 }
 
 # HLD 被 gitignore，状态回写只影响本地视图。队列表有对齐空格，不能要求「恰好一格」。
+# 提交成功后：第 6 节 todo→done，第 7 节追加一行修订记录（已有「$ID 完成」则跳过）。
 writeback_queue_done() {
   local tmp="${HLD_PATH}.tmp"
-  awk -v id="$ID" '
-    /^##[[:space:]]/ { in_queue = ($0 ~ /自动化修复队列/) }
-    in_queue && $0 ~ ("^\\|[[:space:]]*" id "[[:space:]]*\\|") {
-      if ($0 ~ /\|[[:space:]]*todo[[:space:]]*\|/) {
-        sub(/\|[[:space:]]*todo[[:space:]]*\|/, "| done |")
-        changed = 1
+  local date_str pr_bit note
+  date_str="$(date +%Y-%m-%d)"
+  pr_bit=""
+  [ -n "${PR_NOTE:-}" ] && pr_bit="（${PR_NOTE}）"
+  note="$(printf '%s 完成：%s%s；队列状态改为 done' "$ID" "$TASK_TEXT" "$pr_bit" | tr '\n|' ' /')"
+
+  awk -v id="$ID" -v rev_date="$date_str" -v rev_note="$note" '
+    /^##[[:space:]]/ {
+      in_queue = ($0 ~ /自动化修复队列/)
+      in_rev = ($0 ~ /修订记录/)
+    }
+    {
+      n++
+      line = $0
+      if (in_queue && line ~ ("^\\|[[:space:]]*" id "[[:space:]]*\\|") && line ~ /\|[[:space:]]*todo[[:space:]]*\|/) {
+        sub(/\|[[:space:]]*todo[[:space:]]*\|/, "| done |", line)
+        queue_ok = 1
+      }
+      if (in_rev && line ~ /^\| 20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]/) last_rev = n
+      if (index(line, id " 完成") > 0) has_rev = 1
+      lines[n] = line
+    }
+    END {
+      if (!queue_ok) exit 1
+      for (i = 1; i <= n; i++) {
+        print lines[i]
+        if (!has_rev && last_rev && i == last_rev)
+          print "| " rev_date " | " rev_note " |"
       }
     }
-    { print }
-    END { if (!changed) exit 1 }
   ' "$HLD_PATH" > "$tmp" || { rm -f "$tmp"; die "未能把 $ID 从 todo 改为 done，请检查 $HLD_PATH 第 6 节表格对齐"; }
   mv "$tmp" "$HLD_PATH"
 }
@@ -398,7 +419,12 @@ git_sandbox_confirm "$ASSUME_YES" || exit 0
 # ------------------------------------------------------------------------------
 git_sandbox_commit_all "$MSG_FILE"
 
-writeback_queue_done
-echo "📄 已将 $ID 在内部队列中标记为 done"
-
+PR_NOTE=""
 git_sandbox_push_pr "$DO_PUSH" "$MSG_FILE"
+if [ "$DO_PUSH" = "1" ]; then
+  pr_n="$(gh pr view --json number -q .number 2>/dev/null || true)"
+  [ -n "$pr_n" ] && PR_NOTE="PR #$pr_n"
+fi
+
+writeback_queue_done
+echo "📄 已将 $ID 在内部队列中标记为 done，并追加第 7 节修订记录"
