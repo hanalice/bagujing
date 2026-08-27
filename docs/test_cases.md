@@ -115,6 +115,17 @@
 | UT-QUOTA-CACHE-04 | 对照：真实生成仍按上游触达计费 | 前置：题无可用缓存答案，或 body `{ "force": true }`；mock `invoke` 返回非空短 HTML；成功路径 `finalize` 走 `reason: 'generated_answer'`（`upstreamReached` 默认 `true` 或显式 `true`，可带 `upstreamStatus: 200`）。 | 1. 审计 `reason === 'generated_answer'`（或成功生成等价 reason）；2. `totalTokens > 0`（至少含 prompt 估算，不得因 A7 误把生成路径也记零）；3. 响应 `data.cached === false`。 |
 | UT-QUOTA-CACHE-05 | 仅 reason=cached_answer 但未传 upstreamReached 仍计费 | 前置：同 UT-QUOTA-CACHE-01 的 Guard 环境；`finalize({ status: 'ok', reason: 'cached_answer', completionText: 长 HTML })`，**故意省略** `upstreamReached`（依赖 Guard 默认 `upstreamReached = true`）。 | 1. 审计该行 `totalTokens > 0` 且 `completionTokens === estimateTokensByText(completionText)`；2. 说明不计费**不**由 `reason` 字符串单独决定，必须由调用方显式传 `upstreamReached: false`（护栏：防止只改 reason 文案却漏传判据）。 |
 
+### 2.11 CORS 跨域预检与允许请求头契约 (`backend/src/tests/ai-guard-cors.test.js`)
+
+对应 **B4 / P2-1**：`backend/src/security/ai-guard.js` 中的 `corsOptions.allowedHeaders` 必须显式包含 `'Authorization'`（当前仅配置了 `Content-Type`, `Accept`, `X-*` 等自定义签名头）。当客户端在跨域直连场景（如 Vite 前端独立端口直连后端服务，请求头携带 `Authorization: Bearer <jwt>`）触发浏览器 `OPTIONS` 预检请求时，若 `allowedHeaders` 未显式允许 `Authorization`，浏览器将拦截跨域通信导致请求失败。完成标准：CORS `allowedHeaders` 显式补齐 `'Authorization'`；跨域 `OPTIONS` 预检返回 HTTP 204/200 且响应头 `Access-Control-Allow-Headers` 包含 `Authorization`；白名单 Origin 与非法 Origin 规则正常生效。测试通过断言 `corsOptions` 配置对象及通过 `cors(corsOptions)` 中间件模拟 `OPTIONS` 预检报文进行验证。`it()` 标题须包含下表 ID。
+
+| ID | 用例标题 | 场景描述 | 预期结果 |
+| :--- | :--- | :--- | :--- |
+| UT-CORS-01 | corsOptions 配置显式包含 Authorization | 直接读取 `createAiGuard().corsOptions.allowedHeaders` 数组。 | 1. 数组包含 `'Authorization'`（精确字符串匹配）；<br>2. 保留原有的全部必要头：`Content-Type`、`Accept`、`X-Request-Id`、`X-Client-Id`、`X-Client-Token`、`X-Ts`、`X-Nonce`、`X-Signature`、`X-Body-Sha256`、`X-Maf-Mission-Id`；<br>3. `methods` 包含 `GET`, `POST`, `OPTIONS`。 |
+| UT-CORS-02 | 白名单 Origin 预检 Authorization 放行 | 前置：设置允许的 Origin（如 `http://localhost` 或 `*`）；使用 `cors(corsOptions)` 处理 `OPTIONS /api/chat` 预检请求；请求头携带 `Origin: http://localhost`、`Access-Control-Request-Method: POST`、`Access-Control-Request-Headers: authorization, content-type`。 | 1. 响应状态码为 HTTP 204 或 200；<br>2. 响应头 `Access-Control-Allow-Origin: http://localhost`；<br>3. 响应头 `Access-Control-Allow-Headers` 包含 `authorization`（不区分大小写匹配）；<br>4. 响应头 `Access-Control-Allow-Methods` 包含 `POST`。 |
+| UT-CORS-03 | 混合签名头与 Authorization 预检联合放行 | 前置：同 UT-CORS-02；发送 OPTIONS 预检，`Access-Control-Request-Headers: authorization, x-signature, x-client-id, x-ts, x-nonce, content-type`。 | 1. 响应状态码为 HTTP 204 或 200；<br>2. 响应头 `Access-Control-Allow-Headers` 允许列表中包含全部所请求的头部字段；<br>3. 中间件不抛出 CORS 拦截异常。 |
+| UT-CORS-04 | 非法 Origin 跨域预检拦截 | 前置：Origin 配置为具体白名单规则（如 `http://localhost`）；客户端携带未授权源 `Origin: http://unauthorized-domain.com` 发送 OPTIONS 预检请求（含 `Access-Control-Request-Headers: authorization`）。 | 1. 触发 `origin` 校验失败，中间件回调返回 `Error('Not allowed by CORS')`；<br>2. 响应头中**不包含** `Access-Control-Allow-Origin: http://unauthorized-domain.com`。 |
+
 ---
 
 ## 3. 安全防护与集成测试用例 (Security & Integration)
@@ -146,6 +157,15 @@
 | ID | 用例标题 | 场景描述 | 预期结果 |
 | :--- | :--- | :--- | :--- |
 | IT-QUOTA-CACHE-01 | 连续 POST generate 命中缓存不 429 | 前置：同一 `clientId`；日 token 配额仅够约 1～2 次保守预扣；目标题 `details.answer` 已是长非空 HTML；已登录且具备 `study`；连续 ≥3 次 `POST /api/problems/:id/answer/generate`（body 无 `force` 或 `force: false`）；上游 LLM 可用 stub 断言未被调用。 | 1. 每次 HTTP 200，body `code === 0` 且 `data.cached === true`；2. 全程无 HTTP 429 / `Quota exceeded`；3. 审计中可数出 ≥3 条 `reason === 'cached_answer'`，且每条 `totalTokens === 0`。 |
+
+### 3.4 CORS 跨域直连与反代配置验证（B4 / P2-1）
+
+对应 **B4 / P2-1** 完成标准「跨域预检 200；确认 Nginx 反代不丢签名头」。在集成测试环境（`backend/src/tests/ai-guard-cors.test.js`）及反代配置（`deploy/nginx.conf`）层级验证端到端跨域请求放行与反向代理请求头透传契约。`it()` 标题须包含下表 ID。
+
+| ID | 用例标题 | 场景描述 | 预期结果 |
+| :--- | :--- | :--- | :--- |
+| IT-CORS-01 | 跨域 OPTIONS 预检后发起携带 Authorization 的 POST 请求 | 前置：集成挂载 `cors(aiGuard.corsOptions)` 的 Express 应用；模拟前端跨域客户端：<br>Step 1: 发送 `OPTIONS /api/chat`（带 `Origin: http://localhost`，`Access-Control-Request-Headers: authorization, content-type`，`Access-Control-Request-Method: POST`）；<br>Step 2: 紧接着发送 `POST /api/chat`（带 `Origin: http://localhost`，`Authorization: Bearer <token>`，`Content-Type: application/json`）。 | 1. Step 1 预检响应 HTTP 204/200，且含合规 `Access-Control-Allow-Headers` 与 `Access-Control-Allow-Origin`；<br>2. Step 2 POST 请求响应头包含 `Access-Control-Allow-Origin: http://localhost`，请求正常进入下游鉴权处理，无 CORS 拦截报错。 |
+| IT-CORS-02 | Nginx 反代配置签名头与 Authorization 透传合规性 | 审查 `deploy/nginx.conf` 中 `/api/` 代理段配置。 | 1. `proxy_pass` 正常转发至本地 Node.js 集群；<br>2. 不存在显式清空或覆盖 `Authorization`、`X-Signature`、`X-Client-Id`、`X-Ts`、`X-Nonce`、`X-Body-Sha256` 等请求头的指令；<br>3. 确保跨域直连与反代路径均保留完整认证与签名头。 |
 
 ---
 

@@ -700,6 +700,7 @@ export function createAiGuard({ dbPool = null, redis = null, jwtSecret = null } 
     allowedHeaders: [
       'Content-Type',
       'Accept',
+      'Authorization',
       'X-Request-Id',
       'X-Client-Id',
       'X-Client-Token',
