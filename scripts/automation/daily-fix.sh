@@ -16,8 +16,16 @@
 
 set -euo pipefail
 
-PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+AUTOMATION_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$AUTOMATION_DIR/../.." && pwd)"
 cd "$PROJECT_ROOT"
+
+die() { echo "❌ $*" >&2; exit 1; }
+
+# shellcheck source=lib/agent-loop.sh
+source "$AUTOMATION_DIR/lib/agent-loop.sh"
+# shellcheck source=lib/git-sandbox.sh
+source "$AUTOMATION_DIR/lib/git-sandbox.sh"
 
 HLD_PATH="${HLD_PATH:-$PROJECT_ROOT/docs/internal/HLD-llm-call-pipeline.md}"
 LOG_DIR="$PROJECT_ROOT/logs"
@@ -45,75 +53,9 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-die() { echo "❌ $*" >&2; exit 1; }
-
-# cron 环境不加载用户 shell 配置，需显式补齐 agent CLI 与 node 所在路径
-export PATH="$HOME/.local/bin:$PATH"
-if ! command -v claude >/dev/null 2>&1; then
-  # shellcheck disable=SC1090
-  [ -s "$HOME/.nvm/nvm.sh" ] && . "$HOME/.nvm/nvm.sh" >/dev/null 2>&1 || true
-fi
-
-if [ "$ENGINE" = "auto" ]; then
-  if command -v cursor-agent >/dev/null 2>&1; then
-    ENGINE="cursor-agent"
-  elif command -v claude >/dev/null 2>&1; then
-    ENGINE="claude"
-  else
-    die "未找到可用的编码 agent（cursor-agent / claude），cron 场景需确认 PATH"
-  fi
-fi
-command -v "$ENGINE" >/dev/null 2>&1 || die "指定的引擎 $ENGINE 不在 PATH 中"
+agent_prepare_cli_path
+agent_resolve_engine
 [ -f "$HLD_PATH" ] || die "内部缺陷文档不存在: $HLD_PATH"
-
-# 编码 agent：可改文件、可跑测试。审核 agent：只读，禁止改代码。
-invoke_engine() {
-  case "$ENGINE" in
-    cursor-agent)
-      cursor-agent -p --force --trust --output-format text ${AGENT_MODEL:+--model "$AGENT_MODEL"}
-      ;;
-    claude)
-      claude -p --permission-mode acceptEdits \
-        --allowedTools "Read Edit Write Grep Glob Bash(cd:*) Bash(npm test:*) Bash(npm run:*) Bash(node:*)"
-      ;;
-    *) die "不支持的引擎: $ENGINE" ;;
-  esac
-}
-
-invoke_review_engine() {
-  case "$ENGINE" in
-    cursor-agent)
-      # 新会话 + ask 模式：没有编码上下文，也不能把未完成的实现「改完再自称通过」
-      cursor-agent -p --trust --mode ask --output-format text ${REVIEW_MODEL:+--model "$REVIEW_MODEL"}
-      ;;
-    claude)
-      claude -p --permission-mode plan \
-        --allowedTools "Read Grep Glob Bash(git diff:*) Bash(git status:*) Bash(git log:*)"
-      ;;
-    *) die "不支持的引擎: $ENGINE" ;;
-  esac
-}
-
-# 登录态在建分支之前校验：token 失效时不留下空分支
-check_auth() {
-  local probe
-  probe="$(echo "回复 ok" | invoke_engine 2>&1 || true)"
-  case "$probe" in
-    *"Authentication required"*|*"OAuth"*|*"authenticate"*|*"401"*|*"Invalid API key"*)
-      if [ "$ENGINE" = "cursor-agent" ]; then
-        die "cursor-agent 未登录，请先执行 cursor-agent login（cron 场景改用 CURSOR_API_KEY）"
-      fi
-      die "claude 登录态失效，请先执行 claude login（cron 场景改用 ANTHROPIC_API_KEY）"
-      ;;
-  esac
-}
-
-check_gh() {
-  command -v gh >/dev/null 2>&1 || die "未找到 gh CLI（已安装位置: ~/.local/bin/gh），请确认 PATH"
-  if ! gh auth status -h github.com >/dev/null 2>&1; then
-    die "gh 未登录，无法自动开 PR。请先执行: gh auth login --hostname github.com --git-protocol ssh --web"
-  fi
-}
 
 # ------------------------------------------------------------------------------
 # 1. 选取任务
@@ -183,21 +125,12 @@ MSG_FILE="$LOG_DIR/.daily-fix-commit-msg"
 rm -f "$MSG_FILE"
 trap 'rm -f "$MSG_FILE"' EXIT
 
-# 相对基线的已跟踪改动 + 未跟踪文件
-list_worktree_paths() {
-  {
-    git diff --name-only "$BASE_BRANCH"
-    git diff --cached --name-only "$BASE_BRANCH"
-    git ls-files --others --exclude-standard
-  } | sort -u
-}
-
 spec_doc_changed() {
-  list_worktree_paths | grep -qx 'docs/test_cases.md'
+  git_sandbox_list_paths | grep -qx 'docs/test_cases.md'
 }
 
 tests_source_changed() {
-  list_worktree_paths | grep -qE '^(backend/src/tests/|frontend/.+\.spec\.ts$|frontend/e2e/)'
+  git_sandbox_list_paths | grep -qE '^(backend/src/tests/|frontend/.+\.spec\.ts$|frontend/e2e/)'
 }
 
 build_spec_prompt() {
@@ -282,14 +215,11 @@ fi
 # ------------------------------------------------------------------------------
 # 3. 前置检查：工作区必须干净，切到独立分支
 # ------------------------------------------------------------------------------
-[ -z "$(git status --porcelain)" ] || die "工作区有未提交改动，请先处理干净再运行"
-check_auth
-[ "$DO_PUSH" = "1" ] && check_gh
+git_sandbox_ensure_clean
+agent_check_auth
+[ "$DO_PUSH" = "1" ] && git_sandbox_require_gh
 
-BASE_BRANCH="$(git rev-parse --abbrev-ref HEAD)"
-WORK_BRANCH="auto-fix/${ID,,}-$(date +%Y%m%d)"
-git checkout -b "$WORK_BRANCH" >/dev/null 2>&1 || git checkout "$WORK_BRANCH"
-echo "🌿 工作分支：$WORK_BRANCH（基线 $BASE_BRANCH）"
+git_sandbox_open_branch "auto-fix/${ID,,}-$(date +%Y%m%d)"
 
 RUN_LOG="$LOG_DIR/daily-fix-$ID-$(date +%Y%m%d-%H%M%S).log"
 
@@ -303,19 +233,16 @@ run_spec_agent() {
   build_spec_prompt | invoke_engine 2>&1 | tee -a "$RUN_LOG"
 }
 
+on_spec_retry() {
+  echo "🔁 docs/test_cases.md 无改动，发起第 $1 次规格返修..."
+  EXTRA_INSTRUCTION="你没有改 docs/test_cases.md。本阶段禁止写代码。必须在该文件中新增或修订覆盖 $ID / $DEFECT_ID 的用例行（ID、场景、可判定的预期结果）。"
+}
+
 run_spec_phase() {
   EXTRA_INSTRUCTION=""
-  run_spec_agent
-  local attempt=0
-  while ! spec_doc_changed; do
-    attempt=$((attempt + 1))
-    if [ "$attempt" -gt "$MAX_REPAIR" ]; then
-      die "规格阶段未更新 docs/test_cases.md，拒绝继续编码。"
-    fi
-    echo "🔁 docs/test_cases.md 无改动，发起第 $attempt 次规格返修..."
-    EXTRA_INSTRUCTION="你没有改 docs/test_cases.md。本阶段禁止写代码。必须在该文件中新增或修订覆盖 $ID / $DEFECT_ID 的用例行（ID、场景、可判定的预期结果）。"
-    run_spec_agent
-  done
+  agent_until_pred spec_doc_changed "$MAX_REPAIR" \
+    "规格阶段未更新 docs/test_cases.md，拒绝继续编码。" \
+    run_spec_agent on_spec_retry
   EXTRA_INSTRUCTION=""
   echo "✅ 已更新 docs/test_cases.md，进入实现阶段"
 }
@@ -356,72 +283,48 @@ FAIL 时紧接着用 "- " 列出缺口，每条一行。不要在分析正文里
 EOF
 }
 
-extract_review_verdict() {
-  local log="$1"
-  awk '
-    match($0, /REVIEW_VERDICT:[[:space:]]*(PASS|FAIL)/) {
-      line=$0
-      if (toupper(line) ~ /FAIL/) v="FAIL"
-      else if (toupper(line) ~ /PASS/) v="PASS"
-    }
-    END { print v }
-  ' "$log"
-}
-
 run_review() {
   local review_log="$LOG_DIR/daily-fix-$ID-review-$(date +%Y%m%d-%H%M%S).log"
   echo "🔎 独立审核 agent 对照完成标准审 diff（只读，日志：$review_log）..."
   build_review_prompt | invoke_review_engine 2>&1 | tee -a "$RUN_LOG" | tee "$review_log"
-  local verdict_line
-  verdict_line="$(extract_review_verdict "$review_log")"
-  case "$(printf '%s' "$verdict_line" | tr '[:lower:]' '[:upper:]')" in
-    *PASS*)
-      echo "✅ 审核通过"
-      REVIEW_GAPS=""
-      return 0
-      ;;
-    *FAIL*)
-      REVIEW_GAPS="$(awk '
-        { buf[NR]=$0 }
-        /REVIEW_VERDICT:/ { last=NR }
-        END {
-          if (!last) exit
-          for (i=last+1; i<=NR; i++) if (buf[i] ~ /^- /) print buf[i]
-        }
-      ' "$review_log")"
-      [ -n "$REVIEW_GAPS" ] || REVIEW_GAPS="审核未列出具体缺口，请对照 HLD 完成标准自行补全。"
-      echo "🚫 审核未通过："
-      echo "$REVIEW_GAPS"
-      return 1
-      ;;
-    *)
-      REVIEW_GAPS="审核 agent 未输出可解析的 REVIEW_VERDICT 行，按失败处理（默认拒绝提交）。"
-      echo "🚫 $REVIEW_GAPS"
-      return 1
-      ;;
-  esac
+  agent_apply_review_verdict "$review_log" "审核未列出具体缺口，请对照 HLD 完成标准自行补全。"
 }
 
-run_gate_with_repair() {
-  local attempt=0
-  while true; do
-    echo "🧪 执行质量门禁 ./scripts/qa-report.sh ..."
-    if ./scripts/qa-report.sh 2>&1 | tee -a "$RUN_LOG"; then
-      echo "✅ 质量门禁通过"
-      return 0
-    fi
-    attempt=$((attempt + 1))
-    if [ "$attempt" -gt "$MAX_REPAIR" ]; then
-      echo "🚫 门禁连续未通过，已保留改动在分支 $WORK_BRANCH 供人工接手。"
-      return 1
-    fi
-    echo "🔁 门禁未通过，发起第 $attempt 次返修..."
-    EXTRA_INSTRUCTION="## 上一轮结果
+run_qa_gate() {
+  echo "🧪 执行质量门禁 ./scripts/qa-report.sh ..."
+  if ./scripts/qa-report.sh 2>&1 | tee -a "$RUN_LOG"; then
+    echo "✅ 质量门禁通过"
+    return 0
+  fi
+  return 1
+}
+
+repair_after_gate() {
+  echo "🔁 门禁未通过，发起第 $1 次返修..."
+  EXTRA_INSTRUCTION="## 上一轮结果
 你的改动没有通过质量门禁。以下是 docs/qa_report.md 中的失败详情，请定位并修复，不要回退已完成的功能改动：
 
 $(sed -n '/## 2. 失败用例追踪/,/## 3./p' "$PROJECT_ROOT/docs/qa_report.md")"
-    run_agent
-  done
+  run_agent
+}
+
+run_gate_with_repair() {
+  agent_until_ok "$MAX_REPAIR" \
+    "🚫 门禁连续未通过，已保留改动在分支 $WORK_BRANCH 供人工接手。" \
+    run_qa_gate repair_after_gate
+}
+
+repair_after_review() {
+  echo "🔁 按审核缺口发起第 $1 次返修..."
+  EXTRA_INSTRUCTION="## 独立审核未通过——禁止把当前实现当成已完成
+审核员对照 HLD 完成标准列出的缺口：
+
+$REVIEW_GAPS
+
+请补全实现、\`docs/test_cases.md\` 用例行与回归测试（it 标题含用例 ID）。不要修改 docs/internal/，不要 git commit。"
+  run_agent
+  run_gate_with_repair || exit 1
+  ensure_spec_synced_with_tests || die "返修后测试已改但 docs/test_cases.md 仍未同步，拒绝提交。"
 }
 
 # ------------------------------------------------------------------------------
@@ -432,12 +335,7 @@ run_agent
 
 run_gate_with_repair || exit 1
 
-if [ -z "$(git status --porcelain)" ]; then
-  echo "⚠️ 没有产生任何代码改动，回退分支。"
-  git checkout "$BASE_BRANCH" >/dev/null 2>&1
-  git branch -D "$WORK_BRANCH" >/dev/null 2>&1
-  exit 1
-fi
+git_sandbox_abandon_if_empty || exit 1
 
 if ! ensure_spec_synced_with_tests; then
   echo "🚫 测试源码有改动但 docs/test_cases.md 相对基线无改动，回喂编码 agent..."
@@ -450,29 +348,13 @@ fi
 if [ "$SKIP_REVIEW" = "1" ]; then
   echo "⚠️ 已跳过独立审核（--skip-review），完成标准未由第二 agent 核对。"
 else
-  review_attempt=0
-  while true; do
-    if run_review; then
-      break
-    fi
-    review_attempt=$((review_attempt + 1))
-    if [ "$review_attempt" -gt "$MAX_REVIEW_REPAIR" ]; then
-      echo "🚫 审核未通过且返修次数用尽，拒绝提交。改动保留在 $WORK_BRANCH。"
-      echo "   缺口："
-      echo "$REVIEW_GAPS"
-      exit 1
-    fi
-    echo "🔁 按审核缺口发起第 $review_attempt 次返修..."
-    EXTRA_INSTRUCTION="## 独立审核未通过——禁止把当前实现当成已完成
-审核员对照 HLD 完成标准列出的缺口：
-
-$REVIEW_GAPS
-
-请补全实现、\`docs/test_cases.md\` 用例行与回归测试（it 标题含用例 ID）。不要修改 docs/internal/，不要 git commit。"
-    run_agent
-    run_gate_with_repair || exit 1
-    ensure_spec_synced_with_tests || die "返修后测试已改但 docs/test_cases.md 仍未同步，拒绝提交。"
-  done
+  if ! agent_until_ok "$MAX_REVIEW_REPAIR" \
+    "🚫 审核未通过且返修次数用尽，拒绝提交。改动保留在 $WORK_BRANCH。" \
+    run_review repair_after_review; then
+    echo "   缺口："
+    echo "$REVIEW_GAPS"
+    exit 1
+  fi
 fi
 
 echo ""
@@ -498,12 +380,7 @@ fix(llm-pipeline): [$DEFECT_ID][$ID] $TASK_TEXT
 EOF
 }
 
-msg_header="$(head -n 1 "$MSG_FILE" 2>/dev/null | tr -d '\r' || true)"
-msg_body="$(cat "$MSG_FILE" 2>/dev/null || true)"
-if ! printf '%s' "$msg_header" | grep -qE '^(feat|fix|chore|refactor|test|docs|perf)(\(.+\))?: ' \
-  || ! printf '%s' "$msg_body" | grep -qE '问题现象|Symptoms' \
-  || ! printf '%s' "$msg_body" | grep -qE '根因分析|Root Cause' \
-  || ! printf '%s' "$msg_body" | grep -qE '解决方案|Solution'; then
+if ! git_sandbox_commit_msg_ok "$MSG_FILE"; then
   echo "⚠️ agent 给出的提交信息不符合 docs/git-commit-convention.md，改用脚本兜底模板。"
   write_fallback_msg
 fi
@@ -514,36 +391,14 @@ echo "-------------------------------------------"
 cat "$MSG_FILE"
 echo "-------------------------------------------"
 
-if [ "$ASSUME_YES" != "1" ]; then
-  # 非交互环境（stdin 非终端）读不到输入时视为不确认，改动保留在分支上
-  reply=""
-  read -r -p "确认提交？(y/N) " reply || true
-  [ "$reply" = "y" ] || [ "$reply" = "Y" ] || { echo "已取消，改动保留在 $WORK_BRANCH，确认后可手动 git commit。"; exit 0; }
-fi
+git_sandbox_confirm "$ASSUME_YES" || exit 0
 
 # ------------------------------------------------------------------------------
 # 6. 提交与状态回写
 # ------------------------------------------------------------------------------
-git add -A
-git commit -F "$MSG_FILE"
-echo "✅ 已提交到 $WORK_BRANCH"
+git_sandbox_commit_all "$MSG_FILE"
 
 writeback_queue_done
 echo "📄 已将 $ID 在内部队列中标记为 done"
 
-if [ "$DO_PUSH" = "1" ]; then
-  git push -u origin "$WORK_BRANCH"
-  echo "🚀 已推送分支 $WORK_BRANCH"
-
-  pr_title="$(head -n 1 "$MSG_FILE")"
-  if gh pr view --json url -q .url 2>/dev/null; then
-    echo "ℹ️ 该分支已有 PR，跳过创建。"
-  else
-    pr_url="$(gh pr create --base "$BASE_BRANCH" --head "$WORK_BRANCH" --title "$pr_title" --body-file "$MSG_FILE")"
-    echo "📬 已自动创建 PR: $pr_url"
-  fi
-else
-  echo "ℹ️ 未推送。确认无误后执行："
-  echo "    git push -u origin $WORK_BRANCH"
-  echo "    gh pr create --base $BASE_BRANCH --head $WORK_BRANCH --fill"
-fi
+git_sandbox_push_pr "$DO_PUSH" "$MSG_FILE"
