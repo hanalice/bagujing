@@ -8,6 +8,7 @@ import { createAiGuard, readStreamChunkWithTimeout } from './security/ai-guard.j
 import fs from 'node:fs/promises';
 import Redis from 'ioredis';
 import { SystemMessage, HumanMessage } from "@langchain/core/messages";
+import { buildPromptMessages, promptBudget } from './prompt-budget.js';
 import { createLlmModel } from './llm.js';
 
 import { createSqlitePool } from './db/sqlite-pool.js';
@@ -641,6 +642,7 @@ app.post('/api/problems/:id/answer/generate', authenticateToken, requirePermissi
   const guardContext = req.aiGuard;
   let finalized = false;
   let upstreamReached = false;
+  let promptTokens;
   const finalizeGuard = (payload) => {
     if (!guardContext || finalized) return;
     finalized = true;
@@ -728,21 +730,27 @@ app.post('/api/problems/:id/answer/generate', authenticateToken, requirePermissi
       + '2) 内容准确、可落地，避免空话；\n'
       + '3) 建议使用 <p>/<h3>/<ul>/<li> 标签。';
 
-    const userPrompt =
-      `题目：${title}\n\n`
-      + `上下文（可参考）：\n${JSON.stringify(snippets, null, 2)}`;
+    const promptMessages = buildPromptMessages({
+      systemPrompt,
+      questionLabel: '题目：',
+      question: title,
+      contextLabel: '上下文（可参考）：',
+      snippets,
+      budget: promptBudget,
+    });
+    promptTokens = promptMessages.promptTokens;
 
     upstreamReached = true;
     const response = await model.invoke([
-      new SystemMessage(systemPrompt),
-      new HumanMessage(userPrompt),
+      new SystemMessage(promptMessages.system),
+      new HumanMessage(promptMessages.human),
     ]);
 
     const answerRaw = response.content;
     const answerHtml = normalizeHtmlParagraphs(answerRaw);
 
     if (!isNonEmptyText(answerHtml)) {
-      finalizeGuard({ status: 'error', reason: 'empty_answer' });
+      finalizeGuard({ status: 'error', reason: 'empty_answer', promptTokens });
       return res.status(502).json({ code: 502, message: 'Empty answer from AI model' });
     }
 
@@ -761,6 +769,7 @@ app.post('/api/problems/:id/answer/generate', authenticateToken, requirePermissi
       reason: 'generated_answer',
       completionText: answerHtml,
       upstreamStatus: 200,
+      promptTokens,
     });
 
     return res.json({
@@ -773,7 +782,7 @@ app.post('/api/problems/:id/answer/generate', authenticateToken, requirePermissi
       message: 'success',
     });
   } catch (error) {
-    finalizeGuard({ status: 'error', reason: 'server_error', upstreamReached });
+    finalizeGuard({ status: 'error', reason: 'server_error', upstreamReached, promptTokens });
     return res.status(500).json({ code: 500, message: error.message });
   }
 }));
@@ -783,6 +792,7 @@ app.post('/api/chat', authenticateToken, requirePermission('chat_ai'), aiGuard.m
   let finalized = false;
   let upstreamReached = false;
   let completionText = '';
+  let promptTokens;
   const finalizeGuard = (payload) => {
     if (!guardContext || finalized) return;
     finalized = true;
@@ -824,15 +834,21 @@ app.post('/api/chat', authenticateToken, requirePermission('chat_ai'), aiGuard.m
       + '2) 内容准确、可落地，避免空话；\n'
       + '3) 使用 <p>/<h3>/<ul>/<li> 等 HTML 标签进行格式化。';
 
-    const userPrompt =
-      `用户问题：${message}\n\n`
-      + `相关背景知识片段（可参考）：\n${JSON.stringify(snippets, null, 2)}\n`
-      + '请结合背景知识，以资深面试官的角度回答用户的问题。';
+    const promptMessages = buildPromptMessages({
+      systemPrompt,
+      questionLabel: '用户问题：',
+      question: message,
+      contextLabel: '相关背景知识片段（可参考）：',
+      instruction: '请结合背景知识，以资深面试官的角度回答用户的问题。',
+      snippets,
+      budget: promptBudget,
+    });
+    promptTokens = promptMessages.promptTokens;
 
     upstreamReached = true;
     const stream = await model.stream([
-      new SystemMessage(systemPrompt),
-      new HumanMessage(userPrompt),
+      new SystemMessage(promptMessages.system),
+      new HumanMessage(promptMessages.human),
     ], {
       signal: abortController.signal,
     });
@@ -863,6 +879,7 @@ app.post('/api/chat', authenticateToken, requirePermission('chat_ai'), aiGuard.m
       status: 'ok',
       reason: 'stream_done',
       completionText,
+      promptTokens,
     });
     sendSSE(res, { type: 'done' });
     return res.end();
@@ -874,6 +891,7 @@ app.post('/api/chat', authenticateToken, requirePermission('chat_ai'), aiGuard.m
       reason: (isAborted || isTimeout) ? 'aborted_or_timeout' : 'server_error',
       completionText,
       upstreamReached,
+      promptTokens,
     });
     const errorMsg = isTimeout ? 'Stream idle timeout' : (error?.message || String(error));
     if (!res.writableEnded) {
@@ -897,7 +915,7 @@ app.use((error, req, res, next) => {
   });
 });
 
-export { app };
+export { app, buildPromptMessages, promptBudget };
 
 // 启动服务（单测通过 BAGUJING_SKIP_LISTEN=1 跳过 listen，便于离线挂载 /api/chat）
 if (process.env.BAGUJING_SKIP_LISTEN !== '1') {
