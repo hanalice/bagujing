@@ -631,7 +631,7 @@ export function createAiGuard({ dbPool = null, redis = null, jwtSecret = null } 
       maxCompletionTokens: config.maxCompletionTokens,
       upstreamTimeoutMs: config.upstreamTimeoutMs,
       sseIdleTimeoutMs: config.sseIdleTimeoutMs,
-      finalize: ({ completionText = '', status = 'ok', reason = 'completed', upstreamStatus = null, upstreamReached = true } = {}) => {
+      finalize: ({ completionText = '', status = 'ok', reason = 'completed', upstreamStatus = null, upstreamReached = true, promptTokens: reportedPromptTokens } = {}) => {
         metrics.totalRequests += 1;
         const duration = Date.now() - startedAt;
         if (duration < 1000) metrics.latencyBuckets[0]++;
@@ -643,7 +643,10 @@ export function createAiGuard({ dbPool = null, redis = null, jwtSecret = null } 
         // 即便中途 abort 或超时，prompt 与已流出的内容供应商照样计费，必须按实结算，
         // 否则客户端读到九成再断流即可零配额白嫖。
         const completionTokens = upstreamReached ? estimateTokensByText(completionText) : 0;
-        const billedPromptTokens = upstreamReached ? promptTokens : 0;
+        const finalPromptTokens = Number.isFinite(Number(reportedPromptTokens)) && Number(reportedPromptTokens) >= 0
+          ? Math.ceil(Number(reportedPromptTokens))
+          : promptTokens;
+        const billedPromptTokens = upstreamReached ? finalPromptTokens : 0;
         const totalTokens = billedPromptTokens + completionTokens;
 
         if (!quotaFinalized) {
