@@ -128,14 +128,19 @@
 
 ### 2.12 C1 Prompt 预算构建与裁剪 (`backend/src/tests/prompt-budget.test.js` -> `prompt-budget.js`，由 `server-express.js` 调用)
 
-对应 **C1 / P1-3**：`/api/chat` 与 `/api/problems/:id/answer/generate` 的模型请求不得把 RAG snippet 以 pretty-print JSON 原样塞入 prompt。被测 Prompt builder 必须暴露或注入同一份预算配置（至少含 `maxDescChars`、`maxChars`），测试不得另写一套阈值；字符数按最终发往模型的各消息 `content` 的 JavaScript `String.length` 累加。描述超限统一保留前缀并以一个 `…` 结尾，context 按稳定优先级逐条输出短 bullet，超出总预算时丢弃/截断低优先级 context，但不得截断 system 指令和用户题面。`it()` 标题须包含下表 ID。
+对应 **C1 / P1-3**：`/api/chat` 与 `/api/problems/:id/answer/generate` 的模型请求不得把 RAG snippet 以 pretty-print JSON 原样塞入 prompt。被测 Prompt builder 必须暴露或注入同一份预算配置（至少含 `maxDescChars`、`maxChars`），测试不得另写一套阈值；字符数按最终发往模型的各消息 `content` 的 JavaScript `String.length` 累加。描述/要点超限统一保留前缀并以一个 `…` 结尾。
+
+**合法预算**（默认 `maxChars`，或注入值仍 `>=` system + 题面 + 固定标签预留长度）：全部 message 字符和 `<= maxChars`；system 与题面完整；context 按稳定优先级（当前：`problem` > `category` > `other`，同级保持原顺序）输出短 bullet；超总预算时从队尾丢掉整条低优先级 context，禁止截断高优先级当前条，禁止截断 system/题面。检索打分 / rerank 不在 C1 范围。
+
+**非法预算**（`maxChars` 小于预留长度）：builder 必须设置 `budgetError === reserved_exceeds_max_chars`，**不得**截断 system/题面去凑上限；路由不得再调用上游模型。该场景与合法硬上限分列用例，禁止用 `maxChars=10` 去否证 UT-03。`it()` 标题须包含下表 ID。
 
 | ID | 用例标题 | 场景描述 | 预期结果 |
 | :--- | :--- | :--- | :--- |
 | UT-PROMPT-BUDGET-01 | snippet 使用紧凑 bullet 而非 pretty JSON | 前置：构造 1 个 category snippet（含短 `name`、`groupName`、`groupDesc`、`count`）和 1 个 problem snippet（含 `brief_name`、2 个 `keyPoints`）；调用 Prompt builder，捕获传给模型的 `[SystemMessage, HumanMessage]`。 | 1. 调用顺序固定为 system → human，用户题面原文仍在 HumanMessage；<br>2. 每个 snippet 占一条 `- ` 开头的紧凑 bullet，分类/题目名称、短描述/要点和必要标识可读；<br>3. HumanMessage 不出现 `"groupDesc"`、`"keyPoints"` 等 JSON 字段名，不出现 `{\n` / `[\n` 形式的 pretty-print JSON，且不存在重复序列化同一 snippet。 |
 | UT-PROMPT-BUDGET-02 | 超长 `group_desc` 按字段预算截断 | 前置：category 的 `groupDesc` 为 `前缀` + 超过 `maxDescChars` 的重复字符 + `尾部_SENTINEL`，其它 snippet 字段为短值；捕获分类 bullet。 | 1. 描述值等于 `groupDesc.slice(0, maxDescChars - 1) + '…'`（输入超过上限时），长度不超过 `maxDescChars`；<br>2. `尾部_SENTINEL` 不进入 prompt，分类名、分组名、题数等非描述字段仍保留；<br>3. 输入恰好不超过 `maxDescChars` 时不添加 `…`、不丢失最后一个字符。 |
-| UT-PROMPT-BUDGET-03 | 所有模型消息受总字符硬上限保护 | 前置：注入 6 个包含超长 `groupDesc`、超长 `keyPoints` 和换行/引号/emoji 的 snippets，用户题面使用正常短文本；捕获本次模型调用的全部 message content。 | 1. `sum(messages.map(message => String(message.content).length)) <= promptBudget.maxChars`，不得以片段数量上限代替字符上限；<br>2. system 指令和用户题面完整保留，至少第一个强制注入的 `problemId` bullet 保留；<br>3. 被截断或淘汰的 context 不产生半个 JSON 对象、孤立转义符或超出 `maxChars` 的尾部；Prompt builder 不抛异常。 |
-| UT-PROMPT-BUDGET-04 | 总预算边界与 Unicode 字符计数稳定 | 前置：分别构造使最终 prompt 目标长度为 `maxChars - 1`、`maxChars`、`maxChars + 1` 的 context，内容混合中文、emoji、换行和 `"}]`；三次均捕获最终 message content。 | 1. 前两组长度分别准确为 `maxChars - 1`、`maxChars` 且完整保留；<br>2. 超出一字符的第三组仍 `<= maxChars`，只从低优先级 context 裁剪；<br>3. 三组均不产生未配对代理项/控制报文，最终文本可直接作为模型 HumanMessage 发送。 |
+| UT-PROMPT-BUDGET-03 | 合法预算下所有模型消息受总字符硬上限保护 | 前置：使用默认/`>=` 预留长度的 `maxChars`；注入 6 个包含超长 `groupDesc`、超长 `keyPoints` 和换行/引号/emoji 的 snippets，用户题面为正常短文本；捕获 builder 返回的 system/human。 | 1. `system.length + human.length <= promptBudget.maxChars`，不得以片段数量上限代替字符上限；<br>2. system 指令和用户题面完整保留，至少第一条 `problem` bullet（题目 id/名称）保留，过长要点按 `maxDescChars` 截断；<br>3. 被淘汰的 context 不产生半个 JSON 对象、孤立转义符或超出 `maxChars` 的尾部；builder 不抛异常、无 `budgetError`。 |
+| UT-PROMPT-BUDGET-04 | 总预算边界只丢低优先级整条 | 前置：使用足够大的合法 `maxChars`。A) 单条高优先级 context 分别使总长为 `maxChars - 1`、`maxChars`；B) 同时注入一条高优先级 `problem` 与一条更长的低优先级 `category`，使两者合计比 `maxChars` 超出至少 1 字符。内容混合中文、emoji、换行和 `"}]`。 | 1. A 两组长度分别准确为 `maxChars - 1`、`maxChars`，高优先级名称完整保留；<br>2. B 组总长 `<= maxChars`，高优先级题名仍在，低优先级分类名不在 human 中（整条丢弃，禁止截断高优先级当前条）；<br>3. 各组均不产生未配对代理项，可直接作为 HumanMessage。 |
+| UT-PROMPT-BUDGET-05 | 非法极小 maxChars 不得截断题面 | 前置：注入 `maxChars` 小于 system+题面+标签预留长度（如 `1`），snippets 可有可无。 | 1. 返回的 system 含完整系统指令，human 含完整用户题面；<br>2. `budgetError === reserved_exceeds_max_chars`（或导出常量 `PROMPT_BUDGET_ERROR_RESERVED`）；<br>3. 总长可以大于注入的 `maxChars`；不得把 system/题面截成 `…` 去满足硬上限。 |
 
 ---
 
@@ -184,7 +189,7 @@
 
 | ID | 用例标题 | 场景描述 | 预期结果 |
 | :--- | :--- | :--- | :--- |
-| IT-PROMPT-BUDGET-01 | `/api/chat` 预算 prompt 保持 SSE 协议并降低可审计 token | 前置：SQLite fixture 固定同一用户问题、category 与 problem，`group_desc` 足够长以使旧 pretty JSON 明显膨胀；以合法登录/`chat_ai` 权限发送 `POST /api/chat`，stub `model.stream` 捕获 messages 并依次产出一个 delta 后结束；同时保存旧 pretty JSON 序列化长度作为对照。 | 1. HTTP `200`，`Content-Type: text/event-stream; charset=utf-8`；SSE 顺序为 `context` → `delta` → `done`，不因预算裁剪改变协议；<br>2. 捕获的 `system + human` 总字符数 `budgetedChars <= promptBudget.maxChars` 且严格小于同 fixture 的 `JSON.stringify(snippets, null, 2)` 对照长度；<br>3. `finalize` 恰好一次，审计行 `reason === 'stream_done'`，`promptTokens` 按同一 `budgetedChars` 估算并小于旧对照 token 数，`totalTokens === promptTokens + completionTokens`。 |
+| IT-PROMPT-BUDGET-01 | `/api/chat` 预算 prompt 保持 SSE 协议并降低可审计 token | 前置：默认合法 `AI_PROMPT_MAX_CHARS`；SQLite fixture 固定同一用户问题、category 与 problem，`group_desc` 足够长以使旧 pretty JSON 明显膨胀；以合法登录/`chat_ai` 权限发送 `POST /api/chat`，stub `model.stream` 捕获 messages 并依次产出一个 delta 后结束；同时保存旧 pretty JSON 序列化长度作为对照。 | 1. HTTP `200`，`Content-Type: text/event-stream; charset=utf-8`；SSE 顺序为 `context` → `delta` → `done`，不因预算裁剪改变协议；<br>2. 捕获的 `system + human` 总字符数 `budgetedChars <= promptBudget.maxChars` 且严格小于同 fixture 的 `JSON.stringify(snippets, null, 2)` 对照长度；<br>3. 审计 NDJSON **恰好 1 行**（`finalize` 恰好一次），`reason === 'stream_done'`，`promptTokens` 按同一 `budgetedChars` 估算并小于旧对照 token 数，`totalTokens === promptTokens + completionTokens`。 |
 | IT-PROMPT-BUDGET-02 | `/answer/generate` 同样应用 snippet 裁剪和总预算 | 前置：SQLite 题目详情无缓存答案；category 的 `group_desc` 与 problem 的 `key_points` 均超过各自预算；请求 `POST /api/problems/42/answer/generate` body `{ "force": true }`，已登录且具备 `study`，stub `model.invoke` 捕获一次调用并返回非空 HTML。 | 1. 仅在 RAG 构建完成后调用一次 `model.invoke([SystemMessage, HumanMessage])`，HumanMessage 为 bullet 文本而非 pretty JSON；<br>2. 最终所有 message content 字符总和 `<= promptBudget.maxChars`，长描述尾部 sentinel 不在请求中；<br>3. HTTP `200` JSON `code === 0`、`data.cached === false`，审计 `reason === 'generated_answer'` 且 `promptTokens > 0`；预算裁剪不得让生成路径退化为 4xx/5xx。 |
 
 ### 3.6 C1 超大内部 snippet 的资源边界防护 (`backend/src/tests/prompt-budget-security.test.js`)
@@ -193,7 +198,7 @@ Prompt 内容来自数据库，不能只依赖客户端 `AI_MAX_INPUT_CHARS` 防
 
 | ID | 用例标题 | 场景描述 | 预期结果 |
 | :--- | :--- | :--- | :--- |
-| SEC-PROMPT-BUDGET-01 | 数据库超大描述与要点无法突破模型 prompt 上限 | 前置：在隔离 SQLite fixture 写入 1MB `group_desc`、包含数千项的 `key_points_json` 及含换行/引号/emoji 的边界文本；客户端仅发送合法短消息（不触发 `message_too_long`），以合法认证请求分别覆盖 `/api/chat` 与 `/api/problems/42/answer/generate`，stub 上游并记录最终 messages。 | 1. 两条路由发往上游的所有 message content 总字符数始终 `<= promptBudget.maxChars`，不因 JSON 转义、重复 snippet 或多字节内容绕过上限；<br>2. `/api/chat` 返回 HTTP `200` 并按 `context` → `delta` → `done` 结束，`answer/generate` 返回 HTTP `200` 且 JSON `code === 0`；<br>3. 不出现 `RangeError`、请求体过大或 5xx，模型调用最多各 1 次；审计行可记录对应成功 reason，证明预算是模型调用前的硬边界而非事后截断。 |
+| SEC-PROMPT-BUDGET-01 | 数据库超大描述与要点无法突破模型 prompt 上限 | 前置：**默认合法** `AI_PROMPT_MAX_CHARS`（禁止用极小值）；在隔离 SQLite fixture 写入 1MB `group_desc`、包含数千项的 `key_points_json` 及含换行/引号/emoji 的边界文本；客户端仅发送合法短消息（不触发 `message_too_long`），以合法认证请求分别覆盖 `/api/chat` 与 `/api/problems/42/answer/generate`，stub 上游并记录最终 messages。 | 1. 两条路由发往上游的所有 message content 总字符数始终 `<= promptBudget.maxChars`，不因 JSON 转义、重复 snippet 或多字节内容绕过上限；<br>2. `/api/chat` 返回 HTTP `200` 并按 `context` → `delta` → `done` 结束，`answer/generate` 返回 HTTP `200` 且 JSON `code === 0`；<br>3. 不出现 `RangeError`、请求体过大或 5xx，模型调用最多各 1 次；审计行可记录对应成功 reason。极小 `maxChars` 属 UT-05，不在本用例。 |
 
 ---
 

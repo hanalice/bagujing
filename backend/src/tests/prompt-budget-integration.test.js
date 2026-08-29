@@ -87,6 +87,9 @@ describe('C1 / P1-3: Prompt 预算与模型调用/审计集成', () => {
     assert.equal(request.messages[1].content.includes('尾部_GROUP_SENTINEL'), false);
 
     const [audit] = await readAuditLines(1);
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    const auditLines = fs.readFileSync(TEST_AUDIT_PATH, 'utf8').trim().split('\n').filter(Boolean);
+    assert.equal(auditLines.length, 1);
     assert.equal(audit.reason, 'stream_done');
     assert.equal(audit.promptTokens, Math.max(1, Math.ceil(budgetedChars / 4)));
     assert.ok(audit.promptTokens < Math.ceil(prettyJsonChars / 4));

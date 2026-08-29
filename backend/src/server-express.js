@@ -8,7 +8,7 @@ import { createAiGuard, readStreamChunkWithTimeout } from './security/ai-guard.j
 import fs from 'node:fs/promises';
 import Redis from 'ioredis';
 import { SystemMessage, HumanMessage } from "@langchain/core/messages";
-import { buildPromptMessages, promptBudget } from './prompt-budget.js';
+import { buildPromptMessages, promptBudget, PROMPT_BUDGET_ERROR_RESERVED } from './prompt-budget.js';
 import { createLlmModel } from './llm.js';
 
 import { createSqlitePool } from './db/sqlite-pool.js';
@@ -739,6 +739,18 @@ app.post('/api/problems/:id/answer/generate', authenticateToken, requirePermissi
       budget: promptBudget,
     });
     promptTokens = promptMessages.promptTokens;
+    if (promptMessages.budgetError === PROMPT_BUDGET_ERROR_RESERVED) {
+      finalizeGuard({
+        status: 'error',
+        reason: 'prompt_budget_reserved_exceeds_max',
+        upstreamReached: false,
+        promptTokens,
+      });
+      return res.status(500).json({
+        code: 500,
+        message: 'Prompt budget maxChars is smaller than system and question reserved length',
+      });
+    }
 
     upstreamReached = true;
     const response = await model.invoke([
@@ -844,6 +856,16 @@ app.post('/api/chat', authenticateToken, requirePermission('chat_ai'), aiGuard.m
       budget: promptBudget,
     });
     promptTokens = promptMessages.promptTokens;
+    if (promptMessages.budgetError === PROMPT_BUDGET_ERROR_RESERVED) {
+      sendSSE(res, { type: 'error', message: 'Prompt budget maxChars is smaller than system and question reserved length' });
+      finalizeGuard({
+        status: 'error',
+        reason: 'prompt_budget_reserved_exceeds_max',
+        upstreamReached: false,
+        promptTokens,
+      });
+      return res.end();
+    }
 
     upstreamReached = true;
     const stream = await model.stream([

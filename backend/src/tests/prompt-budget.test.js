@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildPromptMessages, promptBudget } from '../prompt-budget.js';
+import { buildPromptMessages, promptBudget, PROMPT_BUDGET_ERROR_RESERVED } from '../prompt-budget.js';
 
 const basePrompt = {
   systemPrompt: '系统指令：请准确回答。',
@@ -103,7 +103,7 @@ describe('C1 / P1-3: Prompt 预算构建与裁剪', () => {
     assert.equal(exactMessages.human.includes(`${exactDescription}…`), false);
   });
 
-  it('UT-PROMPT-BUDGET-03: 所有模型消息受总字符硬上限保护', () => {
+    it('UT-PROMPT-BUDGET-03: 合法预算下所有模型消息受总字符硬上限保护', () => {
     const snippets = Array.from({ length: 6 }, (_, index) => ({
       type: index === 0 ? 'problem' : 'category',
       id: index + 1,
@@ -122,21 +122,15 @@ describe('C1 / P1-3: Prompt 预算构建与裁剪', () => {
 
     assert.equal(messageLength(messages) <= promptBudget.maxChars, true);
     assert.equal(messages.promptTokens, Math.max(1, Math.ceil(messageLength(messages) / 4)));
+    assert.equal(messages.budgetError, undefined);
     assert.match(messages.system, /系统指令：请准确回答/);
     assert.match(messages.human, /用户问题：如何设计可靠的缓存？/);
     assert.match(messages.human, /- 题目 #1/);
     assert.doesNotMatch(messages.human, /"type":|"groupDesc"|"keyPoints"/);
     assert.equal(hasUnpairedSurrogate(allContent), false);
-
-    const tinyBudgetMessages = buildPromptMessages({
-      ...basePrompt,
-      snippets: [{ type: 'problem', id: 1, brief_name: '题目' }],
-      budget: { maxDescChars: 2, maxChars: 1 },
-    });
-    assert.equal(messageLength(tinyBudgetMessages) <= 1, true);
   });
 
-  it('UT-PROMPT-BUDGET-04: 总预算边界与 Unicode 字符计数稳定', () => {
+  it('UT-PROMPT-BUDGET-04: 总预算边界只丢低优先级整条', () => {
     const emptyMessages = buildPromptMessages({
       ...basePrompt,
       snippets: [],
@@ -155,13 +149,53 @@ describe('C1 / P1-3: Prompt 预算构建与裁剪', () => {
       assert.equal(hasUnpairedSurrogate(`${messages.system}${messages.human}`), false);
     }
 
-    const overBudgetName = makeTextOfLength(promptBudget.maxChars - fixedLength - bulletPrefix.length + 1);
+    const highPriority = {
+      type: 'problem',
+      id: 1,
+      brief_name: '高优先级题🙂',
+      keyPoints: ['要点A'],
+    };
+    const lowPriority = {
+      type: 'category',
+      id: 9,
+      name: '低优先级分类',
+      groupName: '分组"}]',
+      groupDesc: `描述${'长'.repeat(80)}`,
+      count: 3,
+    };
+    const wideBudget = { maxDescChars: promptBudget.maxDescChars, maxChars: 100000 };
+    const bothLength = messageLength(buildPromptMessages({
+      ...basePrompt,
+      snippets: [lowPriority, highPriority],
+      budget: wideBudget,
+    }));
+    const overflowBudget = {
+      maxDescChars: promptBudget.maxDescChars,
+      maxChars: bothLength - 1,
+    };
     const overBudgetMessages = buildPromptMessages({
       ...basePrompt,
-      snippets: [{ type: 'problem', id: 1, brief_name: overBudgetName }],
+      snippets: [lowPriority, highPriority],
+      budget: overflowBudget,
     });
-    assert.equal(messageLength(overBudgetMessages) <= promptBudget.maxChars, true);
+    assert.ok(overflowBudget.maxChars >= fixedLength);
+    assert.equal(messageLength(overBudgetMessages) <= overflowBudget.maxChars, true);
+    assert.equal(overBudgetMessages.human.includes('高优先级题🙂'), true);
+    assert.equal(overBudgetMessages.human.includes('低优先级分类'), false);
     assert.equal(hasUnpairedSurrogate(`${overBudgetMessages.system}${overBudgetMessages.human}`), false);
+  });
+
+  it('UT-PROMPT-BUDGET-05: 非法极小 maxChars 不得截断题面', () => {
+    const messages = buildPromptMessages({
+      ...basePrompt,
+      snippets: [{ type: 'problem', id: 1, brief_name: '题目' }],
+      budget: { maxDescChars: 2, maxChars: 1 },
+    });
+    assert.equal(messages.budgetError, PROMPT_BUDGET_ERROR_RESERVED);
+    assert.match(messages.system, /系统指令：请准确回答/);
+    assert.match(messages.human, /用户问题：如何设计可靠的缓存？/);
+    assert.equal(messages.system.includes('…') && messages.system.length <= 1, false);
+    assert.ok(messageLength(messages) > 1);
   });
 });
 

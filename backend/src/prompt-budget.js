@@ -1,6 +1,9 @@
 const DEFAULT_MAX_DESC_CHARS = 240;
 const DEFAULT_MAX_CHARS = 8000;
 
+/** 预留段（system + 题面 + 固定标签）已超过 maxChars，属于非法配置，不得截断题面去凑上限。 */
+export const PROMPT_BUDGET_ERROR_RESERVED = 'reserved_exceeds_max_chars';
+
 // 解析正整数配置，避免非法环境变量破坏 Prompt 预算计算。
 const parsePositiveInt = (value, fallback) => {
   const parsed = Number.parseInt(String(value ?? ''), 10);
@@ -88,9 +91,10 @@ const getSnippetBullet = (snippet, maxDescChars) => {
 
   if (type === 'problem') {
     const title = normalizePromptText(snippet.brief_name ?? snippet.briefName ?? snippet.name);
-    const points = Array.isArray(snippet.keyPoints)
+    const rawPoints = Array.isArray(snippet.keyPoints)
       ? snippet.keyPoints.map(normalizePromptText).filter(Boolean).join('、')
       : normalizePromptText(snippet.keyPoints);
+    const points = truncatePromptText(rawPoints, maxDescChars);
     const parts = [
       `题目 #${normalizePromptText(snippet.id)}`,
       title ? `名称：${title}` : '',
@@ -112,11 +116,16 @@ const prioritizeSnippets = (snippets) => snippets
   })
   .map(({ snippet }) => snippet);
 
-// 截断单条 bullet 时保留 "- " 前缀，避免预算边界生成残缺的列表项。
-const truncateBullet = (bullet, maxChars) => {
-  if (maxChars < 2) return '';
-  const content = truncatePromptText(bullet.slice(2), maxChars - 2);
-  return `- ${content}`;
+// 按优先级从高到低装入 context；超预算时从队尾丢掉整条低优先级 bullet，禁止截断当前高优先级条。
+const packContextText = (snippets, contextMaxChars, maxDescChars) => {
+  const bullets = prioritizeSnippets(Array.isArray(snippets) ? snippets : [])
+    .map((snippet) => getSnippetBullet(snippet, maxDescChars));
+  while (bullets.length > 0) {
+    const packed = bullets.join('\n');
+    if (packed.length <= contextMaxChars) return packed;
+    bullets.pop();
+  }
+  return '';
 };
 
 // 将题面、系统指令和紧凑 context 组装为受总字符预算保护的模型消息。
@@ -138,38 +147,19 @@ export function buildPromptMessages({
   const maxDescChars = getBudgetChars(budget?.maxDescChars, promptBudget.maxDescChars);
   const fixedLength = systemText.length + questionPart.length + contextPart.length + instructionPart.length;
   const contextMaxChars = Math.max(0, maxChars - fixedLength);
+  const humanWithoutContext = `${questionPart}${contextPart}${instructionPart}`;
 
-  // 固定内容本身可能超过注入的极小预算，此时优先保证模型请求不越过硬上限。
+  // 非法配置：预留段已超过上限。保留 system 与题面原文，调用方不得再发模型。
   if (fixedLength > maxChars) {
-    const limitedSystem = truncatePromptText(systemText, maxChars);
-    const limitedHuman = truncatePromptText(
-      `${questionPart}${contextPart}${instructionPart}`,
-      Math.max(0, maxChars - limitedSystem.length),
-    );
     return {
-      system: limitedSystem,
-      human: limitedHuman,
-      promptTokens: estimatePromptTokens(`${limitedSystem}${limitedHuman}`),
+      system: systemText,
+      human: humanWithoutContext,
+      promptTokens: estimatePromptTokens(`${systemText}${humanWithoutContext}`),
+      budgetError: PROMPT_BUDGET_ERROR_RESERVED,
     };
   }
 
-  let contextText = '';
-  for (const snippet of prioritizeSnippets(Array.isArray(snippets) ? snippets : [])) {
-    const bullet = getSnippetBullet(snippet, maxDescChars);
-    const separator = contextText ? '\n' : '';
-    const remaining = contextMaxChars - contextText.length - separator.length;
-    if (remaining <= 0) break;
-
-    if (bullet.length <= remaining) {
-      contextText += `${separator}${bullet}`;
-      continue;
-    }
-
-    const shortened = truncateBullet(bullet, remaining);
-    if (shortened.length > 0) contextText += `${separator}${shortened}`;
-    break;
-  }
-
+  const contextText = packContextText(snippets, contextMaxChars, maxDescChars);
   const humanText = `${questionPart}${contextPart}${contextText}${instructionPart}`;
   return {
     system: systemText,
