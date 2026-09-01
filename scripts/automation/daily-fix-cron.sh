@@ -47,6 +47,11 @@ fi
 git checkout main
 git merge --ff-only origin/main
 
+# 人开 PR 合入后，日修不会走到 writeback；按 main 上的 [ID] 提交把本机队列勾 done。
+if [ -x ./scripts/automation/hld-sync-merged.sh ]; then
+  ./scripts/automation/hld-sync-merged.sh || echo "HLD 队列同步失败，继续尝试日修。"
+fi
+
 set +e
 ./scripts/automation/daily-fix.sh --yes --push
 code=$?
