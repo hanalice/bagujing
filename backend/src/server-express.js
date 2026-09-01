@@ -75,11 +75,11 @@ async function getSqlitePool() {
   return sqlitePoolPromise;
 }
 
-function getLlmModel(guardContext) {
+function getLlmModel(guardContext, role) {
   return createLlmModel(guardContext, {
     maxCompletionTokens: aiGuard.config.maxCompletionTokens,
     upstreamTimeoutMs: aiGuard.config.upstreamTimeoutMs,
-  });
+  }, role);
 }
 
 // 中间件
@@ -711,7 +711,7 @@ app.post('/api/problems/:id/answer/generate', authenticateToken, requirePermissi
       || (typeof problem?.briefName === 'string' && problem.briefName.trim())
       || `题目 #${id}`;
 
-    const model = getLlmModel(guardContext);
+    const model = getLlmModel(guardContext, 'generation');
     if (!model) {
       finalizeGuard({ status: 'error', reason: 'missing_api_key', upstreamReached: false });
       return res.status(400).json({ code: 400, message: 'OPENAI_API_KEY is required' });
@@ -815,7 +815,7 @@ app.post('/api/chat', authenticateToken, requirePermission('chat_ai'), aiGuard.m
   res.setHeader('Cache-Control', 'no-cache, no-transform');
   res.setHeader('Connection', 'keep-alive');
 
-  const model = getLlmModel(guardContext);
+  const model = getLlmModel(guardContext, 'chat');
   if (!model) {
     sendSSE(res, { type: 'error', message: 'OPENAI_API_KEY is required' });
     finalizeGuard({ status: 'error', reason: 'missing_api_key', upstreamReached: false });

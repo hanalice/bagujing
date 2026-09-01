@@ -682,6 +682,7 @@ export function createAiGuard({ dbPool = null, redis = null, jwtSecret = null } 
           promptTokens: billedPromptTokens,
           completionTokens,
           totalTokens,
+          upstreamReached,
           upstreamStatus,
           durationMs: Date.now() - startedAt,
         });

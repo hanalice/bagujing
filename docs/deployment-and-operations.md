@@ -78,7 +78,9 @@ cp frontend/.env.example frontend/.env.production
 | `PORT` | 否 | `3000` | 后端服务内部监听端口 |
 | `OPENAI_API_KEY` | **是** | `sk-xxxxxx` | 大模型服务商 API Key（如 DeepSeek 或 OpenAI） |
 | `OPENAI_BASE_URL` | 否 | `https://api.deepseek.com` | 大模型 API Base URL |
-| `OPENAI_MODEL` | 否 | `deepseek-chat` | 生产大模型模型标识 |
+| `OPENAI_CHAT_MODEL` | 否 | `gpt-4o-mini` | 仅 `/api/chat` 的上游模型标识 |
+| `OPENAI_GENERATION_MODEL` | 否 | 回退 `OPENAI_MODEL` | 仅 `answer/generate` 触达上游时的模型；空白则回退 |
+| `OPENAI_MODEL` | 否 | `deepseek-chat` | 仅作解析路由回退，不能覆盖已设置的路由专用变量 |
 | `AI_CLIENT_CREDENTIALS` | **是** | `web:strong_secret_token` | 客户端签名通信凭据，需与前端保持一致 |
 | `AI_ALLOWED_ORIGINS` | 否 | `https://your-domain.com:*` | 允许访问 AI 接口的前端 Origin 白名单 |
 | `JWT_SECRET` | 否 | 随机强字符串 | 用户身份认证 Token 密钥（生产强烈建议修改） |

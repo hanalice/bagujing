@@ -128,31 +128,33 @@ export function configureRouteTestEnv() {
 }
 
 // 生成带有 chat_ai 与 study 权限的离线测试登录令牌。
-export function makeTestToken() {
+export function makeTestToken(permissions = ['chat_ai', 'study']) {
   return jwt.sign({
     id: 1,
     username: 'prompt-budget-tester',
     role: 'admin',
-    permissions: ['chat_ai', 'study'],
+    permissions,
     clientId: 'web',
   }, TEST_JWT_SECRET, { expiresIn: '1h' });
 }
 
 // 构造可被 Express app.handle 消费的 JSON POST 请求。
-export function createRouteRequest(route, body) {
+export function createRouteRequest(route, body, options = {}) {
   const payload = JSON.stringify(body);
   const req = Readable.from([payload]);
   req.method = 'POST';
   req.url = route;
-  req.path = route;
+  req.path = route.split('?')[0];
   req.originalUrl = route;
   req.headers = {
-    authorization: `Bearer ${makeTestToken()}`,
     'content-type': 'application/json',
     'content-length': String(payload.length),
     'x-request-id': `prompt-budget-${process.pid}`,
     'x-forwarded-for': '127.0.0.1',
   };
+  if (!options.omitAuth) {
+    req.headers.authorization = `Bearer ${options.token ?? makeTestToken()}`;
+  }
   req.socket = { remoteAddress: '127.0.0.1' };
   req.ip = '127.0.0.1';
   req.header = function header(name) {
@@ -223,10 +225,10 @@ export function createRouteResponse(resolve) {
 }
 
 // 通过 app.handle 执行真实 Express 路由链并等待响应结束。
-export function invokeRoute(app, route, body) {
+export function invokeRoute(app, route, body, options = {}) {
   return new Promise((resolve, reject) => {
     const res = createRouteResponse(resolve);
-    app.handle(createRouteRequest(route, body), res, (error) => {
+    app.handle(createRouteRequest(route, body, options), res, (error) => {
       if (error) reject(error);
       else if (!res.ended) resolve(res);
     });

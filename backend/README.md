@@ -78,7 +78,9 @@ cp .env.example .env
 编辑 `.env` 关键配置项：
 - `OPENAI_API_KEY`：填入你的大模型 API Key（如 DeepSeek 或 OpenAI 密钥）
 - `OPENAI_BASE_URL`：例如 `https://api.deepseek.com` 或 `https://api.openai.com/v1`
-- `OPENAI_MODEL`：例如 `deepseek-chat` 或 `gpt-4o-mini`
+- `OPENAI_CHAT_MODEL`：仅 `/api/chat` 的上游模型，默认 `gpt-4o-mini`
+- `OPENAI_GENERATION_MODEL`：仅 `answer/generate` 触达上游时的模型；未设则回退 `OPENAI_MODEL`，再回退 `gpt-4o-mini`
+- `OPENAI_MODEL`：仅作解析路由回退，不能覆盖已设置的 `OPENAI_CHAT_MODEL` / `OPENAI_GENERATION_MODEL`
 - `AI_CLIENT_CREDENTIALS`：客户端签名凭据（如 `web:change_me`，需与前端保持一致）
 
 *所有配置项的默认值与说明详见 [backend/.env.example](.env.example)。*
