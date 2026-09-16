@@ -755,7 +755,8 @@ app.post('/api/problems/:id/answer/generate', authenticateToken, requirePermissi
     upstreamReached = true;
     const response = await model.invoke([
       new SystemMessage(promptMessages.system),
-      new HumanMessage(promptMessages.human),
+      new HumanMessage(promptMessages.context),
+      new HumanMessage(promptMessages.user),
     ]);
 
     const answerRaw = response.content;
@@ -870,7 +871,8 @@ app.post('/api/chat', authenticateToken, requirePermission('chat_ai'), aiGuard.m
     upstreamReached = true;
     const stream = await model.stream([
       new SystemMessage(promptMessages.system),
-      new HumanMessage(promptMessages.human),
+      new HumanMessage(promptMessages.context),
+      new HumanMessage(promptMessages.user),
     ], {
       signal: abortController.signal,
     });
