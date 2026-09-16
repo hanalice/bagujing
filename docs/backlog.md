@@ -28,6 +28,7 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 
 | ID  | 提出日 | 角色 | 问题 | 推荐 |
 | --- | --- | --- | --- | --- |
+| S4  | 2026-09-16 | PM | 助教气泡在 B22 去掉「仅 HTML」后，渲染用纯文本、Markdown，还是消毒后 HTML？ | 先保持纯文本插值；Markdown 另开 auto，禁止整篇模型 HTML 走 `v-html` |
 
 ---
 
@@ -78,6 +79,10 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | D4  | feat | P1-2 | manual | todo | 非个性化解析的近似缓存（需先拆契约） |
 | D5  | fix | P2-2 | manual | split | 已拆为 D51 |
 | D51 | fix | P2-2 | auto | todo | 新注册 bcryptjs；登录懒迁移旧哈希 |
+| S1  | fix | scan | auto | todo | 机调换票 JWT 与登录票权限面隔离 |
+| S2  | fix | scan | auto | todo | Guard 非 debug 路径去掉常开 console.log |
+| S3  | feat | scan | auto | todo | 助教前端回传最近 6 轮 messages（对齐 C31） |
+| S5  | fix | scan | assist | todo | 对齐 security-ai-guard.md 与签名默认/会话跳过验签的实现 |
 
 
 ---
@@ -188,6 +193,24 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 - **不做**：argon2、离线翻写全表、强制失效已有会话。
 - **residual**：从未再登录的存量用户仍为旧哈希，直到其下次登录。
 
+### S1
+
+- **做**：`POST /api/auth/token` 签发的 JWT 与登录用户票权限面隔离；该票不得通过管理面鉴权（`requireAdmin`）；claims 仅保留 AI 调用所需声明（如 `op=ai_access` 与 AI 路由权限名）。单测解码 payload 断言。
+- **不做**：改用户登录签发路径；改 `AI_REQUIRE_SIGNED_HEADERS` 默认值；改 Nginx / 部署。
+- **residual**：客户端凭证轮换与前端是否继续走换票另条。
+
+### S2
+
+- **做**：`ai-guard.js` 在非 `AI_GUARD_DEBUG` 路径下，去掉模块加载标记、SQL 审计成功、换票验签失败等常开 `console.log`；需要时仅走已有 debug 开关。单测：默认环境下上述前缀/文案不出现在 stub 的 `console.log`/`info`。
+- **不做**：改审计落库逻辑；扩展新的日志平台。
+- **residual**：A6 已覆盖 `[ai-guard-debug]` 前缀通道，本项只收常开噪音。
+
+### S3
+
+- **做**：`AiAssistant.vue` 调用 `POST /api/chat` 时附带 `messages[]`（`role` + `content`），只回传最近 **N=6**（与 C31 一致）；每条内容按前端已有输入上限截断；仍发送当前 `message` 与 `context`。
+- **不做**：改后端裁剪规则（属 C31）；改气泡渲染形态（见待决 S4）；滚动摘要。
+- **residual**：后端未识别 `messages` 时行为与现在一致；宜在 C31 之后或并行，以前端契约单测/请求快照锁字段。
+
 ---
 
 ## 修订记录
@@ -197,3 +220,4 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | ---------- | -- |
 | 2026-09-16 | 调度源从内部 HLD 第 6 节迁到本文件；父项标 split；assist/manual 切片冻约为 auto 子项（C4 三字段 `summary`/`keyPoints`/`nextStep`，D51 用 bcryptjs） |
 | 2026-09-16 | 周扫描增加「待决」：角色定级；仅产品分叉/破坏性默认/角色冲突/措辞才叫人；7 天未回复采用推荐 |
+| 2026-09-16 | 周扫描：新增 auto S1/S2/S3（换票权限面、Guard 常开日志、前端 6 轮）；待决 S4（助教渲染）；assist S5（security-ai-guard 文档漂移）；无逾期待决 |
