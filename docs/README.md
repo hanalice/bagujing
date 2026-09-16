@@ -9,6 +9,7 @@
 ```
 docs/
 ├── README.md                       # 本规范说明文件（公开）
+├── backlog.md                      # 工程待办队列（公开，日修/周扫描调度源）
 ├── git-commit-convention.md        # Git 提交规范与模板（公开）
 ├── security-ai-guard.md            # AI 网关安全防护专项白皮书（公开）
 ├── deployment-and-operations.md    # 生产部署与运维工程白皮书（公开）
@@ -38,6 +39,9 @@ docs/
    - 面向客户端或第三方的公开 REST / SSE 协议说明。
 4. **公共运维部署手册 (Deployment Guides)**：
    - 面向开源使用者的标准环境部署与配置参考。
+5. **工程待办队列 (Executable Backlog)**：
+   - 日修 / 周扫描的机器可读队列，含 fix 与 feat。只写完成标准，不写利用方式。
+   - *示例*：[`backlog.md`](backlog.md)。
 
 ---
 
