@@ -83,7 +83,9 @@ describe('C1 / P1-3: Prompt 预算与模型调用/审计集成', () => {
     const prettyJsonChars = JSON.stringify(snippets, null, 2).length;
     assert.ok(budgetedChars <= promptBudget.maxChars);
     assert.ok(budgetedChars < prettyJsonChars);
+    assert.equal(request.messages.length, 3);
     assert.ok(request.messages[1].content.includes('- 题目 #42'));
+    assert.ok(request.messages[2].content.includes('如何设计缓存一致性？'));
     assert.equal(request.messages[1].content.includes('尾部_GROUP_SENTINEL'), false);
 
     const [audit] = await readAuditLines(1);
@@ -107,8 +109,10 @@ describe('C1 / P1-3: Prompt 预算与模型调用/审计集成', () => {
     assert.equal(modelCalls.length, 1);
 
     const request = modelCalls[0];
+    assert.equal(request.messages.length, 3);
     assert.equal(request.messages[0].role, 'system');
     assert.equal(request.messages[1].role, 'user');
+    assert.equal(request.messages[2].role, 'user');
     assert.ok(request.messages[1].content.includes('- 题目 #42'));
     assert.equal(request.messages[1].content.includes('尾部_GROUP_SENTINEL'), false);
     assert.ok(getMessageChars(request) <= promptBudget.maxChars);
