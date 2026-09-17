@@ -46,16 +46,28 @@ git_sandbox_abandon_if_empty() {
   return 0
 }
 
-# Conventional Commits 头 + 现象/根因/方案小节（与 commit-msg 钩子对齐）。
+# Conventional Commits 头 + 按 type 校验正文（与 .githooks/commit-msg 对齐）。
 git_sandbox_commit_msg_ok() {
   local file="$1"
-  local msg_header msg_body
+  local msg_header msg_body type_name
   msg_header="$(head -n 1 "$file" 2>/dev/null | tr -d '\r' || true)"
   msg_body="$(cat "$file" 2>/dev/null || true)"
-  printf '%s' "$msg_header" | grep -qE '^(feat|fix|chore|refactor|test|docs|perf)(\(.+\))?: ' \
-    && printf '%s' "$msg_body" | grep -qE '问题现象|Symptoms' \
-    && printf '%s' "$msg_body" | grep -qE '根因分析|Root Cause' \
-    && printf '%s' "$msg_body" | grep -qE '解决方案|Solution'
+  printf '%s' "$msg_header" | grep -qE '^(feat|fix|chore|refactor|test|docs|perf)(\(.+\))?: ' || return 1
+  type_name="$(printf '%s' "$msg_header" | sed -E 's/^([a-z]+)(\(.*\))?:.*/\1/')"
+  case "$type_name" in
+    fix)
+      printf '%s' "$msg_body" | grep -qE '问题现象|Symptoms' \
+        && printf '%s' "$msg_body" | grep -qE '根因分析|Root Cause' \
+        && printf '%s' "$msg_body" | grep -qE '解决方案|Solution'
+      ;;
+    feat)
+      printf '%s' "$msg_body" | grep -qE '背景|Background' \
+        && printf '%s' "$msg_body" | grep -qE '设计|Design'
+      ;;
+    *)
+      return 0
+      ;;
+  esac
 }
 
 git_sandbox_confirm() {
@@ -79,16 +91,17 @@ git_sandbox_commit_all() {
   echo "✅ 已提交到 $WORK_BRANCH"
 }
 
-# $1=DO_PUSH $2=提交说明文件。未 push 时只打印后续命令。
+# $1=DO_PUSH $2=提交说明文件 $3=可选 PR 标题（默认用提交头）。未 push 时只打印后续命令。
 git_sandbox_push_pr() {
   local do_push="$1"
   local msg_file="$2"
+  local pr_title="${3:-}"
   if [ "$do_push" = "1" ]; then
     git push -u origin "$WORK_BRANCH"
     echo "🚀 已推送分支 $WORK_BRANCH"
 
-    local pr_title pr_url
-    pr_title="$(head -n 1 "$msg_file")"
+    local pr_url
+    [ -n "$pr_title" ] || pr_title="$(head -n 1 "$msg_file")"
     if gh pr view --json url -q .url 2>/dev/null; then
       echo "ℹ️ 该分支已有 PR，跳过创建。"
     else

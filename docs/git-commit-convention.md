@@ -13,7 +13,8 @@
                  │                               │
 [main] ──────────┼─── fix/<scope-or-issue> ──────┼───> (PR / Squash Merge)
 (主分支/唯一基线)  │                               │
-                 ├─── auto-fix/<id>-<date> ──────┤ (自动化沙盒专用，隔离验证)
+                 ├─── auto-fix/<id>-<date> ──────┤ (自动化修复沙盒)
+                 ├─── auto-feat/<id>-<date> ─────┤ (自动化特性沙盒)
                  │                               │
                  └─── docs/ or chore/<task> ─────┘
 ```
@@ -25,13 +26,15 @@
 | **主干分支** | `main` | - | 唯一长期稳定分支，Production-Ready，禁止直接在该分支提交大功能 |
 | **特性分支** | `feat/<feature-name>` | `main` | 新功能/架构改动专用，如 `feat/git-commit-convention`，合并后删除 |
 | **缺陷修复** | `fix/<scope-or-issue>` | `main` | 手工 Bug 修复专用，如 `fix/ai-guard-cache`，合并后删除 |
-| **自动化修复** | `auto-fix/<id>-<YYYYMMDD>` | `main` | `scripts/automation/daily-fix.sh` 专属沙盒分支，如 `auto-fix/a4-20260821` |
+| **自动化修复** | `auto-fix/<id>-<YYYYMMDD>` | `main` | `daily-fix.sh` 在类型为 `fix` 时使用，如 `auto-fix/a81-20260916` |
+| **自动化特性** | `auto-feat/<id>-<YYYYMMDD>` | `main` | `daily-fix.sh` 在类型为 `feat` 时使用，如 `auto-feat/c31-20260916` |
+| **周扫描入库** | `chore/weekly-scan-<YYYYMMDD>` | `main` | `weekly-scan.sh` 只改 `docs/backlog.md` |
 | **文档与维护** | `docs/<topic>`, `chore/<task>` | `main` | 文档、依赖升级或工程配置维护 |
 
 ### 1.2 分支隔离原则
 
 1. **一事一分支 (One Task, One Branch)**：严禁在特性分支中夹带无关缺陷修复，严禁在 Bug 修复分支中夹带新功能开发。
-2. **自动化沙盒隔离**：`auto-fix/*` 分支仅用于目标缺陷的自动化改动与有限次返修验证，**严禁在此类分支上提交任何基础设施或非当次缺陷相关的代码**。
+2. **自动化沙盒隔离**：`auto-fix/*` 与 `auto-feat/*` 仅用于目标条目的自动化改动与有限次返修验证，**严禁在此类分支上提交任何基础设施或非当次条目相关的代码**。调度源是 [`docs/backlog.md`](backlog.md)。
 3. **切换前保持干净**：切换分支前必须保证工作区干净（使用 `git stash` 或提交 WIP commit）。
 
 ---
