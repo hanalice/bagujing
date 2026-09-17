@@ -1,5 +1,4 @@
 import fs from 'node:fs/promises';
-import { appendFileSync } from 'node:fs';
 import path from 'node:path';
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import jwt from 'jsonwebtoken';

@@ -34,13 +34,6 @@ function saveEnv() {
   }
 }
 
-function restoreEnv() {
-  for (const key of ENV_KEYS) {
-    if (savedEnv[key] === undefined) delete process.env[key];
-    else process.env[key] = savedEnv[key];
-  }
-}
-
 function configureTestEnv() {
   process.env.BAGUJING_SKIP_LISTEN = '1';
   process.env.ENABLE_SQLITE = 'false';
