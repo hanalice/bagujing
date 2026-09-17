@@ -10,6 +10,7 @@ import Redis from 'ioredis';
 import { SystemMessage, HumanMessage } from "@langchain/core/messages";
 import { buildPromptMessages, promptBudget, PROMPT_BUDGET_ERROR_RESERVED } from './prompt-budget.js';
 import { createLlmModel } from './llm.js';
+import { sanitizeHtml } from './security/html-sanitizer.js';
 
 import { createSqlitePool } from './db/sqlite-pool.js';
 import { initCategorySchema, listCategories, countCategories, listCategoryGroupNames } from './db/category-repo.js';
@@ -758,7 +759,7 @@ app.post('/api/problems/:id/answer/generate', authenticateToken, requirePermissi
     ]);
 
     const answerRaw = response.content;
-    const answerHtml = normalizeHtmlParagraphs(answerRaw);
+    const answerHtml = sanitizeHtml(normalizeHtmlParagraphs(answerRaw));
 
     if (!isNonEmptyText(answerHtml)) {
       finalizeGuard({ status: 'error', reason: 'empty_answer', promptTokens });
