@@ -201,7 +201,18 @@
 | UT-QA-LINT-02 | lint 出现 error 时门禁非 0 退出 | 前置：构造可控场景——backend lint 进程退出码 `!== 0`（或 JSON 汇总 `errorCount >= 1`，对齐 ESLint 默认「有 error 则非 0」）；`backendCode`/`frontendCode`/`dbCode`（或等价）均为 0 且解析为 PASS/SKIP；未设置 `QA_GATE=off`；调用 `format-qa-report.js`（或经 stub 后跑 `qa-report.sh` 的门禁段）。 | 1. 门禁进程最终退出码 `!== 0`（与现有 BE/FE FAIL → `GATE_CODE=1` 一致）；<br>2. 裁决逻辑将 lint 套件记为 `status === 'FAIL'`，并纳入 `hasBlockingFailure`（或等价「任一 FAIL 则 exit 1」）；<br>3. stderr/报告中可区分 lint 失败（含 lint 输出片段或「后端 lint」类套件名），不得被其它套件 PASS 掩盖为整体 0 退出。 |
 | UT-QA-LINT-03 | 仅 warning 不因 lint 拦截门禁 | 前置：backend `npm run lint`（或 stub）退出码 `=== 0`，且输出/JSON 汇总 `errorCount === 0`、`warningCount >= 1`（可用临时探针文件只触发 warning 级规则，或 stub 输出含 `0 errors, N warnings` 且 CLI exit 0）；其它套件均为 PASS；未改 `scripts.lint` 为 `--max-warnings 0`（若源码或调用行出现 `--max-warnings 0` / 把 warning 映射为 FAIL，本用例 FAIL）。 | 1. 就 lint 维度**不**产生阻断：`lint` 套件 `status === 'PASS'`（或未单独记 FAIL）；<br>2. 在其它套件均 PASS 时，`format-qa-report.js` / `qa-report.sh` 最终退出码 `=== 0`；<br>3. 明确禁止：仅因 `warningCount > 0` 将 lint 标 FAIL 或强制 `exit 1`。 |
 | UT-QA-LINT-04 | 不改前端 lint 门禁、不执行 frontend `npm run lint` | 前置：静态审查 `scripts/qa-report.sh` 与 `scripts/format-qa-report.js`；可选对 `qa-report.sh` 做 PATH stub，记录实际 spawn 的命令行。 | 1. 脚本**不**出现 `(cd .../frontend && npm run lint)` / `npm run lint --prefix frontend` 等前端 lint 调用；<br>2. 前端相关门禁仍仅为既有 `cd .../frontend && npm test`（Vitest+Playwright），`results.json` **无** `frontendLintCode` 之类必填字段要求；<br>3. stub 记录的命令列表中，`lint` 仅出现在 backend 路径下；本项不得要求修改 `FE-STATIC-02` 或前端 `package.json` scripts。 |
-| UT-QA-LINT-05 | lint 失败与现有「按测试结果返回退出码」时序一致 | 前置：同 UT-QA-LINT-02 构造 lint FAIL；另测对照：lint PASS + 故意 `backendCode !== 0` 仍非 0；再测 `QA_GATE=off` 且 lint FAIL。调用顺序探针记录：先跑各套件（含 lint）→ 写 JSON → 调 `format-qa-report.js` → 以该进程退出码为 `GATE_CODE` → `exit $GATE_CODE`。 | 1. 默认门禁：lint FAIL 或 backend test FAIL 任一成立时最终 `exit !== 0`；<br>2. `QA_GATE=off` 时即使 lint FAIL，`format-qa-report.js` 仍写报告但进程退出码 `=== 0`（与现有放行契约一致，见 `format-qa-report.js` 中 `QA_GATE === 'off'` 分支）；<br>3. `qa-report.sh` 不以「恒 0」或「忽略 lintCode」绕过；报告大盘若增加 lint 行，执行命令须为 `cd backend && npm run lint`（或文档等价表述）。 |
+
+### 2.17 解析入库前服务端 HTML 白名单消毒（B21 / P0-7）(`backend/src/tests/answer-html-sanitize.test.js`)
+
+对应 **B21 / P0-7**：大模型生成解析直接写入 SQLite `details.answer` 时存在存储型 XSS 隐患；消毒不能仅依赖题目页前端 DOMPurify，服务端入库前必须建立白名单防御。完成标准：**做**——`answer/generate` 写入 SQLite 前做 HTML 白名单消毒；单测喂恶意标签后库内无 `script` 标签、无 `javascript:` URL。**不做**——改题目页已有的 DOMPurify；改助教前端组件。**residual**：其它消费方仍应自行消毒；助教 Prompt 见 B22。`it()` 标题须包含下表 ID。
+
+| ID | 用例标题 | 场景描述 | 预期结果 |
+| :--- | :--- | :--- | :--- |
+| `UT-HTML-SANITIZE-01` | 恶意标签过滤：封杀 script 与高危标签 | 输入包含 `<script>alert(1)</script>`、`<iframe src="...">`、`<object>`、`<style>` 等恶意标签。 | 1. 消毒后输出中**绝对无** `<script>` 或 `</script>` 标签（大小写不敏感）；<br>2. `iframe`、`object` 等危险嵌入标签被彻底剥离；<br>3. 脚本内容不作为可执行代码执行。 |
+| `UT-HTML-SANITIZE-02` | 伪协议过滤：封杀 javascript 伪协议 | 输入 `<a href="javascript:alert(1)">点击</a>`、`<a href="  javascript :..."` 等伪协议。 | 1. 输出中**绝对无** `javascript:` 伪协议 URL；<br>2. 危险 `href` 被剔除或清空；<br>3. 安全协议（如 `http://`, `https://`, `#`）正常保留。 |
+| `UT-HTML-SANITIZE-03` | 行内事件属性过滤：封杀 on* 事件处理器 | 输入 `<p onclick="evil()" onmouseover="evil()">文本</p>`、`<img src="x" onerror="evil()">` 等带 `on*` 事件属性的标签。 | 1. 消毒后输出中不包含任何 `on[a-z]+=` 事件处理器；<br>2. 宿主标签正常保留，事件属性被剔除。 |
+| `UT-HTML-SANITIZE-04` | 白名单放行：保留常用安全富文本排版标签 | 输入包含 `<p>`, `<h1>`~`<h6>`, `<ul>`, `<ol>`, `<li>`, `<strong>`, `<code>`, `<pre>`, `<blockquote>`, `<table>` 等常见面试题排版标签。 | 1. 白名单内标签完整保留；<br>2. 正常文本与格式排版不损坏、不发生截断。 |
+| `IT-HTML-SANITIZE-01` | 生成入库端到端闭环：库内无 script 与 javascript | 前置：调用 `POST /api/problems/:id/answer/generate`（`force: true`），Mock 上游 LLM 返回包含 `<script>stealCookie()</script><p>解析正文</p><a href="javascript:xss()">链接</a>`；请求成功后直接从 SQLite 查询 `details.answer`。 | 1. HTTP 返回 200，`data.answer` 不含 `<script>` 与 `javascript:`；<br>2. 直接查询 SQLite `details` 表，数据库中持久化的 `answer` 字段**绝对无** `<script>` 标签与 `javascript:` URL。 |
 
 ---
 

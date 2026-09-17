@@ -48,7 +48,7 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | A82 | fix | P2-6 | auto | done | `qa-report.sh` 纳入 backend lint，error 拦截 |
 | B1  | fix | P0-6 | auto | done | Prompt 分槽：3 条 message；只测结构不测模型听话 |
 | B2  | fix | P0-7 | assist | split | 已拆为 B21 / B22 |
-| B21 | fix | P0-7 | auto | todo | 解析入库前服务端 HTML 白名单消毒 |
+| B21 | fix | P0-7 | auto | done | 解析入库前服务端 HTML 白名单消毒 |
 | B22 | feat | P0-7 | auto | todo | 助教 system 不再要求仅 HTML 输出 |
 | B3  | fix | P0-5 | manual | split | 已拆为 B31；生产开签名仍为 B32 |
 | B31 | fix | P0-5 | auto | todo | 签名开关打开时，有会话也验签 |
@@ -231,3 +231,4 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | 2026-09-17 | S4 待决关闭：助教定为 Markdown；实现另开 S6（不塞进 B22）。推荐「先纯文本」作废 |
 | 2026-09-17 | A81 完成：后端 ESLint flat config，当前树 0 error |
 | 2026-09-17 | A82 完成：qa-report.sh 纳入 backend lint，error 拦截 |
+| 2026-09-17 | B21 完成：解析入库前服务端 HTML 白名单消毒 |
