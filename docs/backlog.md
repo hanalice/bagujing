@@ -28,7 +28,6 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 
 | ID  | 提出日 | 角色 | 问题 | 推荐 |
 | --- | --- | --- | --- | --- |
-| S4  | 2026-09-16 | PM | 助教气泡在 B22 去掉「仅 HTML」后，渲染用纯文本、Markdown，还是消毒后 HTML？ | 先保持纯文本插值；Markdown 另开 auto，禁止整篇模型 HTML 走 `v-html` |
 
 ---
 
@@ -82,7 +81,9 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | S1  | fix | scan | auto | todo | 机调换票 JWT 与登录票权限面隔离 |
 | S2  | fix | scan | auto | todo | Guard 非 debug 路径去掉常开 console.log |
 | S3  | feat | scan | auto | todo | 助教前端回传最近 6 轮 messages（对齐 C31） |
+| S4  | feat | scan | assist | split | 已判定助教 Markdown；实现见 S6 |
 | S5  | fix | scan | assist | todo | 对齐 security-ai-guard.md 与签名默认/会话跳过验签的实现 |
+| S6  | feat | scan | auto | todo | 助教助手气泡 Markdown + DOMPurify，用户气泡纯文本 |
 
 
 ---
@@ -113,7 +114,7 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 
 - **做**：助教 system 文案不再要求「仅 body 内 HTML」；单测锁 Prompt 字符串。
 - **不做**：用真实模型输出形态判 PASS；改 `AiAssistant.vue` 渲染方式。
-- **residual**：前端可继续文本插值。是否改 Markdown 渲染另开条目。
+- **residual**：前端可继续文本插值，直到 S6。本项禁止改 `AiAssistant.vue` 渲染。
 
 ### B31
 
@@ -208,8 +209,14 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 ### S3
 
 - **做**：`AiAssistant.vue` 调用 `POST /api/chat` 时附带 `messages[]`（`role` + `content`），只回传最近 **N=6**（与 C31 一致）；每条内容按前端已有输入上限截断；仍发送当前 `message` 与 `context`。
-- **不做**：改后端裁剪规则（属 C31）；改气泡渲染形态（见待决 S4）；滚动摘要。
+- **不做**：改后端裁剪规则（属 C31）；改气泡渲染形态（见 S6）；滚动摘要。
 - **residual**：后端未识别 `messages` 时行为与现在一致；宜在 C31 之后或并行，以前端契约单测/请求快照锁字段。
+
+### S6
+
+- **做**：`AiAssistant.vue` 助手气泡把**已累积全文**当 Markdown 解析为 HTML，再经 DOMPurify 渲染；每个 SSE `delta` 对完整缓冲区重解析，不要按单 chunk 解析。用户气泡仍用文本插值。单测/组件测锁：`**x**` 出加粗；围栏代码块出 `pre`/`code`；含 `<script>` 或 `javascript:` 的输入消毒后不进 DOM。可对齐 `E2E-MAIN-04`。
+- **不做**：改 B22 的 Prompt；改题目解析页；把模型原文当 HTML 直接 `v-html`；用户消息走 Markdown。
+- **residual**：LaTeX / mermaid 不做。B22 可先合入（其间前端仍纯文本）。
 
 ---
 
@@ -221,3 +228,4 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | 2026-09-16 | 调度源从内部 HLD 第 6 节迁到本文件；父项标 split；assist/manual 切片冻约为 auto 子项（C4 三字段 `summary`/`keyPoints`/`nextStep`，D51 用 bcryptjs） |
 | 2026-09-16 | 周扫描增加「待决」：角色定级；仅产品分叉/破坏性默认/角色冲突/措辞才叫人；7 天未回复采用推荐 |
 | 2026-09-16 | 周扫描：新增 auto S1/S2/S3（换票权限面、Guard 常开日志、前端 6 轮）；待决 S4（助教渲染）；assist S5（security-ai-guard 文档漂移）；无逾期待决 |
+| 2026-09-17 | S4 待决关闭：助教定为 Markdown；实现另开 S6（不塞进 B22）。推荐「先纯文本」作废 |
