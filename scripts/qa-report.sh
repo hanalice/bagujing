@@ -24,7 +24,7 @@ echo "🧪 [QA Automation] 开始执行全栈测试套件与质量校验..."
 echo "========================================================"
 
 # 1. 运行后端核心单测
-echo -n "⚙️ [1/3] 正在运行后端单元测试 (backend npm test)... "
+echo -n "⚙️ [1/4] 正在运行后端单元测试 (backend npm test)... "
 BE_OUT_FILE="$TEMP_DIR/be_out.txt"
 set +e
 (cd "$PROJECT_ROOT/backend" && npm test) > "$BE_OUT_FILE" 2>&1
@@ -35,6 +35,20 @@ if [ $BE_CODE -eq 0 ]; then
   echo "✅ PASS"
 else
   echo "❌ FAIL (退出码: $BE_CODE)"
+fi
+
+# 2. 运行后端 ESLint（仅 error 导致非 0；warning 不拦截）
+echo -n "🔍 [2/4] 正在运行后端静态检查 (backend npm run lint)... "
+BE_LINT_OUT_FILE="$TEMP_DIR/be_lint_out.txt"
+set +e
+(cd "$PROJECT_ROOT/backend" && npm run lint) > "$BE_LINT_OUT_FILE" 2>&1
+BE_LINT_CODE=$?
+set -e
+
+if [ $BE_LINT_CODE -eq 0 ]; then
+  echo "✅ PASS"
+else
+  echo "❌ FAIL (退出码: $BE_LINT_CODE)"
 fi
 
 # Playwright 浏览器二进制在 ~/.cache/ms-playwright，不在 frontend/node_modules。
@@ -53,8 +67,8 @@ pin_playwright_browsers() {
   esac
 }
 
-# 2. 运行前端单元测试 + E2E
-echo -n "🎨 [2/3] 正在运行前端单元测试 (frontend npm test)... "
+# 3. 运行前端单元测试 + E2E
+echo -n "🎨 [3/4] 正在运行前端单元测试 (frontend npm test)... "
 FE_OUT_FILE="$TEMP_DIR/fe_out.txt"
 set +e
 pin_playwright_browsers
@@ -73,8 +87,8 @@ else
   fi
 fi
 
-# 3. 运行数据库完整性校验（CI 无本机 sqlite，跳过且不阻断门禁）
-echo -n "🗄️ [3/3] 正在运行 SQLite 数据库完整性排查... "
+# 4. 运行数据库完整性校验（CI 无本机 sqlite，跳过且不阻断门禁）
+echo -n "🗄️ [4/4] 正在运行 SQLite 数据库完整性排查... "
 DB_OUT_FILE="$TEMP_DIR/db_out.txt"
 if [ "${CI:-}" = "true" ]; then
   echo "QA_DB_VERIFY_SKIPPED" > "$DB_OUT_FILE"
@@ -93,12 +107,14 @@ else
   fi
 fi
 
-# 4. 组装临时 JSON 数据并调用生成器
+# 5. 组装临时 JSON 数据并调用生成器
 node -e "
 const fs = require('fs');
 const payload = {
   backendCode: $BE_CODE,
   backendOutput: fs.readFileSync('$BE_OUT_FILE', 'utf8'),
+  backendLintCode: $BE_LINT_CODE,
+  backendLintOutput: fs.readFileSync('$BE_LINT_OUT_FILE', 'utf8'),
   frontendCode: $FE_CODE,
   frontendOutput: fs.readFileSync('$FE_OUT_FILE', 'utf8'),
   dbCode: $DB_CODE,
@@ -107,7 +123,7 @@ const payload = {
 fs.writeFileSync('$TEMP_JSON', JSON.stringify(payload));
 "
 
-# 5. 调用格式化解析器生成 docs/qa_report.md（其退出码即为质量门禁裁决）
+# 6. 调用格式化解析器生成 docs/qa_report.md（其退出码即为质量门禁裁决）
 set +e
 node "$PROJECT_ROOT/scripts/format-qa-report.js" "$TEMP_JSON"
 GATE_CODE=$?

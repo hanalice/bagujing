@@ -175,6 +175,46 @@ function parseDbVerifyOutput(rawOutput, exitCode) {
   return { status, items: 2, duration: '~85ms' };
 }
 
+/**
+ * 解析后端 ESLint 输出。
+ * 契约：仅以进程退出码判定（ESLint 默认有 error 才非 0）；warning 单独不拦截。
+ * @param {string} rawOutput
+ * @param {number} exitCode
+ */
+function parseBackendLintOutput(rawOutput, exitCode) {
+  const clean = stripAnsi(rawOutput || '');
+  const errorMatch = clean.match(/(\d+)\s+error/i);
+  const warningMatch = clean.match(/(\d+)\s+warning/i);
+  const errorCount = errorMatch ? parseInt(errorMatch[1], 10) : (exitCode !== 0 ? 1 : 0);
+  const warningCount = warningMatch ? parseInt(warningMatch[1], 10) : 0;
+  // 不以 warningCount 单独标 FAIL；与 npm run lint 默认退出语义对齐
+  const status = exitCode === 0 ? 'PASS' : 'FAIL';
+  return {
+    status,
+    total: errorCount + warningCount,
+    pass: status === 'PASS' ? 1 : 0,
+    fail: status === 'FAIL' ? Math.max(errorCount, 1) : 0,
+    errorCount,
+    warningCount,
+    duration: '-',
+  };
+}
+
+/**
+ * 渲染后端 lint 失败说明（可区分于其它套件）。
+ * @param {string} rawOutput
+ * @param {{ status: string, errorCount: number, warningCount: number }} stats
+ */
+function extractBackendLintFailures(rawOutput, stats) {
+  if (stats.status === 'PASS') {
+    const warnHint =
+      stats.warningCount > 0 ? `（含 ${stats.warningCount} 条 warning，不拦截门禁）` : '';
+    return `> ✅ **后端 lint 通过**：errorCount === 0${warnHint}。`;
+  }
+  const clean = stripAnsi(rawOutput || '').trim();
+  return `> ❌ **后端 lint 失败（error 拦截）**：errorCount=${stats.errorCount}\n\n\`\`\`\n${clean}\n\`\`\``;
+}
+
 // 8. 渲染 Markdown 模板
 function renderMarkdownReport(data) {
   const {
@@ -182,9 +222,11 @@ function renderMarkdownReport(data) {
     gitInfo,
     timestamp,
     backendStats,
+    backendLintStats,
     frontendStats,
     dbStats,
     backendFailuresText,
+    backendLintFailuresText,
     frontendFailuresText,
     allPassed,
     hasBlockingFailure,
@@ -215,6 +257,7 @@ function renderMarkdownReport(data) {
 | 测试套件 | 执行命令 | 用例 / 项数 | 通过 (Pass) | 失败 (Fail) | 耗时 | 判定结果 |
 | :--- | :--- | :---: | :---: | :---: | :---: | :---: |
 | **后端核心单元测试** | \`cd backend && npm test\` | ${backendStats.total} | ${backendStats.pass} | ${backendStats.fail} | ${backendStats.duration} | ${renderStatusCell(backendStats.status)} |
+| **后端 lint** | \`cd backend && npm run lint\` | ${backendLintStats.total} | ${backendLintStats.pass} | ${backendLintStats.fail} | ${backendLintStats.duration} | ${renderStatusCell(backendLintStats.status)} |
 | **前端单元与 E2E 测试** | \`cd frontend && npm test\` | ${frontendStats.total} | ${frontendStats.pass} | ${frontendStats.fail} | ${frontendStats.duration} | ${renderStatusCell(frontendStats.status)} |
 | **数据库完整性排查** | \`node backend/scripts/verify-db.js\` | ${dbStats.items} | ${dbStats.status === 'PASS' ? dbStats.items : 0} | ${dbStats.status === 'FAIL' ? 1 : 0} | ${dbStats.duration || '-'} | ${renderStatusCell(dbStats.status)} |
 
@@ -225,7 +268,10 @@ function renderMarkdownReport(data) {
 ### 2.1 后端失败用例 (Backend Failures)
 ${backendFailuresText}
 
-### 2.2 前端失败用例 (Frontend Failures)
+### 2.2 后端 lint 失败 (Backend Lint Failures)
+${backendLintFailuresText}
+
+### 2.3 前端失败用例 (Frontend Failures)
 ${frontendFailuresText}
 
 ---
@@ -233,6 +279,7 @@ ${frontendFailuresText}
 ## 3. 上线准出门禁结论 (DoD Sign-off)
 
 - [${backendStats.status === 'PASS' ? 'x' : ' '}] **后端核心用例通过**：LLM 适配层、AI Guard 记账与流式生命周期单测全绿。
+- [${backendLintStats.status === 'PASS' ? 'x' : ' '}] **后端 lint 通过**：ESLint error 为 0（warning 不拦截门禁）。
 - [${frontendStats.status === 'PASS' ? 'x' : ' '}] **前端单测与 E2E 通过**：主路径鉴权与助教流式渲染自动化覆盖。
 - [${dbStats.status === 'PASS' ? 'x' : ' '}] **数据库完整性校验${dbStats.status === 'SKIP' ? '（CI 已跳过本机 sqlite）' : '通过'}**：AI Clients 与 AI Audit Logs 表结构与数据可读。
 - [${allPassed ? 'x' : ' '}] **最终交付裁决**：${goDecision}
@@ -256,16 +303,27 @@ function main() {
   const timestamp = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
 
   const backendStats = parseNodeTestOutput(rawData.backendOutput || '', rawData.backendCode);
+  // 兼容字段名：backendLintCode / lintCode（与 qa-report.sh 写入名一致优先）
+  const lintCode =
+    typeof rawData.backendLintCode === 'number'
+      ? rawData.backendLintCode
+      : typeof rawData.lintCode === 'number'
+        ? rawData.lintCode
+        : 0;
+  const lintOutput = rawData.backendLintOutput || rawData.lintOutput || '';
+  const backendLintStats = parseBackendLintOutput(lintOutput, lintCode);
   const frontendStats = parseFrontendOutput(rawData.frontendOutput || '', rawData.frontendCode);
   const dbStats = parseDbVerifyOutput(rawData.dbOutput || '', rawData.dbCode);
   const backendFailuresText = extractBackendFailures(rawData.backendOutput || '', backendStats);
+  const backendLintFailuresText = extractBackendLintFailures(lintOutput, backendLintStats);
   const frontendFailuresText = extractFrontendFailures(rawData.frontendOutput || '', frontendStats);
 
-  const allStats = [backendStats, frontendStats, dbStats];
+  const allStats = [backendStats, backendLintStats, frontendStats, dbStats];
   const hasBlockingFailure = allStats.some((s) => s.status === 'FAIL');
-  // 后端+前端通过即可准出；DB SKIP（CI）不降级为 CONDITIONAL GO，工具链 SKIP 仍走 PARTIAL
+  // 后端单测+lint+前端通过即可准出；DB SKIP（CI）不降级为 CONDITIONAL GO，工具链 SKIP 仍走 PARTIAL
   const allPassed =
     backendStats.status === 'PASS' &&
+    backendLintStats.status === 'PASS' &&
     frontendStats.status === 'PASS' &&
     (dbStats.status === 'PASS' || dbStats.status === 'SKIP');
 
@@ -274,9 +332,11 @@ function main() {
     gitInfo,
     timestamp,
     backendStats,
+    backendLintStats,
     frontendStats,
     dbStats,
     backendFailuresText,
+    backendLintFailuresText,
     frontendFailuresText,
     allPassed,
     hasBlockingFailure,

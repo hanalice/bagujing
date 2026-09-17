@@ -45,7 +45,7 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | A7  | fix | P0-8 | auto | done | `cached_answer` 命中不计配额 |
 | A8  | fix | P2-6 | assist | split | 已拆为 A81 / A82 |
 | A81 | fix | P2-6 | auto | done | 后端 ESLint flat config，当前树 0 error |
-| A82 | fix | P2-6 | auto | todo | `qa-report.sh` 纳入 backend lint，error 拦截 |
+| A82 | fix | P2-6 | auto | done | `qa-report.sh` 纳入 backend lint，error 拦截 |
 | B1  | fix | P0-6 | auto | done | Prompt 分槽：3 条 message；只测结构不测模型听话 |
 | B2  | fix | P0-7 | assist | split | 已拆为 B21 / B22 |
 | B21 | fix | P0-7 | auto | todo | 解析入库前服务端 HTML 白名单消毒 |
@@ -230,3 +230,4 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | 2026-09-16 | 周扫描：新增 auto S1/S2/S3（换票权限面、Guard 常开日志、前端 6 轮）；待决 S4（助教渲染）；assist S5（security-ai-guard 文档漂移）；无逾期待决 |
 | 2026-09-17 | S4 待决关闭：助教定为 Markdown；实现另开 S6（不塞进 B22）。推荐「先纯文本」作废 |
 | 2026-09-17 | A81 完成：后端 ESLint flat config，当前树 0 error |
+| 2026-09-17 | A82 完成：qa-report.sh 纳入 backend lint，error 拦截 |
