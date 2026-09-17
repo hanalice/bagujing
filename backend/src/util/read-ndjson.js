@@ -93,8 +93,8 @@ export function createNdjsonLineReader(filePath) {
   }
 
   function close() {
-    try { rl.close(); } catch {}
-    try { stream.destroy(); } catch {}
+    try { rl.close(); } catch { /* 关闭 readline 失败可忽略 */ }
+    try { stream.destroy(); } catch { /* 销毁 stream 失败可忽略 */ }
   }
 
   return { next, close };

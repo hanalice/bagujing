@@ -93,11 +93,9 @@ describe('2.11 CORS 跨域预检与允许请求头契约 (B4 / P2-1)', () => {
         requestHeaders: 'authorization, content-type',
       });
 
-      let nextCalled = false;
       let nextError = null;
       await new Promise((resolve) => {
         corsMiddleware(req, res, (err) => {
-          nextCalled = true;
           nextError = err;
           resolve();
         });

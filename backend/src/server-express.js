@@ -15,7 +15,7 @@ import { createSqlitePool } from './db/sqlite-pool.js';
 import { initCategorySchema, listCategories, countCategories, listCategoryGroupNames } from './db/category-repo.js';
 import { initProblemSchema, getProblemById, getProblemRawById, listProblems, countProblems, listProblemCompanies, listProblemKeyPoints } from './db/problem-repo.js';
 import { initProblemDetailSchema, getProblemDetailById, upsertProblemAnswerById } from './db/problem-detail-repo.js';
-import { initMafSchema, createMissionAudit, updateMissionTokens, incrementUserChatRound, incrementFeedbackRound, finalizeMission, getMissionAudit, listMissionAudits } from './db/maf-repo.js';
+import { initMafSchema, createMissionAudit, incrementUserChatRound, incrementFeedbackRound, finalizeMission, listMissionAudits } from './db/maf-repo.js';
 import {
   initUserSchema,
   registerUser,
@@ -38,7 +38,6 @@ const PORT = process.env.PORT || 3000;
 // --- Auth System ---
 const JWT_SECRET = process.env.JWT_SECRET || 'bagujing-secret-2026';
 
-let sqlitePool;
 const aiGuard = createAiGuard({ jwtSecret: JWT_SECRET });
 if (process.env.REDIS_URL) {
   aiGuard.redis = new Redis(process.env.REDIS_URL);
@@ -60,7 +59,6 @@ async function getSqlitePool() {
       : path.join(__dirname, '../db/bagujing.dev.sqlite3');
 
     const pool = createSqlitePool({ filename, max: 4 });
-    sqlitePool = pool;
     aiGuard.dbPool = pool; // Inject pool into guard
     sqlitePoolPromise = (async () => {
       await initCategorySchema(pool);
@@ -436,7 +434,7 @@ app.get('/api/problem-keypoints', authenticateToken, requirePermission('study'),
 // 路由：获取分类列表
 app.get('/api/categories', authenticateToken, requirePermission('study'), asyncHandler(async (req, res) => {
   try {
-    const { keyword, groupName, cursor, pageSize = 10 } = req.query;
+    const { keyword, cursor, pageSize = 10 } = req.query;
 
     // Support multi-group filtering with backward compatibility
     const groups = normalizeQueryArray(req.query, ['groupNames', 'groupNames[]', 'groupName']);
@@ -895,7 +893,7 @@ app.post('/api/chat', authenticateToken, requirePermission('chat_ai'), aiGuard.m
       }
     } finally {
       if (typeof reader?.releaseLock === 'function') {
-        try { reader.releaseLock(); } catch (_) { }
+        try { reader.releaseLock(); } catch { /* releaseLock 失败可忽略 */ }
       }
     }
 

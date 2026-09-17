@@ -175,6 +175,20 @@
 | UT-PROMPT-SLOT-04 | 用户索要 Key 探针只出现在 user | 前置：用户题面含 `PROBE_ASK_KEY`。 | 探针在 `user` 且不在 `system`；`context` 若出现该子串则 FAIL。 |
 | UT-PROMPT-SLOT-05 | RAG 污染只出现在 context | 前置：用户题面为无探针短句；category `groupDesc` 含 `PROBE_CONTEXT_INJECT`。 | 1. 探针在 `context`；<br>2. `system` 与 `user` 都不含该探针；<br>3. 描述仍受 C1 `maxDescChars` 截断规则约束。 |
 
+### 2.15 后端 ESLint flat config（A81 / P2-6）(`backend/src/tests/eslint-flat-config.test.js`)
+
+对应 **A81 / P2-6**：ESLint 9 只认 flat config（`eslint.config.js`），当前 `backend` 的 `npm run lint`（`package.json` script：`eslint --ext .js src`）因缺配置直接报错退出，等于后端从未做过静态检查。完成标准：新增 `backend/eslint.config.js`（flat config）；规则集为 **ESLint 9 recommended**（`@eslint/js` 的 `configs.recommended` 或等价）；**不**新开会把当前树打红的额外 error 规则；对当前 `backend/src` 树 **0 error**（存量可用文件级/行级 `eslint-disable`，禁止关掉整个 recommended）；`cd backend && npm run lint` 能跑完且退出码 0。
+
+**不做**（本项用例不得反向要求）：前端 lint、大规模格式化重写、顺手升级其它依赖。更严规则属 residual，另开条目（A82 才把 lint 纳入 `qa-report.sh`）。`it()` 标题须包含下表 ID。
+
+| ID | 用例标题 | 场景描述 | 预期结果 |
+| :--- | :--- | :--- | :--- |
+| UT-BE-LINT-01 | flat config 文件存在且可被 ESLint 9 加载 | 前置：工作目录为 `backend/`；断言存在 `eslint.config.js`（允许 `.mjs` 等价入口，但契约路径优先 `eslint.config.js`）；用 `ESLint` 构造函数或 `eslint --print-config src/server-express.js` 加载配置；同时断言不存在被依赖的遗留 `.eslintrc` / `.eslintrc.js` / `.eslintrc.cjs` / `.eslintrc.json`（若残留文件存在，也不得作为唯一配置源）。 | 1. `backend/eslint.config.js` 存在且为可读文件；<br>2. 加载成功，stderr/stdout **不含**子串 `ESLint couldn't find a configuration file`（或等价中英文缺配置报错）；<br>3. 导出为 flat 配置（默认导出为非空数组，或 `eslint.config.js` 内 `export default [...]`）；<br>4. `--print-config`（若采用）对 `src/server-express.js` 退出码 0 并输出含 `rules` 的 JSON。 |
+| UT-BE-LINT-02 | `npm run lint` 跑完且当前树 0 error | 前置：`cd backend`；执行 `npm run lint`；同时（或等价）用同一 flat config 对 `src` 跑 `eslint` 并取 `--format json`（或 `ESLint.lintFiles(['src'])`）汇总。 | 1. `npm run lint` 进程退出码 `=== 0`；<br>2. JSON/API 汇总全部文件的 `errorCount` 之和 `=== 0`（或 CLI 人类可读输出无 `✖ N problems (M errors` 且 `M > 0`）；<br>3. 命令完整跑完（非缺 config / 非未捕获异常崩溃）；<br>4. **允许** `warningCount >= 0`：本项不把 warning 当失败（与 A82「仅 error 拦截」对齐，但 A82 不在本项范围）。 |
+| UT-BE-LINT-03 | 规则集为 ESLint 9 recommended，未额外加严打红 | 前置：读取 `backend/eslint.config.js` 源码或经 `ESLint` 计算后的配置；对照 `@eslint/js` 的 `configs.recommended`。 | 1. 配置显式纳入 recommended（源码含 `js.configs.recommended` / `configs.recommended`，或等价 `extends`/spread 写法）；<br>2. 在 recommended 之外，**没有**再启用一组会使当前 `src/` 树 `errorCount > 0` 的额外 error 规则（判定：当前树 UT-BE-LINT-02 已 0 error，且配置中自定义 `rules` 若存在，其 error 级项不得单独导致全树失败；禁止用「清空 rules / 空 files 扫描」冒充 recommended）；<br>3. 若存在存量 `eslint-disable` / `eslint-disable-next-line`，仅允许文件级或行级，**不得**通过 `rules: { ...recommended全部: 'off' }` 关闭整个 recommended。 |
+| UT-BE-LINT-04 | 扫描范围限 backend，不牵连前端 | 前置：执行 backend 的 `npm run lint`（或 `ESLint.lintFiles` 与 script 相同目标）；检查 `backend/package.json` 的 `scripts.lint`；不 `cd frontend`、不调用前端 lint script。 | 1. `scripts.lint` 目标覆盖 `backend/src` 下 `.js`（可保留 `--ext .js src` 或 flat config 的 `files` 等价写法）；<br>2. lint 结果中每条 `filePath` 均位于 `backend/` 目录树内（规范化后以 `backend` 为根）；<br>3. 结果中**零条**路径指向 `frontend/`；本用例不要求、不执行 `frontend` 的 `npm run lint`。 |
+| UT-BE-LINT-05 | 对故意违规 fixture 仍能报 error（非空跑） | 前置：在测试临时目录（如 `os.tmpdir()` 或 `backend/src/tests/fixtures/eslint-probe/`）写入仅用于本测的 `.js` 探针文件，内容故意触发 recommended 的 error（例如未声明赋值：`eslintProbeUndeclared = 1;`，命中 `no-undef`）；用**同一** `backend/eslint.config.js` 仅对该探针文件调用 `ESLint.lintFiles` / CLI；测后删除探针或置于 gitignore/隔离路径，禁止污染正式 `src` 业务树。 | 1. 该探针文件的 `errorCount >= 1`（至少一条 `severityId` 属于 recommended，如 `no-undef`）；<br>2. 针对该探针的 CLI 退出码 `!== 0`；<br>3. 证明 UT-BE-LINT-02 的「0 error」来自真实规则检查，而非空配置、空 `files` 或未扫描。 |
+
 ---
 
 ## 3. 安全防护与集成测试用例 (Security & Integration)

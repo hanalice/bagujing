@@ -115,7 +115,7 @@ describe('createLlmModel', () => {
 describe('LangChain model invoke contract', () => {
   it('invoke returns object with string content', async () => {
     const mockModel = {
-      invoke: async (_messages) => ({ content: 'Answer text' }),
+      invoke: async () => ({ content: 'Answer text' }),
     };
     const response = await mockModel.invoke([]);
     assert.equal(typeof response.content, 'string');
@@ -124,7 +124,7 @@ describe('LangChain model invoke contract', () => {
 
   it('empty content string is handled without throwing', async () => {
     const mockModel = {
-      invoke: async (_messages) => ({ content: '' }),
+      invoke: async () => ({ content: '' }),
     };
     const response = await mockModel.invoke([]);
     assert.equal(response.content, '');
@@ -297,7 +297,7 @@ describe('Chat stream consumption loop (idle timeout & resource cleanup)', () =>
         }
       } finally {
         if (typeof reader?.releaseLock === 'function') {
-          try { reader.releaseLock(); } catch (_) { }
+          try { reader.releaseLock(); } catch { /* releaseLock 失败可忽略 */ }
         }
       }
 

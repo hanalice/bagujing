@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {
   TEST_AUDIT_PATH,
-  TEST_DB_PATH,
   configureRouteTestEnv,
   installMockModelFetch,
   invokeRoute,
