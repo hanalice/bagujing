@@ -214,6 +214,19 @@
 | `UT-HTML-SANITIZE-04` | 白名单放行：保留常用安全富文本排版标签 | 输入包含 `<p>`, `<h1>`~`<h6>`, `<ul>`, `<ol>`, `<li>`, `<strong>`, `<code>`, `<pre>`, `<blockquote>`, `<table>` 等常见面试题排版标签。 | 1. 白名单内标签完整保留；<br>2. 正常文本与格式排版不损坏、不发生截断。 |
 | `IT-HTML-SANITIZE-01` | 生成入库端到端闭环：库内无 script 与 javascript | 前置：调用 `POST /api/problems/:id/answer/generate`（`force: true`），Mock 上游 LLM 返回包含 `<script>stealCookie()</script><p>解析正文</p><a href="javascript:xss()">链接</a>`；请求成功后直接从 SQLite 查询 `details.answer`。 | 1. HTTP 返回 200，`data.answer` 不含 `<script>` 与 `javascript:`；<br>2. 直接查询 SQLite `details` 表，数据库中持久化的 `answer` 字段**绝对无** `<script>` 标签与 `javascript:` URL。 |
 
+### 2.18 助教 system 不再要求仅 HTML 输出（B22 / P0-7）(`backend/src/tests/chat-system-prompt.test.js`)
+
+对应 **B22 / P0-7**：`POST /api/chat` 助教 system 当前要求「请直接输出可用于前端展示的 HTML 片段（仅 body 内内容，不要 markdown 代码块）」并强制 `<p>/<h3>/<ul>/<li>` 排版，与前端文本插值及 S4 已判定的 Markdown 方向产品契约矛盾。完成标准：**做**——助教 system 文案不再要求「仅 body 内 HTML」；单测锁 Prompt 字符串。**不做**——用真实/stub 模型输出形态判 PASS；改 `AiAssistant.vue` 渲染方式。**residual**——前端可继续文本插值直到 S6；本项禁止改 `AiAssistant.vue`；题目解析 `answer/generate` 的 HTML Prompt 不在本项范围（见 C41）。断言对象仅为 chat system 字符串及上游第 1 条 `SystemMessage.content`；测试实现可静态读取 `server-express.js` 中 `/api/chat` 的 `systemPrompt`，或导出可测常量后断言，或以 stub 捕获上游 messages。`it()` 标题须包含下表 ID。
+
+| ID | 用例标题 | 场景描述 | 预期结果 |
+| :--- | :--- | :--- | :--- |
+| `UT-CHAT-PROMPT-01` | 助教 system 不再要求「仅 body 内 HTML」 | 前置：取得 `/api/chat` 路径使用的 `systemPrompt` 全文（导出常量、源码抽取或 builder 入参均可；不得依赖模型回复）。 | 1. 字符串**不包含**子串「仅 body 内」；<br>2. **不包含**「请直接输出可用于前端展示的 HTML 片段」或等价「仅输出 HTML / 只输出 HTML」硬性指令；<br>3. **不包含**「不要 markdown」「不要 Markdown」「不要 markdown 代码块」类禁令（大小写不敏感匹配 `markdown` 禁令句即可）。 |
+| `UT-CHAT-PROMPT-02` | 助教 system 不再强制 HTML 标签排版 | 前置：同 UT-CHAT-PROMPT-01，锁定同一 chat `systemPrompt`。 | 1. **不包含**「使用 `<p>/<h3>/<ul>/<li>`」或「HTML 标签进行格式化」类硬性输出格式指令；<br>2. 允许文案提及 Markdown / 纯文本 / 分点列表等非 HTML 格式；若仍出现「必须输出 HTML 标签」则 FAIL。 |
+| `UT-CHAT-PROMPT-03` | 助教 system 仍保留角色与回答结构 | 前置：同 UT-CHAT-PROMPT-01。 | 1. 仍含「面试官」类角色定位子串；<br>2. 仍要求「简短结论」与「分点说明」类结构（子串即可），并保留「下一步」/可操作建议类要求；<br>3. 去掉 HTML 约束后 system 不得变为空串或仅剩防注入声明。 |
+| `UT-CHAT-PROMPT-04` | 对照：answer/generate 的 HTML Prompt 不在 B22 范围 | 前置：分别读取 `/api/chat` 与 `/api/problems/:id/answer/generate` 两处 `systemPrompt`（或源码中两段字面量）。 | 1. chat system 满足 UT-CHAT-PROMPT-01/02；<br>2. **本项不要求** generate system 去掉 HTML 指令——若 generate 仍含「HTML 片段」「仅 body 内」「`<p>/<h3>`」等字样，**不得**判 B22 FAIL；<br>3. 证明 B22 回归范围仅助教 `/api/chat`。 |
+| `UT-CHAT-PROMPT-05` | 禁止用模型输出形态作为本项 PASS 判据 | 前置：静态审查本套件测试文件（`chat-system-prompt.test.js` 及同主题 IT 文件）的断言语句。 | 1. PASS 判据只断言 system/`SystemMessage.content` 字符串；<br>2. 不得对 stub `delta`、`completionText`、SSE 助手气泡文本做「是否为 HTML / 是否为 Markdown」形态断言并作为本项通过条件；<br>3. 不得引入对 `AiAssistant.vue` / DOMPurify / `v-html` 的组件断言（渲染属 S6）。 |
+| `IT-CHAT-PROMPT-01` | POST /api/chat 上游 SystemMessage 与锁定文案一致 | 前置：有效登录且具备 `chat_ai`；已配置 Key；`POST /api/chat`，JSON body `{ "message": "请简述 CAP 定理" }`；stub 上游 LLM，捕获发往模型的 messages 数组；可返回任意短 `delta` 后结束。 | 1. 上游调用恰好 1 次，messages[0] 为 system，其 `content` 同时满足 UT-CHAT-PROMPT-01、UT-CHAT-PROMPT-02、UT-CHAT-PROMPT-03；<br>2. HTTP `200`，`Content-Type: text/event-stream; charset=utf-8`，SSE 顺序仍为 `context` → `delta` → `done`（或本环境等价成功流）；<br>3. **不得**根据 `delta` 文本是否含 HTML 标签或 Markdown 标记判定本用例 PASS/FAIL。 |
+
 ---
 
 ## 3. 安全防护与集成测试用例 (Security & Integration)

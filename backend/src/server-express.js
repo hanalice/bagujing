@@ -839,12 +839,13 @@ app.post('/api/chat', authenticateToken, requirePermission('chat_ai'), aiGuard.m
     const snippets = await buildRagContext({ message, categoryId, problemId });
     sendSSE(res, { type: 'context', snippets });
 
+    // B22：助教不再强制「仅 body 内 HTML」；前端 Markdown 渲染见 S6，其间仍可纯文本插值。
     const systemPrompt =
-      '你是“面试题库”站内资深技术面试官 AI 小助手。请直接输出可用于前端展示的 HTML 片段（仅 body 内内容，不要 markdown 代码块）。\n'
+      '你是“面试题库”站内资深技术面试官 AI 小助手。\n'
       + '要求：\n'
       + '1) 先给简短结论，再给分点说明，最后给出可操作的下一步建议；\n'
       + '2) 内容准确、可落地，避免空话；\n'
-      + '3) 使用 <p>/<h3>/<ul>/<li> 等 HTML 标签进行格式化。';
+      + '3) 使用清晰的分点列表组织回答，可用 Markdown 排版。';
 
     const promptMessages = buildPromptMessages({
       systemPrompt,
