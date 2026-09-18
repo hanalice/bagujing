@@ -9,11 +9,11 @@ function getConfiguredModel(name) {
 }
 
 export function buildLlmConfig(guardContext, defaultConfig = {}, role = 'generation') {
-  const modelName = role === 'chat'
-    ? getConfiguredModel('OPENAI_CHAT_MODEL') || 'gpt-4o-mini'
-    : getConfiguredModel('OPENAI_GENERATION_MODEL')
-      || getConfiguredModel('OPENAI_MODEL')
-      || 'gpt-4o-mini';
+  // chat / generation 均按「路由专用 → OPENAI_MODEL → gpt-4o-mini」解析，避免空白专用变量漏回退。
+  const dedicatedEnv = role === 'chat' ? 'OPENAI_CHAT_MODEL' : 'OPENAI_GENERATION_MODEL';
+  const modelName = getConfiguredModel(dedicatedEnv)
+    || getConfiguredModel('OPENAI_MODEL')
+    || 'gpt-4o-mini';
 
   return {
     openAIApiKey: process.env.OPENAI_API_KEY || null,
