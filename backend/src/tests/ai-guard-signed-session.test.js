@@ -197,10 +197,13 @@ describe('B31/P0-5: 签名开关打开时有会话也验签', () => {
     applyBaseEnv({ requireSigned: 'true' });
     const guard = createAiGuard({ jwtSecret: 'test' });
 
-    // 组 1：全部 HMAC 头缺失
+    // 组 1：全部 HMAC 头缺失；Bearer 不能替代 HMAC
     const missingAll = mockHttp({
       body: { message: 'burn-quota' },
-      headers: { origin: 'http://localhost' },
+      headers: {
+        origin: 'http://localhost',
+        authorization: 'Bearer any-jwt-cannot-bypass-hmac',
+      },
       user: { clientId: CLIENT_ID },
     });
     let nextAll = 0;
@@ -253,9 +256,9 @@ describe('B31/P0-5: 签名开关打开时有会话也验签', () => {
     if (fs.existsSync(AUDIT_FILE)) {
       const raw = fs.readFileSync(AUDIT_FILE, 'utf8').trim();
       const rows = raw ? raw.split('\n').map((line) => JSON.parse(line)) : [];
+      const badRejectReasons = new Set(['missing_headers', 'invalid_signature', 'body_hash_mismatch']);
       const bad = rows.filter(
-        (row) => row.decision === 'reject'
-          && (row.reason === 'missing_headers' || row.reason === 'invalid_signature'),
+        (row) => row.decision === 'reject' && badRejectReasons.has(row.reason),
       );
       assert.equal(bad.length, 0);
     }
@@ -317,6 +320,7 @@ describe('B31/P0-5: 签名开关打开时有会话也验签', () => {
     await guard.middleware(chat.req, chat.res, () => { chatNext += 1; });
     assert.equal(chatNext, 0);
     assert.equal(chat.statusCode, 401);
+    assert.deepEqual(chat.jsonCalls[0], { code: 401, message: 'Missing AI auth headers' });
 
     const generate = mockHttp({
       path: '/api/problems/1/answer/generate',
@@ -328,11 +332,71 @@ describe('B31/P0-5: 签名开关打开时有会话也验签', () => {
     await guard.middleware(generate.req, generate.res, () => { generateNext += 1; });
     assert.equal(generateNext, 0);
     assert.equal(generate.statusCode, 401);
+    assert.deepEqual(generate.jsonCalls[0], { code: 401, message: 'Missing AI auth headers' });
 
     const audits = await readAuditLines(2);
     const missing = audits.filter(
       (row) => row.decision === 'reject' && row.reason === 'missing_headers',
     );
     assert.ok(missing.length >= 2);
+    const routes = new Set(missing.map((row) => row.route));
+    assert.ok(routes.has('chat'));
+    assert.ok(routes.has('answer_generate'));
+  });
+
+  it('UT-GUARD-SIG-07: 开关 true + 有会话 + body hash 不匹配 → 401', async () => {
+    applyBaseEnv({ requireSigned: 'true' });
+    const guard = createAiGuard({ jwtSecret: 'test' });
+    const body = { message: 'hash-mismatch' };
+    const headers = buildSignedHeaders({ method: 'POST', path: '/api/chat', body });
+    // 声称的 hash 与真实 body 不一致，但签名仍按声称的 hash 计算，以通过 HMAC 前的形式校验
+    const claimedHash = '0'.repeat(64);
+    const ts = headers['x-ts'];
+    const nonce = headers['x-nonce'];
+    const signatureBase = `${ts}.${nonce}.POST./api/chat.${claimedHash}`;
+    headers['x-body-sha256'] = claimedHash;
+    headers['x-signature'] = hmacHex(CLIENT_SECRET, signatureBase);
+
+    const http = mockHttp({ body, headers, user: { clientId: CLIENT_ID } });
+    let nextCount = 0;
+    await guard.middleware(http.req, http.res, () => { nextCount += 1; });
+
+    assert.equal(nextCount, 0);
+    assert.equal(http.statusCode, 401);
+    assert.deepEqual(http.jsonCalls[0], { code: 401, message: 'Body hash mismatch' });
+
+    const audits = await readAuditLines(1);
+    assert.ok(audits.some((row) => row.decision === 'reject' && row.reason === 'body_hash_mismatch'));
+  });
+
+  it('UT-GUARD-SIG-08: 开关 true 时验签拒答发生在限流之前', async () => {
+    applyBaseEnv({ requireSigned: 'true' });
+    process.env.AI_RATE_LIMIT_CLIENT_PER_MINUTE = '1';
+    process.env.AI_RATE_LIMIT_IP_PER_MINUTE = '1';
+    const guard = createAiGuard({ jwtSecret: 'test' });
+
+    for (let i = 0; i < 2; i += 1) {
+      const http = mockHttp({
+        body: { message: `no-sig-${i}` },
+        headers: { origin: 'http://localhost' },
+        user: { clientId: CLIENT_ID },
+      });
+      let nextCount = 0;
+      await guard.middleware(http.req, http.res, () => { nextCount += 1; });
+      assert.equal(nextCount, 0);
+      assert.equal(http.statusCode, 401);
+      assert.equal(http.statusCalls.includes(429), false);
+      assert.deepEqual(http.jsonCalls[0], { code: 401, message: 'Missing AI auth headers' });
+    }
+
+    const audits = await readAuditLines(2);
+    const missing = audits.filter(
+      (row) => row.decision === 'reject' && row.reason === 'missing_headers',
+    );
+    assert.equal(missing.length >= 2, true);
+    assert.equal(
+      audits.some((row) => row.reason === 'rate_client_minute' || row.reason === 'rate_ip_minute'),
+      false,
+    );
   });
 });
