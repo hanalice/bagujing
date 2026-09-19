@@ -13,7 +13,7 @@ import {
   seedPromptBudgetDatabase,
 } from './prompt-budget-route-helpers.js';
 
-const MODEL_ENV_KEYS = ['OPENAI_CHAT_MODEL', 'OPENAI_GENERATION_MODEL'];
+const MODEL_ENV_KEYS = ['OPENAI_CHAT_MODEL', 'OPENAI_GENERATION_MODEL', 'OPENAI_MODEL'];
 const savedEnv = saveTestEnv();
 const savedModelEnv = Object.fromEntries(
   MODEL_ENV_KEYS.map((key) => [key, process.env[key]]),
@@ -45,11 +45,17 @@ function restoreModelEnv() {
   }
 }
 
-describe('C6 / P1-8: 模型分层路由集成', () => {
+// 将本套件的默认分层模型环境重置为可区分哨兵值。
+function resetDefaultModelEnv() {
+  process.env.OPENAI_CHAT_MODEL = 'chat-mini-test';
+  process.env.OPENAI_GENERATION_MODEL = 'generation-large-test';
+  process.env.OPENAI_MODEL = 'legacy-test';
+}
+
+describe('C6 / C61 / P1-8: 模型分层路由集成', () => {
   before(async () => {
     configureRouteTestEnv();
-    process.env.OPENAI_CHAT_MODEL = 'chat-mini-test';
-    process.env.OPENAI_GENERATION_MODEL = 'generation-large-test';
+    resetDefaultModelEnv();
     await seedPromptBudgetDatabase();
     ({ app } = await import('../server-express.js'));
     modelCalls = [];
@@ -59,8 +65,7 @@ describe('C6 / P1-8: 模型分层路由集成', () => {
   beforeEach(() => {
     modelCalls.length = 0;
     try { fs.unlinkSync(TEST_AUDIT_PATH); } catch { /* ignore */ }
-    process.env.OPENAI_CHAT_MODEL = 'chat-mini-test';
-    process.env.OPENAI_GENERATION_MODEL = 'generation-large-test';
+    resetDefaultModelEnv();
   });
 
   after(() => {
@@ -89,6 +94,7 @@ describe('C6 / P1-8: 模型分层路由集成', () => {
       'done',
     ]);
     assert.equal(JSON.stringify(modelCalls[0]).includes('generation-large-test'), false);
+    assert.equal(JSON.stringify(modelCalls[0]).includes('legacy-test'), false);
     const [audit] = await readAuditLines(1);
     await new Promise((resolve) => setTimeout(resolve, 80));
     const auditLines = fs.readFileSync(TEST_AUDIT_PATH, 'utf8').trim().split('\n').filter(Boolean);
@@ -166,21 +172,48 @@ describe('C6 / P1-8: 模型分层路由集成', () => {
     ]);
   });
 
-  it('IT-MODEL-LAYER-04: 未设置 chat 专用变量时保持 mini 默认', async () => {
+  it('IT-MODEL-LAYER-04: 专用与 legacy 皆未设时 chat 保持 mini 且不串用 generation', async () => {
     delete process.env.OPENAI_CHAT_MODEL;
+    delete process.env.OPENAI_MODEL;
 
     const response = await invokeRoute(app, '/api/chat', {
       message: '验证 chat 默认模型',
     });
 
     assert.equal(response.statusCode, 200);
+    assert.equal(response.headers['content-type'], 'text/event-stream; charset=utf-8');
     assert.equal(modelCalls.length, 1);
     assert.equal(modelCalls[0].model, 'gpt-4o-mini');
     assert.notEqual(modelCalls[0].model, 'generation-large-test');
+    assert.ok(String(modelCalls[0].model).trim());
     assert.deepEqual(getSseEvents(response).map((event) => event.type), [
       'context',
       'delta',
       'done',
     ]);
+  });
+
+  it('IT-MODEL-LAYER-05: C61：仅 OPENAI_MODEL 时 chat 路由上游 model 为该值', async () => {
+    process.env.OPENAI_CHAT_MODEL = '   ';
+    process.env.OPENAI_MODEL = 'c61-legacy-chat';
+    process.env.OPENAI_GENERATION_MODEL = 'generation-large-test';
+
+    const response = await invokeRoute(app, '/api/chat', {
+      message: '请简述 CAP',
+    });
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(modelCalls.length, 1);
+    assert.equal(modelCalls[0].model, 'c61-legacy-chat');
+    assert.notEqual(modelCalls[0].model, 'generation-large-test');
+    assert.notEqual(modelCalls[0].model, 'gpt-4o-mini');
+    assert.ok(String(modelCalls[0].model).trim());
+    assert.deepEqual(getSseEvents(response).map((event) => event.type), [
+      'context',
+      'delta',
+      'done',
+    ]);
+    const [audit] = await readAuditLines(1);
+    assert.equal(audit.reason, 'stream_done');
   });
 });

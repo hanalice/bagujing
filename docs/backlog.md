@@ -69,6 +69,7 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | C5  | fix | P1-6 | assist | split | 已拆为 C51 |
 | C51 | fix | P1-6 | auto | todo | 有上游 usage 则回写审计，否则标记估算 |
 | C6  | feat | P1-8 | auto | done | 模型分层：chat 与解析可分别配置模型 |
+| C61 | fix | P1-8 | auto | done | chat 路由选模补齐 OPENAI_MODEL 向下兼容回退 |
 | D1  | feat | P1-5 | assist | split | 已拆为 D11 / D12 |
 | D11 | feat | P1-5 | auto | todo | 同步生成路径对 429/5xx 有限重试 |
 | D12 | feat | P1-5 | auto | todo | 进程内连续失败熔断 |
@@ -170,6 +171,12 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 - **不做**：供应商账单对账报表、按用户月结。
 - **residual**：网关不返回 usage 时保持估算。
 
+### C61
+
+- **做**：`backend/src/llm.js` 在 `role === 'chat'` 且 `OPENAI_CHAT_MODEL` 未设置或为空白时，回退到 `OPENAI_MODEL`，再回退到 `'gpt-4o-mini'`；同步更新 `backend/.env.example` 与 `backend/README.md` 中关于 `OPENAI_MODEL` 的说明；在 `docs/test_cases.md` 和 `backend/src/tests/model-layer.test.js` 补齐单测，断言未配置 `OPENAI_CHAT_MODEL` 但配置了 `OPENAI_MODEL` 时，`chat` 实际采用 `OPENAI_MODEL`。
+- **不做**：移除 `OPENAI_CHAT_MODEL` 或 `OPENAI_GENERATION_MODEL`；修改前端任何代码；修改非模型配置。
+- **residual**：显式配置 `OPENAI_CHAT_MODEL` 时其优先级仍高于 `OPENAI_MODEL`。
+
 ### D11
 
 - **做**：仅同步 `answer/generate` 的 `invoke`：对 429/5xx 最多 2 次重试，jitter 序列固定以便单测。SSE chat **不重试**。
@@ -234,3 +241,4 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | 2026-09-17 | B21 完成：解析入库前服务端 HTML 白名单消毒 |
 | 2026-09-18 | B22 完成：助教 system 不再要求仅 HTML 输出 |
 | 2026-09-19 | B31 完成：签名开关打开时，有会话也验签 |
+| 2026-09-19 | C61 完成：chat 路由选模补齐 OPENAI_MODEL 向下兼容回退 |
