@@ -487,7 +487,8 @@ export function createAiGuard({ dbPool = null, redis = null, jwtSecret = null } 
       clientId = config.defaultClientId || 'web';
     }
 
-    const forceSignatureCheck = !req.user && config.requireSignedHeaders;
+    // B31/P0-5：开关打开时无论是否有登录会话都必须验签（JWT 泄露不得绕过 HMAC）
+    const forceSignatureCheck = config.requireSignedHeaders;
 
     if (config.debug) {
       // 仅元数据：禁止写入 token / signature / Authorization 原文

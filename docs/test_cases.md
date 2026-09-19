@@ -227,21 +227,37 @@
 | `UT-CHAT-PROMPT-05` | 禁止用模型输出形态作为本项 PASS 判据 | 前置：静态审查本套件测试文件（`chat-system-prompt.test.js` 及同主题 IT 文件）的断言语句。 | 1. PASS 判据只断言 system/`SystemMessage.content` 字符串；<br>2. 不得对 stub `delta`、`completionText`、SSE 助手气泡文本做「是否为 HTML / 是否为 Markdown」形态断言并作为本项通过条件；<br>3. 不得引入对 `AiAssistant.vue` / DOMPurify / `v-html` 的组件断言（渲染属 S6）。 |
 | `IT-CHAT-PROMPT-01` | POST /api/chat 上游 SystemMessage 与锁定文案一致 | 前置：有效登录且具备 `chat_ai`；已配置 Key；`POST /api/chat`，JSON body `{ "message": "请简述 CAP 定理" }`；stub 上游 LLM，捕获发往模型的 messages 数组；可返回任意短 `delta` 后结束。 | 1. 上游调用恰好 1 次，messages[0] 为 system，其 `content` 同时满足 UT-CHAT-PROMPT-01、UT-CHAT-PROMPT-02、UT-CHAT-PROMPT-03；<br>2. HTTP `200`，`Content-Type: text/event-stream; charset=utf-8`，SSE 顺序仍为 `context` → `delta` → `done`（或本环境等价成功流）；<br>3. **不得**根据 `delta` 文本是否含 HTML 标签或 Markdown 标记判定本用例 PASS/FAIL。 |
 
+### 2.19 签名开关打开时有会话也验签（B31 / P0-5）(`backend/src/tests/ai-guard-signed-session.test.js`)
+
+对应 **B31 / P0-5**：`backend/src/security/ai-guard.js` 当前用 `forceSignatureCheck = !req.user && config.requireSignedHeaders`，导致 **有 JWT/`req.user` 时整段 HMAC 校验被跳过**（JWT 泄露即可直调 AI 烧额度）。完成标准：**做**——当 `AI_REQUIRE_SIGNED_HEADERS=true` 时，有登录会话也必须验签；缺签名头返回 HTTP 401；默认值仍为 `false`。**不做**——把仓库默认改成 `true`；改 Nginx / 部署配置（生产开开关见 **B32** residual）。测试通过 stub `mockHttp`（参考 `ai-guard-cache.test.js`）直接调用 `createAiGuard(...).middleware`，命中 AI 路由（优先 `POST /api/chat`）；`credentials` 沿用默认 `AI_CLIENT_CREDENTIALS` 或 `web:change_me`。签名算法与实现一致：`bodyHash = sha256Hex(JSON.stringify(req.body ?? {}))`，`signatureBase = \`${ts}.${nonce}.${METHOD}.${path}.${bodyHash}\``，`x-signature = hmacHex(secret, signatureBase)`；必填头：`x-client-id`、`x-client-token`、`x-ts`、`x-nonce`、`x-signature`、`x-body-sha256`。拒答体为 `res.status(status).json({ code: status, message })`；审计 NDJSON `decision: 'reject'` 的 `reason` 以下表为准。`it()` 标题须包含下表 ID。
+
+| ID | 用例标题 | 场景描述 | 预期结果 |
+| :--- | :--- | :--- | :--- |
+| UT-GUARD-SIG-01 | 默认未开签名：有会话可无签名头放行 | 前置：**删除/不设置** `AI_REQUIRE_SIGNED_HEADERS`（或显式 `'false'`）；`AI_CLIENT_CREDENTIALS` 含 `web:change_me`；`req.user = { clientId: 'web' }`；`POST /api/chat` body `{ "message": "hello" }`；**故意省略**全部 HMAC 头（无 `x-signature` / `x-ts` / `x-nonce` / `x-client-token` / `x-body-sha256`）；白名单 Origin（如 `http://localhost`）。 | 1. middleware **调用** `next()` 恰好 1 次；<br>2. **不**调用 `res.status(401).json(...)`；<br>3. 证明代码默认/`false` 下「有会话可跳过验签」仍成立（B31 **不做**改仓库默认值）。 |
+| UT-GUARD-SIG-02 | 开关 true + 有会话 + 缺签名头 → 401 | 前置：`AI_REQUIRE_SIGNED_HEADERS=true`；合法 `req.user = { clientId: 'web' }`（模拟已过 JWT/`authenticateToken`）；Origin 白名单内；`POST /api/chat` body `{ "message": "burn-quota" }`；**省略**任一必填 HMAC 头（至少覆盖「全部缺失」与「仅缺 `x-signature`」两组）。 | 1. **不**调用 `next()`；<br>2. HTTP 状态 **401**，JSON `{ code: 401, message: 'Missing AI auth headers' }`（或实现等价文案，但 status/`code` 必须为 401）；<br>3. 审计 NDJSON 存在 `decision: 'reject'` 且 `reason === 'missing_headers'`；<br>4. 证明 **有会话也不能**因 `req.user` 跳过验签（相对修复前 `forceSignatureCheck = !req.user && ...` 的回归点）。 |
+| UT-GUARD-SIG-03 | 开关 true + 有会话 + 合法 HMAC → next | 前置：同 UT-GUARD-SIG-02 的开关与 `req.user`；补齐六元组签名头：`x-client-id=web`、`x-client-token=change_me`（或当前 credentials 中 web 的 secret）、`x-ts=Date.now()`（窗口内）、唯一 `x-nonce`、正确 `x-body-sha256` 与 `x-signature`（算法见本节引言）；Origin 白名单内。 | 1. middleware 调用 `next()` 恰好 1 次；<br>2. 无 401/403 拒答 JSON；<br>3. 审计无本请求的 `decision: 'reject'`（或无 `missing_headers` / `invalid_signature`）。 |
+| UT-GUARD-SIG-04 | 开关 true + 有会话 + 伪造签名 → 401 | 前置：同 UT-GUARD-SIG-03，但 `x-signature` 改为与 body/secret 不匹配的固定串（如 `deadbeef`）；其余头齐全且 `x-ts`/`x-nonce`/`x-body-sha256` 形式上合法。 | 1. **不**调用 `next()`；<br>2. HTTP **401**，JSON `code === 401`，`message` 为 `Invalid signature`（或实现等价）；<br>3. 审计 `reason === 'invalid_signature'`。 |
+| UT-GUARD-SIG-05 | 开关 true + 无会话仍强制验签（对照） | 前置：`AI_REQUIRE_SIGNED_HEADERS=true`；`req.user` 为 `undefined`/`null`；`x-client-id=web` 可提供以通过 client 解析；**缺** HMAC 其余头；`POST /api/chat`。 | 1. **不**调用 `next()`；<br>2. HTTP **401**，审计 `reason === 'missing_headers'`（或先因 `missing_client_id`/`invalid_client_id` 拒——若未带 `x-client-id`）；<br>3. 证明修复后验签条件为「开关 true」而非「无会话」，匿名与有会话路径一致强制 HMAC。 |
+| UT-GUARD-SIG-06 | 开关 true 时 chat 与 generate 两条 AI 路由均验签 | 前置：`AI_REQUIRE_SIGNED_HEADERS=true`；`req.user = { clientId: 'web' }`；分别对 `POST /api/chat` 与 `POST /api/problems/1/answer/generate` 各发一次**无签名头**请求（body 分别为 `{ "message": "x" }` 与 `{ "force": false }`）。 | 1. 两条路由均 **不** `next()`；<br>2. 两次均为 HTTP **401**，审计各至少一行 `reason === 'missing_headers'`；<br>3. 不得只修 chat 而漏 generate（Guard 按 routeKey 命中的 AI 路由均在范围）。 |
+
 ---
 
 ## 3. 安全防护与集成测试用例 (Security & Integration)
 
 ### 3.1 AI 防护网关安全防御 (`backend/scripts/qa-verify.js`)
 
+对应 **B31 / P0-5** 与既有 HMAC 防御：当运行时 `AI_REQUIRE_SIGNED_HEADERS=true` 时，**即使请求已带合法 Bearer JWT / 服务端已设置 `req.user`**，仍须完整验签；缺头或坏签返回 HTTP 401。本套件若通过带 Cookie/Authorization 的已登录客户端打 AI 路由，不得因「有会话」而放行无签名请求。reason 字段以 Guard 审计/`reject` 实值为准（实现侧缺头为 `missing_headers`，坏签为 `invalid_signature`，时钟为 `invalid_timestamp`，重放为 `replay_blocked`，Origin 为 `origin_blocked`）。生产默认改 `true` 属 **B32**，本表不要求改代码默认值。`it()` / 场景标题须包含下表 ID。
+
 | ID | 用例标题 | 场景描述 | 预期结果 |
 | :--- | :--- | :--- | :--- |
-| SEC-GUARD-01 | 缺失签名拦截 | 请求未携带 `X-Signature` 等签名请求头。 | 返回 HTTP 401，reason: `missing_signature`。 |
-| SEC-GUARD-02 | 伪造篡改签名拦截 | 签名内容与 Secret/Body 不匹配。 | 返回 HTTP 401，reason: `invalid_signature`。 |
-| SEC-GUARD-03 | 时钟偏移与时间戳篡改 | 时间戳超前或滞后超过允许窗口（如 > 300s）。 | 返回 HTTP 401，reason: `clock_skew`。 |
-| SEC-GUARD-04 | 重放攻击防护 (Nonce) | 同一 Nonce 短时间内重复发起两次请求。 | 第二次请求被拦截，返回 HTTP 401，reason: `replay_attack`。 |
-| SEC-GUARD-05 | 来源 Origin 白名单校验 | 携带合法签名但来自于未授权的 Origin 域名。 | 返回 HTTP 403，reason: `origin_not_allowed`。 |
-| SEC-GUARD-06 | 合规请求建立流式连接 | 签名合规、在白名单 Origin 内发起的正常请求。 | 成功建立 SSE 流式连接并接收首个 Token 数据块。 |
-| SEC-GUARD-07 | 突发高频限流 (Rate Limiting) | 瞬时并发请求速率超过配额窗口上限。 | 触发保护，返回 HTTP 429，reason: `rate_limit_exceeded`。 |
+| SEC-GUARD-01 | 缺失签名拦截（含已登录会话） | 前置：进程 `AI_REQUIRE_SIGNED_HEADERS=true`；客户端**已持有合法 JWT**（或探针在 Guard 前注入 `req.user`）；对 `POST /api/chat`（及至少一条 `answer/generate`）**不携带** `X-Signature` / `X-Ts` / `X-Nonce` / `X-Client-Token` / `X-Body-Sha256`（可保留 `Authorization: Bearer …`）。 | 1. 返回 HTTP **401**；响应 JSON `code === 401`，`message` 含 Missing AI auth headers 语义；<br>2. 审计/指标 reason 为 `missing_headers`（历史文案 `missing_signature` 仅作别名说明，断言以实值为准）；<br>3. **不得**因存在会话而进入 SSE/业务 handler。 |
+| SEC-GUARD-02 | 伪造篡改签名拦截（有会话） | 前置：同 SEC-GUARD-01 已登录 + 开关 true；携带完整签名头但 `X-Signature` 与 Secret/Body 不匹配。 | 返回 HTTP **401**，审计 reason: `invalid_signature`；不调用下游 LLM。 |
+| SEC-GUARD-03 | 时钟偏移与时间戳篡改 | 前置：开关 true；有或无会话均可；`X-Ts` 超前或滞后超过 `AI_MAX_CLOCK_SKEW_MS`（默认 300s）。 | 返回 HTTP **401**，审计 reason: `invalid_timestamp`。 |
+| SEC-GUARD-04 | 重放攻击防护 (Nonce) | 前置：开关 true；同一 `X-Nonce` 在 TTL 内对同一 client 重复两次（第二次可仍带合法会话）。 | 第二次请求被拦截，返回 HTTP **401**，审计 reason: `replay_blocked`。 |
+| SEC-GUARD-05 | 来源 Origin 白名单校验 | 携带合法签名但来自于未授权的 Origin 域名。 | 返回 HTTP **403**，审计 reason: `origin_blocked`。 |
+| SEC-GUARD-06 | 合规请求建立流式连接（会话+签名） | 前置：开关 true；已登录；白名单 Origin；六元组 HMAC 头全部合法。 | 成功建立 SSE 流式连接并接收首个 Token/`context` 数据块；HTTP 200，`Content-Type` 含 `text/event-stream`。 |
+| SEC-GUARD-07 | 突发高频限流 (Rate Limiting) | 瞬时并发请求速率超过配额窗口上限（签名与会话均合法）。 | 触发保护，返回 HTTP **429**（reason 如 `rate_client_minute` / `rate_ip_minute` 等实现实值）。 |
+| SEC-GUARD-08 | 对照：开关 false 时有会话可无签名 | 前置：`AI_REQUIRE_SIGNED_HEADERS=false`（或未设置）；已登录；故意不带 HMAC 头访问 `POST /api/chat`。 | 不因缺签名返回 401 `missing_headers`；请求可进入 Guard 后续限流/业务（具体业务成功依赖 Key/权限）；证明 B31 不改变默认关闭行为。 |
 
 ### 3.2 业务接口与认证授权 (`backend/src/server-express.js`)
 
