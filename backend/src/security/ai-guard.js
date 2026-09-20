@@ -164,6 +164,28 @@ const takeFixedWindow = (store, key, now, windowMs, limit) => {
   };
 };
 
+// Redis 固定窗口：INCR 计数，首次写入时 PEXPIRE 设定 TTL。
+const takeRedisFixedWindow = async (redis, key, windowMs, limit) => {
+  const count = Number(await redis.incr(key));
+  if (count === 1 && typeof redis.pexpire === 'function') {
+    await redis.pexpire(key, windowMs);
+  }
+  let ttlMs = windowMs;
+  if (typeof redis.pttl === 'function') {
+    const ttl = Number(await redis.pttl(key));
+    if (Number.isFinite(ttl) && ttl > 0) ttlMs = ttl;
+  }
+  const retryAfterSec = Math.max(1, Math.ceil(ttlMs / 1000));
+  if (count > limit) {
+    return { ok: false, remaining: 0, retryAfterSec };
+  }
+  return {
+    ok: true,
+    remaining: Math.max(0, limit - count),
+    retryAfterSec,
+  };
+};
+
 export function createAiGuard({ dbPool = null, redis = null, jwtSecret = null } = {}) {
   const JWT_SECRET = jwtSecret || process.env.AI_JWT_SECRET || 'change_me_jwt_secret';
   const credentials = parseClientCredentials(process.env.AI_CLIENT_CREDENTIALS || 'web:change_me');
@@ -560,20 +582,43 @@ export function createAiGuard({ dbPool = null, redis = null, jwtSecret = null } 
 
     const ip = getIpFromRequest(req);
     const limitKey = createRateLimitKey({ routeKey, clientId, ip });
+    const takeRateWindow = (store, mapKey, redisKey, windowMs, limit) => (
+      currentRedis
+        ? takeRedisFixedWindow(currentRedis, redisKey, windowMs, limit)
+        : Promise.resolve(takeFixedWindow(store, mapKey, now, windowMs, limit))
+    );
 
-    const minuteClient = takeFixedWindow(routeClientMinute, limitKey, now, 60 * 1000, config.minuteLimitPerClient);
+    const minuteClient = await takeRateWindow(
+      routeClientMinute,
+      limitKey,
+      `rl:cmin:${limitKey}`,
+      60 * 1000,
+      config.minuteLimitPerClient,
+    );
     if (!minuteClient.ok) {
       res.setHeader('Retry-After', String(minuteClient.retryAfterSec));
       return reject({ req, res, status: 429, message: 'Too many requests (client per minute)', reason: 'rate_client_minute', clientId, routeKey });
     }
 
-    const hourClient = takeFixedWindow(routeClientHour, limitKey, now, 60 * 60 * 1000, config.hourLimitPerClient);
+    const hourClient = await takeRateWindow(
+      routeClientHour,
+      limitKey,
+      `rl:chour:${limitKey}`,
+      60 * 60 * 1000,
+      config.hourLimitPerClient,
+    );
     if (!hourClient.ok) {
       res.setHeader('Retry-After', String(hourClient.retryAfterSec));
       return reject({ req, res, status: 429, message: 'Too many requests (client per hour)', reason: 'rate_client_hour', clientId, routeKey });
     }
 
-    const ipMinute = takeFixedWindow(routeIpMinute, `${routeKey}:${ip}`, now, 60 * 1000, config.minuteLimitPerIp);
+    const ipMinute = await takeRateWindow(
+      routeIpMinute,
+      `${routeKey}:${ip}`,
+      `rl:imin:${routeKey}:${ip}`,
+      60 * 1000,
+      config.minuteLimitPerIp,
+    );
     if (!ipMinute.ok) {
       res.setHeader('Retry-After', String(ipMinute.retryAfterSec));
       return reject({ req, res, status: 429, message: 'Too many requests (ip per minute)', reason: 'rate_ip_minute', clientId, routeKey });
