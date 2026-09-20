@@ -55,7 +55,7 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | B32 | fix | P0-5 | manual | todo | 生产打开签名开关（运维，禁止改代码默认值） |
 | B4  | fix | P2-1 | auto | done | CORS `allowedHeaders` 补 `Authorization` |
 | B5  | feat | P1-7 | manual | split | 已拆为 B51 / B52 |
-| B51 | feat | P1-7 | auto | todo | 有 Redis 时限流走 Redis，否则内存 Map |
+| B51 | feat | P1-7 | auto | done | 有 Redis 时限流走 Redis，否则内存 Map |
 | B52 | feat | P1-7 | auto | todo | 有 Redis 时并发计数走 Redis，否则内存 Map |
 | C1  | feat | P1-3 | auto | done | Prompt 预算：合法 maxChars 硬上限；非法配置不截题面 |
 | C2  | feat | P1-2 | manual | split | 已拆为 C21 / C22 |
@@ -242,3 +242,4 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | 2026-09-18 | B22 完成：助教 system 不再要求仅 HTML 输出 |
 | 2026-09-19 | B31 完成：签名开关打开时，有会话也验签 |
 | 2026-09-19 | C61 完成：chat 路由选模补齐 OPENAI_MODEL 向下兼容回退 |
+| 2026-09-20 | B51 完成：有 Redis 时限流走 Redis，否则内存 Map |

@@ -253,6 +253,18 @@
 | UT-GUARD-SIG-07 | 开关 true + 有会话 + body hash 不匹配 → 401 | 前置：`AI_REQUIRE_SIGNED_HEADERS=true`；`req.user = { clientId: 'web' }`；六元组齐全且 `x-signature` 按**声称的** `x-body-sha256` 计算，但 `x-body-sha256` 与 `sha256Hex(JSON.stringify(req.body))` **不一致**（如把 `x-body-sha256` 改成 64 个 `0` 后仍按原 body 签名，或改 body 不改 hash）；Origin 白名单；`POST /api/chat`。 | 1. **不**调用 `next()`；<br>2. HTTP **401**，JSON `{ code: 401, message: 'Body hash mismatch' }`；<br>3. 审计 `reason === 'body_hash_mismatch'`；<br>4. 证明有会话时进入完整验签链（token/ts/nonce 通过后仍校验 body），而非旧逻辑因 `req.user` 整段跳过。 |
 | UT-GUARD-SIG-08 | 开关 true 时验签拒答发生在限流之前 | 前置：`AI_REQUIRE_SIGNED_HEADERS=true`；将 `AI_RATE_LIMIT_CLIENT_PER_MINUTE`（及必要时 IP 分钟限额）设为 `1`；`req.user = { clientId: 'web' }`；连续两次对 `POST /api/chat` 发**无 HMAC 头**请求（白名单 Origin）。 | 1. 两次均 HTTP **401** + `reason === 'missing_headers'`；<br>2. **不得**因限额耗尽返回 **429**（`rate_client_minute` / `rate_ip_minute` 等）；<br>3. 两次均不调用 `next()`；证明时序为「先验签、后限流」，缺签不会误记入业务准入配额窗口。 |
 
+### 2.20 有 Redis 时限流走 Redis INCR+TTL（B51 / P1-7）(`backend/src/tests/ai-guard-rate-redis.test.js`)
+
+对应 **B51 / P1-7**：分钟/小时限流目前只用进程内 Map，多实例无法共享窗口。完成标准：**做**——注入 Redis 客户端时，client 分钟、client 小时、ip 分钟三窗口用 `INCR` + TTL（首次 `INCR` 后 `PEXPIRE`）；无 Redis 时保持原 Map。单测注入 mock Redis。**不做**：真集群压测、改默认限流数字（`AI_RATE_LIMIT_*` 代码默认仍为 10/100/30）。**residual**：无 Redis 时仍单进程有效。并发计数属 B52，本项不得改 `clientConcurrency`。`it()` 标题须包含下表 ID。
+
+| ID | 用例标题 | 场景描述 | 预期结果 |
+| :--- | :--- | :--- | :--- |
+| UT-RATE-REDIS-01 | 注入 mock Redis 后 client 分钟限流走 INCR | 前置：`AI_REQUIRE_SIGNED_HEADERS=false`；`AI_RATE_LIMIT_CLIENT_PER_MINUTE=2`，小时与 IP 限额足够大；`createAiGuard({ redis: mock })`；连续 3 次 `POST /api/chat`。 | 1. 前两次 `next()`；第三次 HTTP 429 且审计 `reason === 'rate_client_minute'`；<br>2. mock 的 `incr` 被调用，key 含子串 `rl:cmin:`；首次该 key 的 `incr` 返回 1 时调用 `pexpire`，TTL 为 60000ms；<br>3. 不把 `clientConcurrency` 当限流失败原因。 |
+| UT-RATE-REDIS-02 | client 小时窗口同样走 Redis | 前置：分钟限额很大、`AI_RATE_LIMIT_CLIENT_PER_HOUR=2`；注入 mock；连续 3 次 chat。 | 第三次 429 且 `reason === 'rate_client_hour'`；对应 key 含 `rl:chour:`；首次 INCR 后 `pexpire` 为 3600000ms。 |
+| UT-RATE-REDIS-03 | ip 分钟窗口走 Redis | 前置：client 限额很大、`AI_RATE_LIMIT_IP_PER_MINUTE=2`；请求带 `x-forwarded-for`；注入 mock。 | 第三次 429 且 `reason === 'rate_ip_minute'`；key 含 `rl:imin:`。 |
+| UT-RATE-REDIS-04 | 无 Redis 时仍用进程内 Map | 前置：不注入 redis、不设 `REDIS_URL`；`AI_RATE_LIMIT_CLIENT_PER_MINUTE=2`；连续 3 次 chat。 | 第三次 429 `rate_client_minute`；不实例化真实 ioredis（无网络）；Map 路径仍生效。 |
+| UT-RATE-REDIS-05 | 不改代码默认限流数字 | 前置：删除三个 `AI_RATE_LIMIT_*` 环境变量后 `createAiGuard()`。 | `config.minuteLimitPerClient === 10`、`hourLimitPerClient === 100`、`minuteLimitPerIp === 30`。 |
+
 ---
 
 ## 3. 安全防护与集成测试用例 (Security & Integration)
