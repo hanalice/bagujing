@@ -67,7 +67,7 @@
 | ID | 用例标题 | 场景描述 | 预期结果 |
 | :--- | :--- | :--- | :--- |
 | UT-STREAM-01 | 上游挂起触发空闲超时熔断 | 模拟大模型吐出首个 Chunk 后挂起超过 `sseIdleTimeoutMs`。 | 1. 立即中断流并结束响应 (`res.end`)；<br>2. 记录 `finalize({ status: 'error', reason: 'aborted_or_timeout' })`；<br>3. 向前端发送 `type: 'error'` SSE 事件；<br>4. 释放底层 Reader Lock。 |
-| UT-STREAM-02 | 请求结束/中断并发计数回收 | 请求结束或客户端主动断开连接。 | 触发 `releaseOnce`，`clientConcurrency` 并发占用计数递减归零且具备幂等性。 |
+| UT-STREAM-02 | 请求结束/中断并发计数回收（无 Redis / Map 路径） | 前置：不注入 `redis`、不设 `REDIS_URL`；`AI_MAX_CONCURRENCY_PER_CLIENT=2`；同一 `clientId` 经 Guard 准入后占用 Map 槽位；随后触发 `res` 的 `close` 或 `finish`（可再补一次重复事件）。有 Redis 时的 INCR/DECR 契约见 §2.21（B52）。 | 1. 触发 `releaseOnce`，进程内 `clientConcurrency` 对该 `clientId` 递减归零（`get` 为 0 或不存在）；<br>2. 同一请求上再次 `close`/`finish` 仍幂等，计数不为负、不二次递减；<br>3. 释放后同 client 可再次准入至上限内（不误报 `concurrency_limit`）。 |
 
 ### 2.6 解析生成调用与审计记账契约 (`backend/src/tests/llm.test.js`)
 
@@ -264,6 +264,28 @@
 | UT-RATE-REDIS-03 | ip 分钟窗口走 Redis | 前置：client 限额很大、`AI_RATE_LIMIT_IP_PER_MINUTE=2`；请求带 `x-forwarded-for`；注入 mock。 | 第三次 429 且 `reason === 'rate_ip_minute'`；key 含 `rl:imin:`。 |
 | UT-RATE-REDIS-04 | 无 Redis 时仍用进程内 Map | 前置：不注入 redis、不设 `REDIS_URL`；`AI_RATE_LIMIT_CLIENT_PER_MINUTE=2`；连续 3 次 chat。 | 第三次 429 `rate_client_minute`；不实例化真实 ioredis（无网络）；Map 路径仍生效。 |
 | UT-RATE-REDIS-05 | 不改代码默认限流数字 | 前置：删除三个 `AI_RATE_LIMIT_*` 环境变量后 `createAiGuard()`。 | `config.minuteLimitPerClient === 10`、`hourLimitPerClient === 100`、`minuteLimitPerIp === 30`。 |
+
+### 2.21 有 Redis 时 client 并发计数走 Redis（B52 / P1-7）(`backend/src/tests/ai-guard-concurrency-redis.test.js`)
+
+对应 **B52 / P1-7**：`clientConcurrency` 目前为进程内 Map，PM2 cluster 下每 worker 一份，并发上限被放大 N 倍。完成标准：**做**——存在 Redis 客户端（`createAiGuard({ redis })` 注入或由 `REDIS_URL` 得到）时，按 `clientId` 的在途并发计数走 Redis；无 Redis 时保持进程内 Map。单测注入 mock，禁止连真实 Redis / 真集群压测。**不做**：真集群压测。**residual**：同 B51——无 Redis 时仍「单进程有效」。限流三窗口属 B51（`rl:*`），本项只改并发槽位，不得把 `concurrency_limit` 与 `rate_*` 混用。
+
+**协议**（实现须满足，mock 可断言）：
+
+1. **准入**：对 key 含子串 `cc:` 且含该 `clientId` 的键执行 `INCR`；若返回值 `> AI_MAX_CONCURRENCY_PER_CLIENT`，则立即 `DECR` 回滚并拒答，**不**调用 `next()`；
+2. **拒答**：HTTP **429**，JSON/`reject` 语义为 `message: 'Too many concurrent requests'`，审计 `reason === 'concurrency_limit'`（不得写成 `rate_client_minute` 等）；
+3. **释放**：业务 `res` 的 `close` 或 `finish` 经 `releaseOnce` 对该 key `DECR` 恰好一次；重复 `close`/`finish` 幂等，不得把计数减成负值（`DECR` 至多一次 / 或 DECR 后钳制 ≥0）；
+4. **默认上限**：未设 `AI_MAX_CONCURRENCY_PER_CLIENT` 时仍为 **2**（与现码 `parseIntSafe(..., 2)` 一致）。
+
+时序相对限流：并发检查发生在 client/ip 分钟·小时限流窗口**之后**、配额消耗前后均可，但超并发时不得误记为限流 reason。`it()` 标题须包含下表 ID。
+
+| ID | 用例标题 | 场景描述 | 预期结果 |
+| :--- | :--- | :--- | :--- |
+| UT-CONC-REDIS-01 | 注入 mock Redis 后准入走 INCR | 前置：`AI_REQUIRE_SIGNED_HEADERS=false`；`AI_MAX_CONCURRENCY_PER_CLIENT=2`；限流与配额限额足够大；`createAiGuard({ redis: mock })`；`req.user.clientId` 固定（如 `web`）；连续 3 次 `POST /api/chat`，前两次**不**触发 `close`/`finish`（保持在途）。 | 1. 前两次 middleware 调用 `next()`；第三次 **不** `next()`，HTTP **429**，审计 `reason === 'concurrency_limit'`，`message` 含 `Too many concurrent requests`；<br>2. mock `incr` 被调用，key 含子串 `cc:` 且含该 `clientId`；<br>3. 第三次路径在超限时对同一 key 有对应 `decr` 回滚（计数不永久占满）；<br>4. 审计/拒答 reason **不是** `rate_client_minute` / `rate_client_hour` / `rate_ip_minute`。 |
+| UT-CONC-REDIS-02 | close/finish 触发 Redis DECR 释放槽位 | 前置：同 UT-CONC-REDIS-01 注入 mock、上限=2；先发 2 次 chat 占满并发且均 `next()`；对其中一次响应触发 `res.emit('finish')`（或 `close`）；再发第 3 次 chat。 | 1. 释放事件后 mock 对该 `cc:` key 的 `decr` 至少成功一次；<br>2. 第 3 次请求再次 `next()`（槽位已让出）；<br>3. 不出现误杀的 `concurrency_limit`（除非另有 2 个在途未释放）。 |
+| UT-CONC-REDIS-03 | releaseOnce 在 Redis 路径仍幂等 | 前置：注入 mock；单次 chat 准入成功（`next()` 一次）；同一 `res` 上先 `emit('close')` 再 `emit('finish')`（或连续两次 `finish`）。 | 1. 对该 `cc:` key 的有效释放 `decr` **恰好 1 次**（第二次事件不再减）；<br>2. mock 存储中该 key 计数回到准入前基线（通常 0），不为负；<br>3. 随后同 client 可重新 `INCR` 准入。 |
+| UT-CONC-REDIS-04 | 无 Redis 时仍用进程内 Map | 前置：不注入 `redis`、删除/不设 `REDIS_URL`；`AI_MAX_CONCURRENCY_PER_CLIENT=2`；连续 3 次 chat，前两次保持在途（不 finish）。 | 1. 第三次 HTTP **429** 且 `reason === 'concurrency_limit'`；<br>2. 不实例化真实 ioredis（无网络连接）；进程内 Map 路径生效；<br>3. 对前两次之一触发 `finish`/`close` 后，新请求可再 `next()`（对齐 UT-STREAM-02）。 |
+| UT-CONC-REDIS-05 | 不改代码默认并发上限 | 前置：删除 `AI_MAX_CONCURRENCY_PER_CLIENT` 后 `createAiGuard()`（可无 redis）。 | `config.maxConcurrencyPerClient === 2`。 |
+| UT-CONC-REDIS-06 | 并发 Redis 键与 B51 限流键隔离 | 前置：注入同一 mock；`AI_MAX_CONCURRENCY_PER_CLIENT=1`；`AI_RATE_LIMIT_*` 均设很大；单次 chat 准入后保持在途，再发第二次触发并发拒答。 | 1. 第二次仅 `concurrency_limit`；<br>2. 与并发相关的 `incr`/`decr` key 均含 `cc:`，**不得**把并发计数写进 `rl:cmin:` / `rl:chour:` / `rl:imin:`；<br>3. 本场景不要求、也不断言限流窗口耗尽（B51 专测）。 |
 
 ---
 
