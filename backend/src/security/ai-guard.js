@@ -487,6 +487,15 @@ export function createAiGuard({ dbPool = null, redis = null, jwtSecret = null } 
     clientConcurrency.set(clientId, value - 1);
   };
 
+  // Redis 并发槽位：DECR 后若为负则钳制为 0，避免异常路径把计数打穿。
+  const releaseRedisConcurrency = async (key) => {
+    if (!currentRedis || !key) return;
+    const next = Number(await currentRedis.decr(key));
+    if (Number.isFinite(next) && next < 0 && typeof currentRedis.set === 'function') {
+      await currentRedis.set(key, '0');
+    }
+  };
+
   const createRateLimitKey = ({ routeKey, clientId, ip }) => `${routeKey}:${clientId}:${ip}`;
 
   const middleware = async (req, res, next) => {
@@ -624,9 +633,21 @@ export function createAiGuard({ dbPool = null, redis = null, jwtSecret = null } 
       return reject({ req, res, status: 429, message: 'Too many requests (ip per minute)', reason: 'rate_ip_minute', clientId, routeKey });
     }
 
-    const inFlight = clientConcurrency.get(clientId) || 0;
-    if (inFlight >= config.maxConcurrencyPerClient) {
-      return reject({ req, res, status: 429, message: 'Too many concurrent requests', reason: 'concurrency_limit', clientId, routeKey });
+    // 有 Redis 时并发槽位走 INCR/DECR（key: cc:<clientId>）；否则保持进程内 Map。
+    const concurrencyRedisKey = `cc:${clientId}`;
+    let heldRedisConcurrency = false;
+    if (currentRedis) {
+      const count = Number(await currentRedis.incr(concurrencyRedisKey));
+      if (count > config.maxConcurrencyPerClient) {
+        await releaseRedisConcurrency(concurrencyRedisKey);
+        return reject({ req, res, status: 429, message: 'Too many concurrent requests', reason: 'concurrency_limit', clientId, routeKey });
+      }
+      heldRedisConcurrency = true;
+    } else {
+      const inFlight = clientConcurrency.get(clientId) || 0;
+      if (inFlight >= config.maxConcurrencyPerClient) {
+        return reject({ req, res, status: 429, message: 'Too many concurrent requests', reason: 'concurrency_limit', clientId, routeKey });
+      }
     }
 
     const promptTokens = estimatePromptTokens(req.body);
@@ -637,10 +658,16 @@ export function createAiGuard({ dbPool = null, redis = null, jwtSecret = null } 
     const projectedTokens = promptTokens + conservativeCompletion;
     const quotaResult = await checkAndConsumeQuota({ clientId, projectedTokens, now });
     if (!quotaResult.ok) {
+      if (heldRedisConcurrency) {
+        await releaseRedisConcurrency(concurrencyRedisKey);
+      }
       return reject({ req, res, status: 429, message: 'Quota exceeded', reason: quotaResult.reason, clientId, routeKey });
     }
 
-    clientConcurrency.set(clientId, inFlight + 1);
+    if (!heldRedisConcurrency) {
+      const inFlight = clientConcurrency.get(clientId) || 0;
+      clientConcurrency.set(clientId, inFlight + 1);
+    }
 
     const requestId = res.getHeader('X-Request-Id') || 'unknown';
     const startedAt = Date.now();
@@ -649,7 +676,11 @@ export function createAiGuard({ dbPool = null, redis = null, jwtSecret = null } 
     const releaseOnce = () => {
       if (finished) return;
       finished = true;
-      releaseConcurrency(clientId);
+      if (heldRedisConcurrency) {
+        releaseRedisConcurrency(concurrencyRedisKey).catch(() => {});
+      } else {
+        releaseConcurrency(clientId);
+      }
     };
 
     res.once('close', releaseOnce);
