@@ -132,7 +132,7 @@ describe('C1 / P1-3: Prompt 预算构建与裁剪', () => {
     assert.equal(hasUnpairedSurrogate(allContent), false);
   });
 
-  it('UT-PROMPT-BUDGET-04: 总预算边界只丢低优先级整条', () => {
+  it('UT-PROMPT-BUDGET-04: 总预算边界只从队尾丢整条', () => {
     const emptyMessages = buildPromptMessages({
       ...basePrompt,
       snippets: [],
@@ -151,6 +151,7 @@ describe('C1 / P1-3: Prompt 预算构建与裁剪', () => {
       assert.equal(hasUnpairedSurrogate(`${messages.system}${messages.context}${messages.user}`), false);
     }
 
+    // 调用方已排好序：队首高分 problem，队尾低分更长 category。
     const highPriority = {
       type: 'problem',
       id: 1,
@@ -168,7 +169,7 @@ describe('C1 / P1-3: Prompt 预算构建与裁剪', () => {
     const wideBudget = { maxDescChars: promptBudget.maxDescChars, maxChars: 100000 };
     const bothLength = messageLength(buildPromptMessages({
       ...basePrompt,
-      snippets: [lowPriority, highPriority],
+      snippets: [highPriority, lowPriority],
       budget: wideBudget,
     }));
     const overflowBudget = {
@@ -177,7 +178,7 @@ describe('C1 / P1-3: Prompt 预算构建与裁剪', () => {
     };
     const overBudgetMessages = buildPromptMessages({
       ...basePrompt,
-      snippets: [lowPriority, highPriority],
+      snippets: [highPriority, lowPriority],
       budget: overflowBudget,
     });
     assert.ok(overflowBudget.maxChars >= fixedLength);
@@ -198,6 +199,35 @@ describe('C1 / P1-3: Prompt 预算构建与裁剪', () => {
     assert.match(messages.user, /用户问题：如何设计可靠的缓存？/);
     assert.equal(messages.system.includes('…') && messages.system.length <= 1, false);
     assert.ok(messageLength(messages) > 1);
+  });
+
+  it('UT-PROMPT-BUDGET-06: C21：已排序列表不被 type 重排覆盖', () => {
+    const messages = buildPromptMessages({
+      ...basePrompt,
+      snippets: [
+        {
+          type: 'category',
+          id: 'cat-hi',
+          name: '高分分类',
+          groupName: '分组',
+          groupDesc: '短描述',
+          count: 3,
+        },
+        {
+          type: 'problem',
+          id: 99,
+          brief_name: '低分题',
+          keyPoints: ['要点'],
+        },
+      ],
+    });
+
+    const categoryPos = messages.context.indexOf('高分分类');
+    const problemPos = messages.context.indexOf('低分题');
+    assert.ok(categoryPos >= 0);
+    assert.ok(problemPos >= 0);
+    assert.ok(categoryPos < problemPos);
+    assert.equal(messages.budgetError, undefined);
   });
 });
 

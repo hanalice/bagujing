@@ -9,6 +9,7 @@ import fs from 'node:fs/promises';
 import Redis from 'ioredis';
 import { SystemMessage, HumanMessage } from "@langchain/core/messages";
 import { buildPromptMessages, promptBudget, PROMPT_BUDGET_ERROR_RESERVED } from './prompt-budget.js';
+import { scoreRagSnippets } from './rag-rank.js';
 import { createLlmModel } from './llm.js';
 import { sanitizeHtml } from './security/html-sanitizer.js';
 
@@ -543,10 +544,15 @@ const normalizeQueryArray = (query, keys) => {
   }
   return [];
 };
+// C21：LIKE 召回候选上限（打分后再截断到 maxSnippets），避免 SQL LIMIT 盲截断高分条。
+const RAG_RECALL_LIMIT = 32;
+
+// 构建 chat/generate 的轻量 RAG snippets：主键注入 + LIKE 召回 → 规则打分 → topK；指定 problemId 置顶。
 const buildRagContext = async ({ message, categoryId, problemId }) => {
   const maxSnippets = 6;
   const snippets = [];
   const pool = await getSqlitePool();
+  const q = String(message || '').trim();
 
   if (pool) {
     if (categoryId) {
@@ -567,7 +573,7 @@ const buildRagContext = async ({ message, categoryId, problemId }) => {
 
     if (problemId) {
       const problem = await pool.withConnection(db =>
-        db.get(`SELECT id, brief_name, key_points_json FROM problems WHERE id = ?`, [problemId])
+        db.get(`SELECT id, brief_name, key_points_json, category_id FROM problems WHERE id = ?`, [problemId])
       );
       if (problem) {
         snippets.push({
@@ -575,26 +581,26 @@ const buildRagContext = async ({ message, categoryId, problemId }) => {
           id: problem.id,
           brief_name: problem.brief_name,
           keyPoints: parseJsonSafe(problem.key_points_json, []),
+          category: problem.category_id,
         });
       }
     }
 
-    const q = String(message || '').trim();
-    if (!problemId && q.length >= 2) {
+    // 无/有 problemId 均可在 query≥2 时 LIKE 召回其它候选；短 query 不走关键字召回。
+    if (q.length >= 2) {
       const qLower = q.toLowerCase();
       const keywordLike = `%${qLower}%`;
 
       const matchedCategories = await pool.withConnection(db =>
         db.all(`
-          SELECT id, name, group_name, group_desc, count 
-          FROM categories 
+          SELECT id, name, group_name, group_desc, count
+          FROM categories
           WHERE lower(name) LIKE ? OR lower(group_name) LIKE ? OR lower(group_desc) LIKE ?
           LIMIT ?
-        `, [keywordLike, keywordLike, keywordLike, maxSnippets])
+        `, [keywordLike, keywordLike, keywordLike, RAG_RECALL_LIMIT])
       );
 
       for (const c of matchedCategories) {
-        if (snippets.length >= maxSnippets) break;
         if (!snippets.some(s => s.type === 'category' && s.id === c.id)) {
           snippets.push({
             type: 'category',
@@ -607,18 +613,17 @@ const buildRagContext = async ({ message, categoryId, problemId }) => {
         }
       }
 
-      let problemQuery = `SELECT id, brief_name, key_points_json, category_id FROM problems WHERE lower(brief_name) LIKE ?`;
-      const problemParams = [keywordLike];
-      if (categoryId) {
-        problemQuery += ` AND category_id = ?`;
-        problemParams.push(categoryId);
-      }
-      problemQuery += ` LIMIT ?`;
-      problemParams.push(maxSnippets);
+      // categoryId 仅用于打分 boost，不在 SQL 中过滤，以便异分类要点命中可参与排序。
+      const matchedProblems = await pool.withConnection(db =>
+        db.all(`
+          SELECT id, brief_name, key_points_json, category_id
+          FROM problems
+          WHERE lower(brief_name) LIKE ? OR lower(IFNULL(key_points_json, '')) LIKE ?
+          LIMIT ?
+        `, [keywordLike, keywordLike, RAG_RECALL_LIMIT])
+      );
 
-      const matchedProblems = await pool.withConnection(db => db.all(problemQuery, problemParams));
       for (const p of matchedProblems) {
-        if (snippets.length >= maxSnippets) break;
         if (!snippets.some(s => s.type === 'problem' && s.id === p.id)) {
           snippets.push({
             type: 'problem',
@@ -631,7 +636,13 @@ const buildRagContext = async ({ message, categoryId, problemId }) => {
       }
     }
 
-    if (snippets.length > 0) return snippets.slice(0, maxSnippets);
+    const ranked = scoreRagSnippets(snippets, { query: q, categoryId, problemId });
+    // SSE/prompt 不暴露内部 score 字段。
+    return ranked.slice(0, maxSnippets).map((item) => {
+      const copy = { ...item };
+      delete copy.score;
+      return copy;
+    });
   }
 
   return snippets.slice(0, maxSnippets);
@@ -939,7 +950,7 @@ app.use((error, req, res, next) => {
   });
 });
 
-export { app, buildPromptMessages, promptBudget };
+export { app, buildPromptMessages, promptBudget, buildRagContext, scoreRagSnippets };
 
 // 启动服务（单测通过 BAGUJING_SKIP_LISTEN=1 跳过 listen，便于离线挂载 /api/chat）
 if (process.env.BAGUJING_SKIP_LISTEN !== '1') {

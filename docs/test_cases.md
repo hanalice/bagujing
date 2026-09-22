@@ -128,9 +128,9 @@
 
 ### 2.12 C1 Prompt 预算构建与裁剪 (`backend/src/tests/prompt-budget.test.js` -> `prompt-budget.js`，由 `server-express.js` 调用)
 
-对应 **C1 / P1-3**：`/api/chat` 与 `/api/problems/:id/answer/generate` 的模型请求不得把 RAG snippet 以 pretty-print JSON 原样塞入 prompt。被测 Prompt builder 必须暴露或注入同一份预算配置（至少含 `maxDescChars`、`maxChars`），测试不得另写一套阈值；字符数按最终发往模型的各消息 `content` 的 JavaScript `String.length` 累加。描述/要点超限统一保留前缀并以一个 `…` 结尾。
+对应 **C1 / P1-3**（与 **C21 / P1-2** 的边界）：`/api/chat` 与 `/api/problems/:id/answer/generate` 的模型请求不得把 RAG snippet 以 pretty-print JSON 原样塞入 prompt。被测 Prompt builder 必须暴露或注入同一份预算配置（至少含 `maxDescChars`、`maxChars`），测试不得另写一套阈值；字符数按最终发往模型的各消息 `content` 的 JavaScript `String.length` 累加。描述/要点超限统一保留前缀并以一个 `…` 结尾。
 
-**合法预算**（默认 `maxChars`，或注入值仍 `>=` system + 题面 + 固定标签预留长度）：全部 message 字符和 `<= maxChars`（`system.length + context.length + user.length`）；system 与题面完整；context 按稳定优先级（当前：`problem` > `category` > `other`，同级保持原顺序）输出短 bullet；超总预算时从队尾丢掉整条低优先级 context，禁止截断高优先级当前条，禁止截断 system/题面。检索打分 / rerank 不在 C1 范围。
+**合法预算**（默认 `maxChars`，或注入值仍 `>=` system + 题面 + 固定标签预留长度）：全部 message 字符和 `<= maxChars`（`system.length + context.length + user.length`）；system 与题面完整；context 输出短 bullet。**检索打分 / rerank 不在 C1 范围**（见 §2.22 **C21**）；进入 builder 的 `snippets` 视为**已排序列表**，builder **须保持相对顺序**装入 bullet，超总预算时**只从队尾**丢掉整条，禁止截断队首/当前高分条，禁止按 `type`（`problem`/`category`/`other`）重排覆盖分数序，禁止截断 system/题面。
 
 **非法预算**（`maxChars` 小于预留长度）：builder 必须设置 `budgetError === reserved_exceeds_max_chars`，**不得**截断 system/题面去凑上限；路由不得再调用上游模型。该场景与合法硬上限分列用例，禁止用 `maxChars=10` 去否证 UT-03。`it()` 标题须包含下表 ID。
 
@@ -138,9 +138,10 @@
 | :--- | :--- | :--- | :--- |
 | UT-PROMPT-BUDGET-01 | snippet 使用紧凑 bullet 而非 pretty JSON | 前置：构造 1 个 category snippet（含短 `name`、`groupName`、`groupDesc`、`count`）和 1 个 problem snippet（含 `brief_name`、2 个 `keyPoints`）；调用 Prompt builder，捕获 `system`/`context`/`user` 三槽。 | 1. 用户题面在 `user` 槽；RAG bullet 只在 `context` 槽；<br>2. 每个 snippet 占一条 `- ` 开头的紧凑 bullet，分类/题目名称、短描述/要点和必要标识可读；<br>3. `context` 不出现 `"groupDesc"`、`"keyPoints"` 等 JSON 字段名，不出现 `{\n` / `[\n` 形式的 pretty-print JSON，且不存在重复序列化同一 snippet。 |
 | UT-PROMPT-BUDGET-02 | 超长 `group_desc` 按字段预算截断 | 前置：category 的 `groupDesc` 为 `前缀` + 超过 `maxDescChars` 的重复字符 + `尾部_SENTINEL`，其它 snippet 字段为短值；捕获分类 bullet。 | 1. 描述值等于 `groupDesc.slice(0, maxDescChars - 1) + '…'`（输入超过上限时），长度不超过 `maxDescChars`；<br>2. `尾部_SENTINEL` 不进入 prompt，分类名、分组名、题数等非描述字段仍保留；<br>3. 输入恰好不超过 `maxDescChars` 时不添加 `…`、不丢失最后一个字符。 |
-| UT-PROMPT-BUDGET-03 | 合法预算下所有模型消息受总字符硬上限保护 | 前置：使用默认/`>=` 预留长度的 `maxChars`；注入 6 个包含超长 `groupDesc`、超长 `keyPoints` 和换行/引号/emoji 的 snippets，用户题面为正常短文本；捕获 builder 返回的三槽。 | 1. `system.length + context.length + user.length <= promptBudget.maxChars`，不得以片段数量上限代替字符上限；<br>2. system 指令和用户题面完整保留，至少第一条 `problem` bullet（题目 id/名称）保留，过长要点按 `maxDescChars` 截断；<br>3. 被淘汰的 context 不产生半个 JSON 对象、孤立转义符或超出 `maxChars` 的尾部；builder 不抛异常、无 `budgetError`。 |
-| UT-PROMPT-BUDGET-04 | 总预算边界只丢低优先级整条 | 前置：使用足够大的合法 `maxChars`。A) 单条高优先级 context 分别使总长为 `maxChars - 1`、`maxChars`；B) 同时注入一条高优先级 `problem` 与一条更长的低优先级 `category`，使两者合计比 `maxChars` 超出至少 1 字符。内容混合中文、emoji、换行和 `"}]`。 | 1. A 两组长度分别准确为 `maxChars - 1`、`maxChars`，高优先级名称完整保留；<br>2. B 组总长 `<= maxChars`，高优先级题名仍在 `context`，低优先级分类名不在 `context` 中（整条丢弃，禁止截断高优先级当前条）；<br>3. 各组均不产生未配对代理项，可直接作为 HumanMessage。 |
+| UT-PROMPT-BUDGET-03 | 合法预算下所有模型消息受总字符硬上限保护 | 前置：使用默认/`>=` 预留长度的 `maxChars`；注入 6 个包含超长 `groupDesc`、超长 `keyPoints` 和换行/引号/emoji 的 snippets，用户题面为正常短文本；捕获 builder 返回的三槽。 | 1. `system.length + context.length + user.length <= promptBudget.maxChars`，不得以片段数量上限代替字符上限；<br>2. system 指令和用户题面完整保留，至少**输入列表队首**那条 bullet（题目 id/名称或分类名）保留，过长要点按 `maxDescChars` 截断；<br>3. 被淘汰的 context 不产生半个 JSON 对象、孤立转义符或超出 `maxChars` 的尾部；builder 不抛异常、无 `budgetError`。 |
+| UT-PROMPT-BUDGET-04 | 总预算边界只从队尾丢整条 | 前置：使用足够大的合法 `maxChars`。A) 单条已排序 context 分别使总长为 `maxChars - 1`、`maxChars`；B) 按**调用方已排好的顺序**注入两条：队首为短 `problem`（高分位），队尾为更长的 `category`（低分位），两者合计比 `maxChars` 超出至少 1 字符。内容混合中文、emoji、换行和 `"}]`。 | 1. A 两组长度分别准确为 `maxChars - 1`、`maxChars`，队首名称完整保留；<br>2. B 组总长 `<= maxChars`，队首题名仍在 `context`，队尾分类名**不在** `context`（整条从队尾丢弃，禁止截断队首当前条，禁止为迁就 `type` 把 category 提到 problem 前）；<br>3. 各组均不产生未配对代理项，可直接作为 HumanMessage。 |
 | UT-PROMPT-BUDGET-05 | 非法极小 maxChars 不得截断题面 | 前置：注入 `maxChars` 小于 system+题面+标签预留长度（如 `1`），snippets 可有可无。 | 1. 返回的 system 含完整系统指令，`user` 含完整用户题面；<br>2. `budgetError === reserved_exceeds_max_chars`（或导出常量 `PROMPT_BUDGET_ERROR_RESERVED`）；<br>3. 总长可以大于注入的 `maxChars`；不得把 system/题面截成 `…` 去满足硬上限。 |
+| UT-PROMPT-BUDGET-06 | C21：已排序列表不被 type 重排覆盖 | 前置：合法 `maxChars` 足够装下全部 bullet；故意传入与「`problem` 优先于 `category`」相反的已排序列表——队首为高分 `category`（`id=cat-hi`，短名 `高分分类`），其后为低分 `problem`（`id=99`，`brief_name=低分题`）；调用 `buildPromptMessages`（文件：`backend/src/tests/prompt-budget.test.js` → `prompt-budget.js`）。 | 1. `context` 中 `高分分类` 的 bullet **出现在** `低分题` bullet **之前**（相对顺序与输入一致）；<br>2. **不得**因 `getSnippetType`/`prioritizeSnippets` 把 `problem` 提到 `category` 前；<br>3. 无 `budgetError`；证明 C1 只消费已排序列表，打分序由 C21 负责。 |
 
 ### 2.13 C6 / C61 模型分层与环境配置 (`backend/src/tests/model-layer.test.js` -> `llm.js` / `server-express.js`)
 
@@ -287,6 +288,33 @@
 | UT-CONC-REDIS-05 | 不改代码默认并发上限 | 前置：删除 `AI_MAX_CONCURRENCY_PER_CLIENT` 后 `createAiGuard()`（可无 redis）。 | `config.maxConcurrencyPerClient === 2`。 |
 | UT-CONC-REDIS-06 | 并发 Redis 键与 B51 限流键隔离 | 前置：注入同一 mock；`AI_MAX_CONCURRENCY_PER_CLIENT=1`；`AI_RATE_LIMIT_*` 均设很大；单次 chat 准入后保持在途，再发第二次触发并发拒答。 | 1. 第二次仅 `concurrency_limit`；<br>2. 与并发相关的 `incr`/`decr` key 均含 `cc:`，**不得**把并发计数写进 `rl:cmin:` / `rl:chour:` / `rl:imin:`；<br>3. 本场景不要求、也不断言限流窗口耗尽（B51 专测）。 |
 
+### 2.22 C21 LIKE 召回后规则打分与指定 id 置顶 (`backend/src/tests/rag-rank.test.js` -> `buildRagContext` / 规则打分，由 `server-express.js` 调用)
+
+对应 **C21 / P1-2**（`docs/backlog.md` §C21）。流水线契约：
+
+```
+LIKE 召回（无 problemId 且 query ≥ 2 字）→ 规则打分排序 → topK（现 maxSnippets=6）→ buildPromptMessages（C1，只从队尾丢）
+```
+
+**做**：chat 无 `problemId` 时，对 `categories`/`problems` 的既有 `lower(...) LIKE %q%` 召回结果做**确定性规则打分**后排序；分值优先级为 **标题命中（`brief_name` / 分类 `name`）> 要点命中（`keyPoints` / `key_points_json`）> 同分类 boost（与请求 `context.categoryId` 相同）**；请求携带 `context.problemId` 时，该主键对应 problem snippet **固定置顶**（下标 `0`），其余候选仍按规则分降序。C1 预算器只消费已排序列表并从队尾丢条（§2.12 UT-PROMPT-BUDGET-04/06）。
+
+**不做**（本项用例若反向要求则 FAIL）：引入 FTS5 虚表 / `MATCH` 查询；向量检索；调用主聊天模型（`model.invoke` / `model.stream` / 等价上游）做打分或摘要。
+
+**residual**：FTS5 召回与失败回退 LIKE 见 **C22**；混合向量 rerank 见 **D3**。本表不得把 C22/D3 能力写成 C21 PASS 条件。
+
+测法：优先导出/抽取可测的 `scoreRagSnippets`（或等价纯函数）+ `buildRagContext`；用隔离 SQLite fixture 写入可控 `brief_name` / `key_points_json` / `category_id`；禁止依赖真实上游 LLM。`it()` 标题须包含下表 ID。
+
+| ID | 用例标题 | 场景描述 | 预期结果 |
+| :--- | :--- | :--- | :--- |
+| UT-RAG-RANK-01 | 标题命中分高于仅要点命中 | 前置：无 `problemId`；query=`缓存`；fixture 两题：A `brief_name` 含「缓存」、`keyPoints` 不含；B `brief_name` 不含、`keyPoints` 含「缓存」；二者 `category_id` 相同且无额外 boost 差异；调用规则打分/排序（或 `buildRagContext({ message: '缓存' })`）。 | 1. 返回列表中 A 的下标 **严格小于** B；<br>2. 若暴露 `score` 字段，则 `score(A) > score(B)`，且标题档权重大于要点档；<br>3. 不调用任何 LLM。 |
+| UT-RAG-RANK-02 | 要点命中分高于仅同分类 boost | 前置：无 `problemId`；`categoryId=10`；query=`一致性`；fixture：题 C `brief_name`/`keyPoints` 均不含 query，但 `category_id=10`；题 D `category_id≠10`，`keyPoints` 含「一致性」、`brief_name` 不含；调用打分排序。 | 1. D 排在 C 之前（要点命中 > 同分类 boost）；<br>2. 二者皆可出现在 topK 内时相对序固定可复现；<br>3. 同分 tie-break 须稳定（如按原召回序或 id 升序），连续两次调用顺序一致。 |
+| UT-RAG-RANK-03 | 同分类 boost 在同等命中下抬升 | 前置：无 `problemId`；`categoryId=7`；query=`Redis`；两题 `brief_name` 均含「Redis」、要点命中情况相同；E `category_id=7`，F `category_id=8`；调用打分排序。 | 1. E 排在 F 之前；<br>2. 证明 boost 仅在标题/要点档相当时生效，不得把无标题命中的同分类题抬过标题命中的异分类题（与 UT-RAG-RANK-01 联立时仍服从标题优先）。 |
+| UT-RAG-RANK-04 | 指定 problemId 置顶 | 前置：SQLite 存在题 `id=42`（`brief_name` 可不含 query）与若干 LIKE 可命中的其它题；调用 `buildRagContext({ message: '分布式', categoryId, problemId: 42 })`（或 chat 等价入参）。 | 1. 返回数组 `snippets[0].type === 'problem'` 且 `snippets[0].id == 42`（或字符串 `'42'` 与数值 `42` 等价）；<br>2. 其余 snippet（若有）按规则分降序排在其后，且不含第二个 `id==42` 的重复项；<br>3. 置顶不依赖标题/要点是否命中 query。 |
+| UT-RAG-RANK-05 | 无 id 时仍走 LIKE 召回再打分截断 | 前置：无 `problemId`；`message` trim 后长度 `>= 2`；fixture 写入 >6 条均可被 `lower(brief_name) LIKE %q%` 命中的 problem（标题命中强度可不同）；调用 `buildRagContext`。 | 1. 召回 SQL 仍为 `LIKE`（或测试 spy 到的语句含 `LIKE`、**不含** FTS5 `MATCH` / 虚表名）；<br>2. 返回长度 `<= 6`（现 `maxSnippets`）；<br>3. 返回顺序为规则分降序（队首标题命中强于队尾），而非未打分的插入序盲截断。 |
+| UT-RAG-RANK-06 | query 过短或空不打分召回 | 前置：无 `problemId`；分别覆盖 `message` 为 `''`、`'a'`（trim 后 `< 2`）；库内有可 LIKE 命中的题。 | 1. 不因短 query 执行 problems/categories 的关键字 `LIKE` 召回（可仍注入显式 `categoryId`/`problemId` 主键条）；<br>2. 返回中无「仅因短 query LIKE 出来」的候选；<br>3. 不抛异常。 |
+| UT-RAG-RANK-07 | 打分路径禁止调用主聊天模型 | 前置：stub/spy `getLlmModel`、`model.invoke`、`model.stream`（或路由注入的上游工厂）；仅调用 `buildRagContext` / 规则打分纯函数，不进入完整 `/api/chat` handler。 | 1. 上述上游方法调用次数均为 `0`；<br>2. 打分在进程内同步/微任务完成，不发起 HTTP 到 `OPENAI_BASE_URL`；<br>3. 证明「不做：用主聊天模型打分或摘要」。 |
+| UT-RAG-RANK-08 | 不做 FTS5 / 向量（C21 边界） | 前置：静态或运行时检查 C21 相关实现（`buildRagContext` 及新建打分模块源码字符串 / 执行的 SQL 列表）。 | 1. 源码与执行 SQL **均不出现** FTS5 虚表创建、`CREATE VIRTUAL TABLE`…`fts5`、或 `MATCH ?` 全文语法（属 **C22 residual**）；<br>2. **不出现**向量/embedding API 调用或本地向量索引依赖；<br>3. 本用例不得把「已实现 FTS」写成 C21 PASS。 |
+
 ---
 
 ## 3. 安全防护与集成测试用例 (Security & Integration)
@@ -386,6 +414,18 @@ Prompt 内容来自数据库，不能只依赖客户端 `AI_MAX_INPUT_CHARS` 防
 | ID | 用例标题 | 场景描述 | 预期结果 |
 | :--- | :--- | :--- | :--- |
 | SEC-PROMPT-SLOT-01 | 五条探针均不进入 system | 前置：分别覆盖忽略系统、索要 Key、改角色（user 槽）以及 `groupDesc` 污染（context 槽）；chat 与 generate 各至少一条路径。 | 所有捕获的第 1 条 system content 都不含四条探针字面量；user 探针只在第 3 条；context 探针只在第 2 条。不得用模型回复判据。 |
+
+### 3.11 C21 规则打分排序与 chat SSE / 预算集成 (`backend/src/tests/rag-rank-integration.test.js`)
+
+对应 **C21 / P1-2** 完成标准：chat 无 id 的 LIKE 召回经规则打分后，SSE `context.snippets` 与发往模型的 context bullet 顺序一致（受 C1 队尾裁剪）；指定 `problemId` 置顶。测试必须经 `app.handle` 或真实 `/api/chat` handler：鉴权 → Guard → `buildRagContext`（打分）→ `sendSSE(context)` → `buildPromptMessages` → stub 上游。模型 stub 只负责捕获 messages 并产出短 delta，**不得**参与打分。`it()` 标题须包含下表 ID。
+
+| ID | 用例标题 | 场景描述 | 预期结果 |
+| :--- | :--- | :--- | :--- |
+| IT-RAG-RANK-01 | chat 无 id：SSE snippets 按规则分降序 | 前置：隔离 SQLite 写入可区分的题 A（标题含关键字）、题 B（仅要点含关键字）；有效登录且 `chat_ai`；`POST /api/chat` JSON body `{ "message": "<同一关键字>" }`（**无** `context.problemId`）；合法预算；stub `model.stream` 产出一个 delta 后结束；解析首帧 SSE。 | 1. HTTP `200`，`Content-Type: text/event-stream; charset=utf-8`；事件序 `context` → `delta` → `done`；<br>2. `type:context` 帧内 `snippets` 为数组，题 A 的下标 **严格小于** 题 B（标题 > 要点）；<br>3. 上游第 2 条 `HumanMessage(context)` 中题 A 名称 bullet 出现在题 B 之前（预算未裁掉二者时）；`finalize` 一次且 `reason === 'stream_done'`；上游调用恰好 1 次（打分未额外调模型）。 |
+| IT-RAG-RANK-02 | chat 指定 problemId 置顶后仍保持 SSE 协议 | 前置：库内题 `42` 与其它 LIKE 可命中题；`POST /api/chat` body `{ "message": "请对比几种锁", "context": { "problemId": 42 } }`（可带 `categoryId`）；stub 上游。 | 1. 首帧 `type === 'context'` 且 `snippets[0].id == 42`、`snippets[0].type === 'problem'`；<br>2. 若还有其它 problem snippet，其 id ≠ 42 且排在其后；<br>3. HTTP 200 SSE 序仍为 `context` → `delta` → `done`；上游 messages 仍为 3 槽，context 槽队首 bullet 含 `#42` 或题 42 的 `brief_name`。 |
+| IT-RAG-RANK-03 | 收紧预算时只从已排序队尾丢条 | 前置：fixture 固定高分题 H 与低分题 L（规则序 H→L）；注入合法但较小的 `AI_PROMPT_MAX_CHARS` / `promptBudget.maxChars`，使 H+L 两条 bullet 合计超出 context 预算、但仅 H 可装入；`POST /api/chat` 无 `problemId`，message 能召回 H 与 L；stub 捕获上游 messages。 | 1. SSE `context.snippets` 顺序仍为 H 在 L 前（打分结果在裁剪前可见，或至少 builder 入参序为 H→L）；<br>2. 上游 `context` 槽文本含 H 的题名/id，**不含** L 的题名/id（从队尾丢整条）；<br>3. 不得出现「丢掉 H、留下 L」或按 `type` 重排后误删高分条；HTTP 200 且流正常结束。 |
+| IT-RAG-RANK-04 | generate 路径不因 C21 改为主聊天打分 | 前置：`POST /api/problems/42/answer/generate` body `{ "force": true }`；已登录 `study`；spy 上游 `invoke` 与任何 chat `stream`；题 42 无缓存答案。 | 1. 上游 `invoke` 恰好 1 次，**零次** chat `stream`；<br>2. HTTP `200`，JSON `code === 0`，`data.cached === false`；<br>3. RAG 仍可按主键注入本题/本分类，但不得为打分再发起模型调用（与 backlog「生成解析几乎不必 rerank；不用主聊天模型打分」一致）。 |
+| SEC-RAG-RANK-01 | 客户端不得注入分数或改写排序 | 前置：合法 `chat_ai`；`POST /api/chat` body 含 `message` 关键字，并故意附加 `snippets` / `scores` / `rank` / `context.snippets` 等伪造高分条目（指向库中不存在或低分 id）；stub 上游；对照同 message 无伪造字段的基线序。 | 1. 服务端 `context` SSE 的 `snippets` **不**采用客户端伪造列表/分数；排序仍由服务端规则打分决定；<br>2. 伪造 id 若不在服务端召回集合中则不得出现在 `snippets`；<br>3. HTTP 200 SSE 协议不变；上游调用恰好 1 次。 |
 
 ---
 
