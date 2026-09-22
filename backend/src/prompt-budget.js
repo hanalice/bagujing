@@ -77,7 +77,7 @@ const getBudgetChars = (value, fallback) => {
   return Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : fallback;
 };
 
-// 将 snippet 归类，用于保持问题、分类及其他背景的稳定优先级。
+// 将 snippet 归类，用于选择 bullet 模板（C21 后不再按 type 重排）。
 const getSnippetType = (snippet) => snippet?.type === 'problem' ? 'problem' : snippet?.type === 'category' ? 'category' : 'other';
 
 // 把单个结构化 snippet 转成不含 JSON 字段名的可读 bullet。
@@ -115,19 +115,9 @@ const getSnippetBullet = (snippet, maxDescChars) => {
   return `- 相关片段：${normalizePromptText(snippet)}`;
 };
 
-// 以问题背景优先、原始顺序次之的规则排序 snippets。
-const prioritizeSnippets = (snippets) => snippets
-  .map((snippet, index) => ({ snippet, index }))
-  .sort((left, right) => {
-    const priority = { problem: 0, category: 1, other: 2 };
-    return priority[getSnippetType(left.snippet)] - priority[getSnippetType(right.snippet)]
-      || left.index - right.index;
-  })
-  .map(({ snippet }) => snippet);
-
-// 按优先级从高到低装入 context；超预算时从队尾丢掉整条低优先级 bullet，禁止截断当前高优先级条。
+// C21：保持调用方已排序列表的相对顺序装入 bullet；超预算时只从队尾丢整条，禁止按 type 重排。
 const packContextText = (snippets, contextMaxChars, maxDescChars) => {
-  const bullets = prioritizeSnippets(Array.isArray(snippets) ? snippets : [])
+  const bullets = (Array.isArray(snippets) ? snippets : [])
     .map((snippet) => getSnippetBullet(snippet, maxDescChars));
   while (bullets.length > 0) {
     const packed = bullets.join('\n');
