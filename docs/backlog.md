@@ -85,6 +85,7 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | S4  | feat | scan | assist | split | 已判定助教 Markdown；实现见 S6 |
 | S5  | fix | scan | assist | todo | 对齐 security-ai-guard.md 与签名默认/会话跳过验签的实现 |
 | S6  | feat | scan | auto | todo | 助教助手气泡 Markdown + DOMPurify，用户气泡纯文本 |
+| E1  | feat | gate | assist | todo | CI/安全/质量基线（契约未冻，禁止周扫描拆成 auto）：依赖漏洞每月出报告、不挡合并；口令与密钥硬编码单独拦截提交；新增代码覆盖率 ≥80%，前后端历史各 ≥60%；文档与实现一致要能拦住；提交说明按公约覆盖全部 type |
 
 
 ---
@@ -225,6 +226,16 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 - **不做**：改 B22 的 Prompt；改题目解析页；把模型原文当 HTML 直接 `v-html`；用户消息走 Markdown。
 - **residual**：LaTeX / mermaid 不做。B22 可先合入（其间前端仍纯文本）。
 
+### E1
+
+登记用，契约未冻。禁止周扫描把本项改成 `auto` 或拆子项；由人拆。
+
+- **依赖漏洞**：每月 OSV-Scanner 出报告，任意等级都记录，不阻断合并。严重与高危列入后续 milestone，排期看当时计划。见 `docs/dependency-vulnerability-scanning.md`。扫描器不写本队列。
+- **口令与密钥**：单独检查，不并进漏洞扫描。命中硬编码的密码、token、私钥或连接串则拒绝提交，输出必须带位置和建议改法。
+- **质量**：现有测试失败与后端 ESLint error 为 0 的门禁保持。另加覆盖率：本次新增代码 ≥80%，前端历史与后端历史各 ≥60%。行、分支或语句的统计口径在拆分时再定。
+- **文档**：与实现一致，且不一致时要能拦住提交或 CI。对照哪些文件在拆分时再定。
+- **提交说明**：`.githooks/commit-msg` 与 PR 检查对齐 `docs/git-commit-convention.md` 和 `.agents/skills/commit-message/SKILL.md`。`feat` 四段、`fix` 三段、`refactor` 为动机 / 变更 / 验证；`docs` / `chore` / `test` / `perf` / `ci` 为简要要点。轻量 type 不要写成 `feat` 长模板。
+
 ---
 
 ## 修订记录
@@ -245,3 +256,5 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | 2026-09-20 | B51 完成：有 Redis 时限流走 Redis，否则内存 Map |
 | 2026-09-21 | B52 完成：有 Redis 时并发计数走 Redis，否则内存 Map |
 | 2026-09-22 | C21 完成：LIKE 召回后规则打分，指定 id 置顶 |
+| 2026-09-23 | 登记 assist E1：CI/安全/质量基线（未冻契约，禁止周扫描拆条） |
+| 2026-09-23 | E1 依赖漏洞改为每月报告、不挡合并；高危按后续 milestone 排期 |
