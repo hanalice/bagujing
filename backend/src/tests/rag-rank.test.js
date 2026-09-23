@@ -283,11 +283,8 @@ describe('C21 / P1-2: LIKE 召回后规则打分与指定 id 置顶', () => {
     }
   });
 
-  it('UT-RAG-RANK-05: 无 id 时仍走 LIKE 召回再打分截断', async () => {
-    const serverSrc = fs.readFileSync(path.join(BACKEND_SRC, 'server-express.js'), 'utf8');
-    assert.match(serverSrc, /LIKE/);
-    assert.doesNotMatch(serverSrc, /CREATE VIRTUAL TABLE[\s\S]*fts5|MATCH \?/i);
-
+  it('UT-RAG-RANK-05: 无 id 时召回后再打分截断', async () => {
+    // C22 合入后主路径可为 FTS；本 ID 只锁 topK 与规则分降序（召回介质见 UT-RAG-FTS-*）。
     const snippets = await buildRagContext({ message: '排序关键字' });
     assert.ok(snippets.length <= 6);
     assert.ok(snippets.length > 0);
@@ -334,14 +331,12 @@ describe('C21 / P1-2: LIKE 召回后规则打分与指定 id 置顶', () => {
     assert.equal(typeof ranked[0].score, 'number');
   });
 
-  it('UT-RAG-RANK-08: 不做 FTS5 / 向量（C21 边界）', () => {
+  it('UT-RAG-RANK-08: 不做向量（C21 边界；FTS 属 C22）', () => {
+    // C22 合入后允许 fts5/MATCH；本 ID 只锁无向量。FTS 主路径见 UT-RAG-FTS-03/07。
     const sources = [
       fs.readFileSync(path.join(BACKEND_SRC, 'rag-rank.js'), 'utf8'),
       fs.readFileSync(path.join(BACKEND_SRC, 'server-express.js'), 'utf8'),
     ].join('\n');
-    assert.doesNotMatch(sources, /CREATE\s+VIRTUAL\s+TABLE/i);
-    assert.doesNotMatch(sources, /fts5/i);
-    assert.doesNotMatch(sources, /\bMATCH\s+\?/i);
     assert.doesNotMatch(sources, /embedding|vector|openai\.embeddings/i);
   });
 });

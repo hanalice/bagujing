@@ -60,7 +60,7 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | C1  | feat | P1-3 | auto | done | Prompt 预算：合法 maxChars 硬上限；非法配置不截题面 |
 | C2  | feat | P1-2 | manual | split | 已拆为 C21 / C22 |
 | C21 | feat | P1-2 | auto | done | LIKE 召回后规则打分，指定 id 置顶 |
-| C22 | feat | P1-2 | auto | todo | FTS5 虚表查询，失败回退 LIKE |
+| C22 | feat | P1-2 | auto | done | FTS5 虚表查询，失败回退 LIKE |
 | C3  | feat | P1-1 | assist | split | 已拆为 C31 |
 | C31 | feat | P1-1 | auto | todo | chat 接收最近 6 轮 messages，绑定当前题面 |
 | C4  | feat | P1-4 | manual | split | 已拆为 C41 / C42 |
@@ -245,3 +245,4 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | 2026-09-20 | B51 完成：有 Redis 时限流走 Redis，否则内存 Map |
 | 2026-09-21 | B52 完成：有 Redis 时并发计数走 Redis，否则内存 Map |
 | 2026-09-22 | C21 完成：LIKE 召回后规则打分，指定 id 置顶 |
+| 2026-09-23 | C22 完成：FTS5 虚表查询，失败回退 LIKE |

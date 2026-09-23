@@ -6,7 +6,7 @@
 
 - **后端单元测试 (Backend UT)**：采用 Node.js 原生 `node:test` + `node:assert/strict`，聚焦核心领域逻辑（大模型适配器、配置解析器、参数优先级合并与防御性容错）。
 - **AI 安全防护网关测试 (Security & E2E)**：基于专用自动化套件 `backend/scripts/qa-verify.js`，端到端验证 HMAC 请求签名、时钟防漂移、Nonce 防重放、Origin 跨域白名单及 429 速率限制。
-- **数据库与数据完整性 (Data Integrity)**：验证 SQLite 数据库中初始题库数据、客户端授权表 `ai_clients` 及审计日志 `ai_audit_logs` 的持久化与一致性。
+- **数据库与数据完整性 (Data Integrity)**：验证 SQLite 数据库中初始题库数据、客户端授权表 `ai_clients` 及审计日志 `ai_audit_logs` 的持久化与一致性；**C22** 另覆盖 FTS5 虚表启动重建与查询失败回退 LIKE（§2.23 / §3.12）。
 - **前端多层级质量保障体系 (Frontend QA Strategy)**：
   - **端到端测试 (Frontend E2E - Playwright)**：覆盖核心用户链路（Main Path / Happy Path），利用 `page.route` 对大模型流式 SSE 接口进行轻量 Mock，保障真实路由鉴权、题目浏览及 AI 交互界面的稳定可用。
   - **状态机与单元测试 (Frontend UT/IT - Vitest)**：针对 Pinia Store（`user`、`settings`、`breadcrumb`）及工具函数，快速验证状态迁移、本地持久化与边界容错。
@@ -296,11 +296,13 @@
 LIKE 召回（无 problemId 且 query ≥ 2 字）→ 规则打分排序 → topK（现 maxSnippets=6）→ buildPromptMessages（C1，只从队尾丢）
 ```
 
+C22 合入后 problems 关键字召回主路径改为 FTS（失败回退 LIKE），本表仍只锁打分与置顶；召回介质见 §2.23。
+
 **做**：chat 无 `problemId` 时，对 `categories`/`problems` 的既有 `lower(...) LIKE %q%` 召回结果做**确定性规则打分**后排序；分值优先级为 **标题命中（`brief_name` / 分类 `name`）> 要点命中（`keyPoints` / `key_points_json`）> 同分类 boost（与请求 `context.categoryId` 相同）**；请求携带 `context.problemId` 时，该主键对应 problem snippet **固定置顶**（下标 `0`），其余候选仍按规则分降序。C1 预算器只消费已排序列表并从队尾丢条（§2.12 UT-PROMPT-BUDGET-04/06）。
 
 **不做**（本项用例若反向要求则 FAIL）：引入 FTS5 虚表 / `MATCH` 查询；向量检索；调用主聊天模型（`model.invoke` / `model.stream` / 等价上游）做打分或摘要。
 
-**residual**：FTS5 召回与失败回退 LIKE 见 **C22**；混合向量 rerank 见 **D3**。本表不得把 C22/D3 能力写成 C21 PASS 条件。
+**residual**：FTS5 虚表、查询走 FTS、失败回退 LIKE 见 **C22 / §2.23 / §3.12**；混合向量 rerank 见 **D3**。本表不得把 C22/D3 能力写成 C21 PASS 条件。C22 合入后：UT-RAG-RANK-05/08 中「禁止 FTS / 必须仅 LIKE」仅作为 **C21 交付树** 历史契约；合入后召回主路径与回退由 §2.23 锁定，本表仍锁「规则打分优先级 / problemId 置顶 / 不调主聊天模型」——无论召回来自 FTS 还是 LIKE 回退，打分序契约不变。
 
 测法：优先导出/抽取可测的 `scoreRagSnippets`（或等价纯函数）+ `buildRagContext`；用隔离 SQLite fixture 写入可控 `brief_name` / `key_points_json` / `category_id`；禁止依赖真实上游 LLM。`it()` 标题须包含下表 ID。
 
@@ -309,11 +311,40 @@ LIKE 召回（无 problemId 且 query ≥ 2 字）→ 规则打分排序 → top
 | UT-RAG-RANK-01 | 标题命中分高于仅要点命中 | 前置：无 `problemId`；query=`缓存`；fixture 两题：A `brief_name` 含「缓存」、`keyPoints` 不含；B `brief_name` 不含、`keyPoints` 含「缓存」；二者 `category_id` 相同且无额外 boost 差异；调用规则打分/排序（或 `buildRagContext({ message: '缓存' })`）。 | 1. 返回列表中 A 的下标 **严格小于** B；<br>2. 若暴露 `score` 字段，则 `score(A) > score(B)`，且标题档权重大于要点档；<br>3. 不调用任何 LLM。 |
 | UT-RAG-RANK-02 | 要点命中分高于仅同分类 boost | 前置：无 `problemId`；`categoryId=10`；query=`一致性`；fixture：题 C `brief_name`/`keyPoints` 均不含 query，但 `category_id=10`；题 D `category_id≠10`，`keyPoints` 含「一致性」、`brief_name` 不含；调用打分排序。 | 1. D 排在 C 之前（要点命中 > 同分类 boost）；<br>2. 二者皆可出现在 topK 内时相对序固定可复现；<br>3. 同分 tie-break 须稳定（如按原召回序或 id 升序），连续两次调用顺序一致。 |
 | UT-RAG-RANK-03 | 同分类 boost 在同等命中下抬升 | 前置：无 `problemId`；`categoryId=7`；query=`Redis`；两题 `brief_name` 均含「Redis」、要点命中情况相同；E `category_id=7`，F `category_id=8`；调用打分排序。 | 1. E 排在 F 之前；<br>2. 证明 boost 仅在标题/要点档相当时生效，不得把无标题命中的同分类题抬过标题命中的异分类题（与 UT-RAG-RANK-01 联立时仍服从标题优先）。 |
-| UT-RAG-RANK-04 | 指定 problemId 置顶 | 前置：SQLite 存在题 `id=42`（`brief_name` 可不含 query）与若干 LIKE 可命中的其它题；调用 `buildRagContext({ message: '分布式', categoryId, problemId: 42 })`（或 chat 等价入参）。 | 1. 返回数组 `snippets[0].type === 'problem'` 且 `snippets[0].id == 42`（或字符串 `'42'` 与数值 `42` 等价）；<br>2. 其余 snippet（若有）按规则分降序排在其后，且不含第二个 `id==42` 的重复项；<br>3. 置顶不依赖标题/要点是否命中 query。 |
-| UT-RAG-RANK-05 | 无 id 时仍走 LIKE 召回再打分截断 | 前置：无 `problemId`；`message` trim 后长度 `>= 2`；fixture 写入 >6 条均可被 `lower(brief_name) LIKE %q%` 命中的 problem（标题命中强度可不同）；调用 `buildRagContext`。 | 1. 召回 SQL 仍为 `LIKE`（或测试 spy 到的语句含 `LIKE`、**不含** FTS5 `MATCH` / 虚表名）；<br>2. 返回长度 `<= 6`（现 `maxSnippets`）；<br>3. 返回顺序为规则分降序（队首标题命中强于队尾），而非未打分的插入序盲截断。 |
-| UT-RAG-RANK-06 | query 过短或空不打分召回 | 前置：无 `problemId`；分别覆盖 `message` 为 `''`、`'a'`（trim 后 `< 2`）；库内有可 LIKE 命中的题。 | 1. 不因短 query 执行 problems/categories 的关键字 `LIKE` 召回（可仍注入显式 `categoryId`/`problemId` 主键条）；<br>2. 返回中无「仅因短 query LIKE 出来」的候选；<br>3. 不抛异常。 |
+| UT-RAG-RANK-04 | 指定 problemId 置顶 | 前置：SQLite 存在题 `id=42`（`brief_name` 可不含 query）与若干关键字可命中的其它题；调用 `buildRagContext({ message: '分布式', categoryId, problemId: 42 })`（或 chat 等价入参）。 | 1. 返回数组 `snippets[0].type === 'problem'` 且 `snippets[0].id == 42`（或字符串 `'42'` 与数值 `42` 等价）；<br>2. 其余 snippet（若有）按规则分降序排在其后，且不含第二个 `id==42` 的重复项；<br>3. 置顶不依赖标题/要点是否命中 query。 |
+| UT-RAG-RANK-05 | 无 id 时召回后再打分截断（C21 树：LIKE） | 前置：**C21 交付树**（尚未合入 C22 FTS）；无 `problemId`；`message` trim 后长度 `>= 2`；fixture 写入 >6 条均可被 `lower(brief_name) LIKE %q%` 命中的 problem（标题命中强度可不同）；调用 `buildRagContext`。C22 合入后本条「必须仅 LIKE、禁 MATCH」由 **UT-RAG-FTS-03/04** 取代，本 ID 仍可断言「返回 `<=6` 且规则分降序」。 | 1. **C21 树**：召回 SQL 为 `LIKE`（spy 语句含 `LIKE`、**不含** FTS5 `MATCH` / 虚表名）；**C22 合入后**：允许主路径为 FTS，本断言点降级为「有关键字召回集合」；<br>2. 返回长度 `<= 6`（现 `maxSnippets`）；<br>3. 返回顺序为规则分降序（队首标题命中强于队尾），而非未打分的插入序盲截断。 |
+| UT-RAG-RANK-06 | query 过短或空不打分召回 | 前置：无 `problemId`；分别覆盖 `message` 为 `''`、`'a'`（trim 后 `< 2`）；库内有可关键字命中的题。 | 1. 不因短 query 执行 problems/categories 的关键字召回（`LIKE` 或 FTS `MATCH` 均不得因短 query 触发；可仍注入显式 `categoryId`/`problemId` 主键条）；<br>2. 返回中无「仅因短 query 关键字召回出来」的候选；<br>3. 不抛异常。 |
 | UT-RAG-RANK-07 | 打分路径禁止调用主聊天模型 | 前置：stub/spy `getLlmModel`、`model.invoke`、`model.stream`（或路由注入的上游工厂）；仅调用 `buildRagContext` / 规则打分纯函数，不进入完整 `/api/chat` handler。 | 1. 上述上游方法调用次数均为 `0`；<br>2. 打分在进程内同步/微任务完成，不发起 HTTP 到 `OPENAI_BASE_URL`；<br>3. 证明「不做：用主聊天模型打分或摘要」。 |
-| UT-RAG-RANK-08 | 不做 FTS5 / 向量（C21 边界） | 前置：静态或运行时检查 C21 相关实现（`buildRagContext` 及新建打分模块源码字符串 / 执行的 SQL 列表）。 | 1. 源码与执行 SQL **均不出现** FTS5 虚表创建、`CREATE VIRTUAL TABLE`…`fts5`、或 `MATCH ?` 全文语法（属 **C22 residual**）；<br>2. **不出现**向量/embedding API 调用或本地向量索引依赖；<br>3. 本用例不得把「已实现 FTS」写成 C21 PASS。 |
+| UT-RAG-RANK-08 | 不做 FTS5 / 向量（C21 边界） | 前置：**仅 C21 交付树**；静态或运行时检查 C21 相关实现（`buildRagContext` 及打分模块源码字符串 / 执行的 SQL 列表）。C22 合入后「已实现 FTS」不得再使本 ID FAIL——改由 **UT-RAG-FTS-07** 锁「无向量」，由 **UT-RAG-FTS-03** 锁「查询走 FTS」。 | 1. **C21 树**：源码与执行 SQL **均不出现** FTS5 虚表创建、`CREATE VIRTUAL TABLE`…`fts5`、或 `MATCH ?` 全文语法；<br>2. **不出现**向量/embedding API 调用或本地向量索引依赖（C21/C22 均成立）；<br>3. 本用例不得把「已实现 FTS」写成 **C21** PASS；亦不得在 C22 合入后仍以「出现 fts5」判 C21 回归失败。 |
+
+### 2.23 C22 FTS5 虚表查询与失败回退 LIKE (`backend/src/tests/rag-fts.test.js` -> `rebuildProblemsFts` / `buildRagContext`，由启动路径与 `server-express.js` 调用)
+
+对应 **C22 / P1-2**（`docs/backlog.md` §C22）。流水线契约：
+
+```
+启动：CREATE VIRTUAL TABLE … fts5 → 从 problems 重建索引
+查询（无主键模糊且 query ≥ 2 字）：FTS MATCH →（失败）→ LIKE 回退 → C21 规则打分 → topK → C1
+```
+
+**做**：新增 SQLite **FTS5 虚表**（覆盖 `problems` 的可检索字段，至少含与现召回等价的 `brief_name` / `key_points_json` 文本）；**进程/池启动**（或首次 `getSqlitePool` / schema init）时从 `problems` **全量重建**虚表内容；无 `problemId` 且 `message` trim 后 `>= 2` 时，problems 关键字召回**优先**走 FTS（SQL 含虚表名与 `MATCH`，或等价 FTS5 查询 API）；FTS 路径抛错/不可用时**回退**既有 `lower(brief_name) LIKE ? OR lower(IFNULL(key_points_json,'')) LIKE ?`（及 categories 既有 LIKE），回退后仍经 `scoreRagSnippets`；**不删除** `problems` 表旧列（`brief_name`、`key_points_json`、`category_id` 等仍可 `SELECT`）。
+
+**不做**（本项用例若反向要求则 FAIL）：向量/embedding 检索或向量索引；删除/禁用 LIKE 回退分支（仅 FTS、无 fallback）。
+
+**residual**：向量与 FTS 混合 rerank 见 **D3**。本表不得把 D3 能力写成 C22 PASS。categories 关键字召回可继续 LIKE（C22 契约只强制 `problems` FTS）；有 `problemId`/`categoryId` 时主键取条路径不变。
+
+测法：隔离 SQLite fixture；导出或可调用的 `rebuildProblemsFts(pool)`（名称以实现为准）+ `buildRagContext`；spy `db.all`/`db.exec` 记录 SQL；用 stub 强制 FTS 抛错验证回退。禁止依赖真实上游 LLM。`it()` 标题须包含下表 ID。
+
+| ID | 用例标题 | 场景描述 | 预期结果 |
+| :--- | :--- | :--- | :--- |
+| UT-RAG-FTS-01 | 启动创建 FTS5 虚表 | 前置：空/临时 SQLite；调用 schema/启动初始化（含 `initProblemSchema` 与 C22 的 FTS 重建入口，文件：`backend/src/tests/rag-fts.test.js`）；查询 `sqlite_master`。 | 1. 存在 `type='table'`（或 `type='table'` 下 FTS 影子表）且 SQL/`name` 表明为 **FTS5** 虚表（`CREATE VIRTUAL TABLE`…`USING fts5`）；<br>2. 虚表名稳定可断言（如 `problems_fts` 或实现导出的常量）；<br>3. 初始化不抛未捕获异常，可重复执行（幂等：二次启动不因「表已存在」失败）。 |
+| UT-RAG-FTS-02 | 启动从 problems 全量重建 | 前置：`problems` 已写入题 `id=1`（`brief_name` 含「缓存穿透」）与 `id=2`（要点 JSON 含「限流」）；再调用重建；分别用能命中标题/要点的 query 对虚表 `MATCH`（或经 `buildRagContext`）。 | 1. 重建后 FTS 可命中 id=1 与 id=2（与 `problems` 行一致，无幽灵旧行）；<br>2. 若先插入再删 `problems` 中 id=2 后**再次重建**，FTS 不再命中 id=2；<br>3. 证明「从 problems 重建」而非手工只插入虚表。 |
+| UT-RAG-FTS-03 | 正常查询优先走 FTS MATCH | 前置：FTS 已重建且可用；无 `problemId`；`message` trim 后 `>= 2`（如 `缓存`）；fixture 中至少一题可被 FTS 命中；spy 全部 `db.all`/`db.get` SQL；调用 `buildRagContext`。 | 1. 至少一条 problems 召回 SQL 含 FTS 虚表名且含 `MATCH`（或 FTS5 等价语法），**先于**同请求内的 problems `LIKE` 回退语句（若回退未触发则全程可无 problems `LIKE`）；<br>2. 返回的 problem snippets 含被 FTS 命中的 id，长度 `<= 6`；<br>3. 返回前仍经 C21 规则打分（可与 UT-RAG-RANK-01 同 fixture 联立：标题命中排在仅要点命中前）。 |
+| UT-RAG-FTS-04 | FTS 失败回退 LIKE | 前置：无 `problemId`；query `>= 2`；fixture 题可被 `lower(brief_name) LIKE %q%` 命中；强制 FTS 失败（任选可复现一种：DROP 虚表、stub `MATCH` 查询抛错、注入损坏的 FTS 查询串使 SQLite 报错）；调用 `buildRagContext`。 | 1. **不**向调用方抛未捕获异常；返回数组（可空或含 LIKE 命中题）；<br>2. spy 显示在 FTS 失败之后执行了 problems 的 `LIKE` 召回 SQL（含 `lower(brief_name) LIKE` 或等价）；<br>3. LIKE 命中题出现在返回中（在 topK 内），随后仍走 `scoreRagSnippets`（顺序为规则分，而非盲目插入序）。 |
+| UT-RAG-FTS-05 | 不删除 problems 旧列 | 前置：完成 C22 schema/FTS 初始化后，对 `problems` 执行 `PRAGMA table_info(problems)`（或 `SELECT brief_name, key_points_json, category_id FROM problems LIMIT 1`）。 | 1. 列集合仍包含至少 `brief_name`、`key_points_json`、`category_id`（及既有主键 `id`）；<br>2. **不出现**针对这些列的 `DROP COLUMN` / 拆表迁移导致旧列不可读；<br>3. 主键路径 `SELECT … FROM problems WHERE id = ?` 仍可用（与 UT-RAG-RANK-04 兼容）。 |
+| UT-RAG-FTS-06 | 短 query 不触发 FTS 也不触发 LIKE 关键字召回 | 前置：FTS 已就绪；无 `problemId`；`message` 为 `''` 与 `'a'`；库内有可 FTS/LIKE 命中的题；spy SQL。 | 1. 无 problems FTS `MATCH`；无 problems/categories 关键字 `LIKE`；<br>2. 返回中无仅因短 query 召回的候选；<br>3. 不抛异常（对齐 UT-RAG-RANK-06，并显式覆盖 FTS）。 |
+| UT-RAG-FTS-07 | 不做向量检索（C22 边界） | 前置：静态检查 C22 相关源码（FTS 重建模块、`buildRagContext`、新建 `rag-fts` 类文件）及一次正常 `buildRagContext` 的 SQL/网络。 | 1. **不出现** embedding API、向量库客户端或本地向量索引依赖；<br>2. 执行 SQL 无向量扩展特有语法（本项不把 FTS5 当向量）；<br>3. 本用例不得把「混合向量 rerank（D3）」写成 C22 PASS。 |
+| UT-RAG-FTS-08 | 保留 LIKE 回退分支（不做删除回退） | 前置：静态或分支覆盖：源码/控制流在 FTS 失败路径上仍调用 LIKE 召回；并实际跑通 UT-RAG-FTS-04。 | 1. 源码存在可到达的 LIKE 回退（失败后调用，而非死代码/永远 `return []`）；<br>2. UT-RAG-FTS-04 在同一套实现上 PASS；<br>3. 配置或代码路径**不得**提供「仅 FTS、关闭 LIKE」且默认关闭回退（若存在开关，默认必须开启回退）。 |
+| UT-RAG-FTS-09 | 指定 problemId 仍主键取条，FTS 仅补其它候选 | 前置：FTS 可用；`problemId=42`；`message` 含可命中其它题的关键字；调用 `buildRagContext`。 | 1. `snippets[0]` 为 id=42 的 problem（C21 置顶）；题 42 来自 `problems WHERE id = ?`，不依赖其是否被 FTS 命中；<br>2. 其它关键字候选可来自 FTS（或回退 LIKE），排在 42 之后且无重复 42；<br>3. 上游/LLM 调用次数为 0。 |
 
 ---
 
@@ -417,7 +448,7 @@ Prompt 内容来自数据库，不能只依赖客户端 `AI_MAX_INPUT_CHARS` 防
 
 ### 3.11 C21 规则打分排序与 chat SSE / 预算集成 (`backend/src/tests/rag-rank-integration.test.js`)
 
-对应 **C21 / P1-2** 完成标准：chat 无 id 的 LIKE 召回经规则打分后，SSE `context.snippets` 与发往模型的 context bullet 顺序一致（受 C1 队尾裁剪）；指定 `problemId` 置顶。测试必须经 `app.handle` 或真实 `/api/chat` handler：鉴权 → Guard → `buildRagContext`（打分）→ `sendSSE(context)` → `buildPromptMessages` → stub 上游。模型 stub 只负责捕获 messages 并产出短 delta，**不得**参与打分。`it()` 标题须包含下表 ID。
+对应 **C21 / P1-2** 完成标准：chat 无 id 的关键字召回经规则打分后，SSE `context.snippets` 与发往模型的 context bullet 顺序一致（受 C1 队尾裁剪）；指定 `problemId` 置顶。C21 交付树召回为 LIKE；**C22** 合入后主路径为 FTS、失败回退 LIKE（§3.12），本表打分/置顶/SSE 断言在两种召回介质下均成立。测试必须经 `app.handle` 或真实 `/api/chat` handler：鉴权 → Guard → `buildRagContext`（打分）→ `sendSSE(context)` → `buildPromptMessages` → stub 上游。模型 stub 只负责捕获 messages 并产出短 delta，**不得**参与打分。`it()` 标题须包含下表 ID。
 
 | ID | 用例标题 | 场景描述 | 预期结果 |
 | :--- | :--- | :--- | :--- |
@@ -426,6 +457,18 @@ Prompt 内容来自数据库，不能只依赖客户端 `AI_MAX_INPUT_CHARS` 防
 | IT-RAG-RANK-03 | 收紧预算时只从已排序队尾丢条 | 前置：fixture 固定高分题 H 与低分题 L（规则序 H→L）；注入合法但较小的 `AI_PROMPT_MAX_CHARS` / `promptBudget.maxChars`，使 H+L 两条 bullet 合计超出 context 预算、但仅 H 可装入；`POST /api/chat` 无 `problemId`，message 能召回 H 与 L；stub 捕获上游 messages。 | 1. SSE `context.snippets` 顺序仍为 H 在 L 前（打分结果在裁剪前可见，或至少 builder 入参序为 H→L）；<br>2. 上游 `context` 槽文本含 H 的题名/id，**不含** L 的题名/id（从队尾丢整条）；<br>3. 不得出现「丢掉 H、留下 L」或按 `type` 重排后误删高分条；HTTP 200 且流正常结束。 |
 | IT-RAG-RANK-04 | generate 路径不因 C21 改为主聊天打分 | 前置：`POST /api/problems/42/answer/generate` body `{ "force": true }`；已登录 `study`；spy 上游 `invoke` 与任何 chat `stream`；题 42 无缓存答案。 | 1. 上游 `invoke` 恰好 1 次，**零次** chat `stream`；<br>2. HTTP `200`，JSON `code === 0`，`data.cached === false`；<br>3. RAG 仍可按主键注入本题/本分类，但不得为打分再发起模型调用（与 backlog「生成解析几乎不必 rerank；不用主聊天模型打分」一致）。 |
 | SEC-RAG-RANK-01 | 客户端不得注入分数或改写排序 | 前置：合法 `chat_ai`；`POST /api/chat` body 含 `message` 关键字，并故意附加 `snippets` / `scores` / `rank` / `context.snippets` 等伪造高分条目（指向库中不存在或低分 id）；stub 上游；对照同 message 无伪造字段的基线序。 | 1. 服务端 `context` SSE 的 `snippets` **不**采用客户端伪造列表/分数；排序仍由服务端规则打分决定；<br>2. 伪造 id 若不在服务端召回集合中则不得出现在 `snippets`；<br>3. HTTP 200 SSE 协议不变；上游调用恰好 1 次。 |
+
+### 3.12 C22 FTS5 召回 / LIKE 回退与 chat SSE 集成 (`backend/src/tests/rag-fts-integration.test.js`)
+
+对应 **C22 / P1-2** 完成标准：启动重建 FTS5 后，chat 无 id 关键字召回优先 FTS；FTS 失败时回退 LIKE；回退后仍经 C21 规则打分并保持既有 SSE 协议。测试必须经 `app.handle` 或真实 `/api/chat` handler：鉴权 → Guard → `buildRagContext`（FTS 或 LIKE）→ `scoreRagSnippets` → `sendSSE(context)` → `buildPromptMessages` → stub 上游。模型 stub 只捕获 messages 并产出短 delta，**不得**参与检索或打分。`it()` 标题须包含下表 ID。
+
+| ID | 用例标题 | 场景描述 | 预期结果 |
+| :--- | :--- | :--- | :--- |
+| IT-RAG-FTS-01 | chat 正常路径：FTS 召回后 SSE context 可用 | 前置：测试进程启动时已从 `problems` 重建 FTS；隔离 SQLite 写入题 A（`brief_name` 含关键字「缓存」）；有效登录且 `chat_ai`；`POST /api/chat` body `{ "message": "请讲缓存穿透" }`（**无** `context.problemId`）；spy SQL；stub `model.stream` 产出一个 delta 后结束。 | 1. HTTP `200`，`Content-Type: text/event-stream; charset=utf-8`；事件序 `context` → `delta` → `done`；<br>2. 本请求 problems 召回 SQL 含 FTS `MATCH`（主路径）；首帧 `type:context` 的 `snippets` 含题 A（`type==='problem'` 且 id/名称可辨）；<br>3. `finalize` 一次且 `reason === 'stream_done'`；上游调用恰好 1 次（检索未额外调模型）。 |
+| IT-RAG-FTS-02 | FTS 失败时 LIKE 回退仍完成 chat SSE | 前置：同 IT-RAG-FTS-01 的登录与 fixture（题可被 `LIKE %缓存%` 命中）；在发请求前破坏 FTS（DROP 虚表，或 stub 使 FTS 查询抛错）；`POST /api/chat` 同关键字 message；stub 上游。 | 1. **不**因 FTS 失败返回 5xx 或非 SSE 的 JSON 错误体；HTTP `200` SSE 序仍为 `context` → `delta` → `done`；<br>2. spy 显示 FTS 失败后执行了 problems `LIKE`；`context.snippets` 仍含 LIKE 可命中的题；<br>3. 上游调用恰好 1 次；审计 `stream_done`（证明「失败回退 LIKE」且「不删除 LIKE 回退」）。 |
+| IT-RAG-FTS-03 | FTS 命中后仍保持 C21 规则序与 problemId 置顶 | 前置：FTS 可用；fixture 题 H（标题含关键字）、题 L（仅要点含关键字）、题 `42`；A) `POST /api/chat` 无 `problemId`，message=关键字；B) 同 message 且 `context.problemId=42`；stub 上游。 | 1. A：`context.snippets` 中 H 下标 **严格小于** L（标题 > 要点，打分在 FTS 召回之后）；<br>2. B：`snippets[0].id == 42` 且 `type==='problem'`，其余候选（若有）在其后；<br>3. 两次均为 HTTP 200 SSE，三槽 messages，context 槽 bullet 相对序与 snippets 一致（预算未裁掉时）。 |
+| IT-RAG-FTS-04 | generate 路径不因 C22 引入向量或主聊天检索 | 前置：`POST /api/problems/42/answer/generate` body `{ "force": true }`；已登录 `study`；spy `invoke`/`stream` 与任何 embedding/向量客户端；题 42 无缓存答案。 | 1. 上游 `invoke` 恰好 1 次，**零次** chat `stream`，**零次** embedding/向量调用；<br>2. HTTP `200`，JSON `code === 0`，`data.cached === false`；<br>3. RAG 可按主键注入本题；关键字补召回若发生，只允许 FTS 或 LIKE，不得为检索再开模型。 |
+| SEC-RAG-FTS-01 | 客户端不得注入 FTS 语句或关闭 LIKE 回退 | 前置：合法 `chat_ai`；`POST /api/chat` body 除合法 `message`/`context` 外，故意附加 `ftsQuery`、`match`、`sql`、`disableLikeFallback`、`useVector`、`embeddings` 等字段；对照无伪造字段的基线；stub 上游；spy SQL。 | 1. 服务端**忽略**上述客户端字段：执行的 FTS `MATCH` 绑定值来自服务端对 `message` 的规范化，不得把客户端原始 SQL/MATCH 串拼进查询；<br>2. `disableLikeFallback: true` **不能**取消回退（再跑一次破坏 FTS 的请求仍应 LIKE 回退成功，同 IT-RAG-FTS-02）；<br>3. HTTP 200 SSE 协议不变；上游调用恰好 1 次；`snippets` 不含客户端凭空指定的库外 id。 |
 
 ---
 
