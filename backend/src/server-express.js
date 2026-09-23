@@ -10,6 +10,13 @@ import Redis from 'ioredis';
 import { SystemMessage, HumanMessage } from "@langchain/core/messages";
 import { buildPromptMessages, promptBudget, PROMPT_BUDGET_ERROR_RESERVED } from './prompt-budget.js';
 import { scoreRagSnippets } from './rag-rank.js';
+import {
+  rebuildProblemsFts,
+  searchProblemsFts,
+  searchProblemsLike,
+  PROBLEMS_FTS_TABLE,
+  noteRagSql,
+} from './rag-fts.js';
 import { createLlmModel } from './llm.js';
 import { sanitizeHtml } from './security/html-sanitizer.js';
 
@@ -65,6 +72,12 @@ async function getSqlitePool() {
     sqlitePoolPromise = (async () => {
       await initCategorySchema(pool);
       await initProblemSchema(pool);
+      // C22：启动时从 problems 全量重建 FTS5 虚表（失败不阻断启动，查询侧仍可 LIKE）。
+      try {
+        await rebuildProblemsFts(pool);
+      } catch (err) {
+        console.warn('[BOOT] problems FTS rebuild failed, LIKE fallback remains available:', err?.message || err);
+      }
       await initProblemDetailSchema(pool);
       await initMafSchema(pool);
       await initUserSchema(pool);
@@ -544,10 +557,10 @@ const normalizeQueryArray = (query, keys) => {
   }
   return [];
 };
-// C21：LIKE 召回候选上限（打分后再截断到 maxSnippets），避免 SQL LIMIT 盲截断高分条。
+// C21/C22：关键字召回候选上限（打分后再截断到 maxSnippets），避免 SQL LIMIT 盲截断高分条。
 const RAG_RECALL_LIMIT = 32;
 
-// 构建 chat/generate 的轻量 RAG snippets：主键注入 + LIKE 召回 → 规则打分 → topK；指定 problemId 置顶。
+// 构建 chat/generate 的轻量 RAG snippets：主键注入 + FTS（失败回退 LIKE）→ 规则打分 → topK；指定 problemId 置顶。
 const buildRagContext = async ({ message, categoryId, problemId }) => {
   const maxSnippets = 6;
   const snippets = [];
@@ -586,18 +599,21 @@ const buildRagContext = async ({ message, categoryId, problemId }) => {
       }
     }
 
-    // 无/有 problemId 均可在 query≥2 时 LIKE 召回其它候选；短 query 不走关键字召回。
+    // 无/有 problemId 均可在 query≥2 时关键字召回其它候选；短 query 不走 FTS/LIKE。
     if (q.length >= 2) {
       const qLower = q.toLowerCase();
       const keywordLike = `%${qLower}%`;
 
-      const matchedCategories = await pool.withConnection(db =>
-        db.all(`
+      const catSql = `
           SELECT id, name, group_name, group_desc, count
           FROM categories
           WHERE lower(name) LIKE ? OR lower(group_name) LIKE ? OR lower(group_desc) LIKE ?
           LIMIT ?
-        `, [keywordLike, keywordLike, keywordLike, RAG_RECALL_LIMIT])
+        `;
+      const catParams = [keywordLike, keywordLike, keywordLike, RAG_RECALL_LIMIT];
+      noteRagSql(catSql, catParams);
+      const matchedCategories = await pool.withConnection(db =>
+        db.all(catSql, catParams)
       );
 
       for (const c of matchedCategories) {
@@ -613,15 +629,13 @@ const buildRagContext = async ({ message, categoryId, problemId }) => {
         }
       }
 
-      // categoryId 仅用于打分 boost，不在 SQL 中过滤，以便异分类要点命中可参与排序。
-      const matchedProblems = await pool.withConnection(db =>
-        db.all(`
-          SELECT id, brief_name, key_points_json, category_id
-          FROM problems
-          WHERE lower(brief_name) LIKE ? OR lower(IFNULL(key_points_json, '')) LIKE ?
-          LIMIT ?
-        `, [keywordLike, keywordLike, RAG_RECALL_LIMIT])
-      );
+      // C22：problems 优先 FTS MATCH；失败则回退 LIKE（不可关闭）。
+      let matchedProblems;
+      try {
+        matchedProblems = await searchProblemsFts(pool, q, RAG_RECALL_LIMIT);
+      } catch {
+        matchedProblems = await searchProblemsLike(pool, qLower, RAG_RECALL_LIMIT);
+      }
 
       for (const p of matchedProblems) {
         if (!snippets.some(s => s.type === 'problem' && s.id === p.id)) {
@@ -950,7 +964,15 @@ app.use((error, req, res, next) => {
   });
 });
 
-export { app, buildPromptMessages, promptBudget, buildRagContext, scoreRagSnippets };
+export {
+  app,
+  buildPromptMessages,
+  promptBudget,
+  buildRagContext,
+  scoreRagSnippets,
+  rebuildProblemsFts,
+  PROBLEMS_FTS_TABLE,
+};
 
 // 启动服务（单测通过 BAGUJING_SKIP_LISTEN=1 跳过 listen，便于离线挂载 /api/chat）
 if (process.env.BAGUJING_SKIP_LISTEN !== '1') {
