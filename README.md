@@ -65,6 +65,8 @@ bagujing/
 │   └── nginx.conf            # Nginx 生产环境推荐配置模板
 ├── docs/                     # 架构设计与技术白皮书
 │   ├── security-ai-guard.md  # AI 网关安全防护专项设计白皮书
+│   ├── dependency-vulnerability-scanning.md # 依赖漏洞月扫与修复步骤
+│   ├── vulnerability-report.md # 依赖漏洞月报（滚动 PR 覆盖）
 │   ├── deployment-and-operations.md # 生产部署与运维工程白皮书
 │   └── why-custom-static-server.md  # 自研静态服务器选型与设计考量 ADR
 └── ecosystem.config.example.cjs  # PM2 进程集群管理模板
@@ -146,6 +148,7 @@ node scripts/static-server.js
 - **质量门禁**：[![QA](https://github.com/hanalice/bagujing/actions/workflows/qa.yml/badge.svg)](https://github.com/hanalice/bagujing/actions/workflows/qa.yml) 打开最新一次 Run 的 Job Summary / Artifact 即可查看报告（`docs/qa_report.md` 由脚本生成，不入库）。
 - **本地报告**：`./scripts/qa-report.sh` 会在工作区生成 `docs/qa_report.md`，请勿提交。
 - **[测试用例设计 (Test Case Design)](docs/test_cases.md)**：深入了解测试策略矩阵、覆盖率映射以及端到端集成测试场景。
+- **依赖漏洞月报**：[![Vulnerability report](https://github.com/hanalice/bagujing/actions/workflows/vulnerability-report.yml/badge.svg)](https://github.com/hanalice/bagujing/actions/workflows/vulnerability-report.yml) 每月扫描一次，**不阻断合并**。报告单独放在 [docs/vulnerability-report.md](docs/vulnerability-report.md)，由分支 `chore/vulnerability-report` 的滚动 PR 覆盖更新。其中的严重与高危列入后续 milestone，排期以当时计划为准。步骤见 [docs/dependency-vulnerability-scanning.md](docs/dependency-vulnerability-scanning.md)。
 
 ---
 
@@ -170,6 +173,8 @@ node scripts/static-server.js
 | 文档名称 | 类型 | 核心内容 |
 | :--- | :---: | :--- |
 | 🛡️ **[AI 安全防护网关设计白皮书](docs/security-ai-guard.md)** | 技术白皮书 | HMAC-SHA256 签名鉴权、防重放、分布式速率限制、Token 配额管控与审计日志设计 |
+| 🔎 **[依赖漏洞扫描报告](docs/vulnerability-report.md)** | 月报 | 每月 OSV-Scanner 结果，滚动 PR 更新；不阻断合并，高危按后续 milestone 排期 |
+| 🔎 **[依赖漏洞扫描与修复](docs/dependency-vulnerability-scanning.md)** | 流程 | 月扫范围、凭证报告，以及从报告到 backlog、再到单独修复 PR 的步骤 |
 | 🌐 **[生产部署与运维工程白皮书](docs/deployment-and-operations.md)** | 工程指南 | AWS EC2 一键部署、Nginx 动静分离配置、PM2 集群调优与环境变量全量参数字典 |
 | 📦 **[静态托管架构演进与 ADR](docs/why-custom-static-server.md)** | 架构决策 | 记录从 `pm2 serve` 到自研 `static-server.js` 的痛点演进与三层服务分工 |
 | 📋 **[文档维护规范与体系说明](docs/README.md)** | 规范指南 | 研发内部档案与公开技术文档的动静分层隔离规范 |

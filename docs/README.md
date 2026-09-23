@@ -12,6 +12,8 @@ docs/
 ├── backlog.md                      # 工程待办队列（公开，日修/周扫描调度源）
 ├── git-commit-convention.md        # Git 提交规范与模板（公开）
 ├── security-ai-guard.md            # AI 网关安全防护专项白皮书（公开）
+├── dependency-vulnerability-scanning.md # 依赖漏洞月扫与修复步骤（公开）
+├── vulnerability-report.md         # 依赖漏洞月报（公开，滚动 PR 覆盖）
 ├── deployment-and-operations.md    # 生产部署与运维工程白皮书（公开）
 ├── why-custom-static-server.md     # 静态托管架构决策记录 ADR（公开）
 │
