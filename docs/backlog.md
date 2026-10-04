@@ -62,7 +62,7 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | C21 | feat | P1-2 | auto | done | LIKE 召回后规则打分，指定 id 置顶 |
 | C22 | feat | P1-2 | auto | done | FTS5 虚表查询，失败回退 LIKE |
 | C3  | feat | P1-1 | assist | split | 已拆为 C31 |
-| C31 | feat | P1-1 | auto | todo | chat 接收最近 6 轮 messages，绑定当前题面 |
+| C31 | feat | P1-1 | auto | done | chat 接收最近 6 轮 messages，绑定当前题面 |
 | C4  | feat | P1-4 | manual | split | 已拆为 C41 / C42 |
 | C41 | feat | P1-4 | auto | todo | 解析生成返回 JSON 三字段，失败不入库 |
 | C42 | feat | P1-4 | auto | todo | 前端按三字段渲染，不再整篇模型 HTML |
@@ -259,3 +259,4 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | 2026-09-23 | 登记 assist E1：CI/安全/质量基线（未冻契约，禁止周扫描拆条） |
 | 2026-09-23 | E1 依赖漏洞改为每月报告、不挡合并；高危按后续 milestone 排期 |
 | 2026-09-23 | C22 完成：FTS5 虚表查询，失败回退 LIKE |
+| 2026-09-30 | C31 完成：chat 接收最近 6 轮 messages，绑定当前题面 |

@@ -7,8 +7,12 @@ import 'dotenv/config';
 import { createAiGuard, readStreamChunkWithTimeout } from './security/ai-guard.js';
 import fs from 'node:fs/promises';
 import Redis from 'ioredis';
-import { SystemMessage, HumanMessage } from "@langchain/core/messages";
+import { SystemMessage, HumanMessage, AIMessage } from "@langchain/core/messages";
 import { buildPromptMessages, promptBudget, PROMPT_BUDGET_ERROR_RESERVED } from './prompt-budget.js';
+import {
+  normalizeChatHistoryMessages,
+  CHAT_HISTORY_MAX_MESSAGES,
+} from './chat-history.js';
 import { scoreRagSnippets } from './rag-rank.js';
 import {
   rebuildProblemsFts,
@@ -893,12 +897,23 @@ app.post('/api/chat', authenticateToken, requirePermission('chat_ai'), aiGuard.m
       return res.end();
     }
 
-    upstreamReached = true;
-    const stream = await model.stream([
+    // C31：最近 N=6 历史插在 B1 context 槽与当前 user 槽之间；题面/RAG 仍走固定 context 槽。
+    const historyMessages = normalizeChatHistoryMessages(req.body?.messages, {
+      maxChars: aiGuard.config.maxInputChars,
+    });
+    const upstreamMessages = [
       new SystemMessage(promptMessages.system),
       new HumanMessage(promptMessages.context),
+      ...historyMessages.map((item) => (
+        item.role === 'assistant'
+          ? new AIMessage(item.content)
+          : new HumanMessage(item.content)
+      )),
       new HumanMessage(promptMessages.user),
-    ], {
+    ];
+
+    upstreamReached = true;
+    const stream = await model.stream(upstreamMessages, {
       signal: abortController.signal,
     });
 
@@ -972,6 +987,8 @@ export {
   scoreRagSnippets,
   rebuildProblemsFts,
   PROBLEMS_FTS_TABLE,
+  normalizeChatHistoryMessages,
+  CHAT_HISTORY_MAX_MESSAGES,
 };
 
 // 启动服务（单测通过 BAGUJING_SKIP_LISTEN=1 跳过 listen，便于离线挂载 /api/chat）
