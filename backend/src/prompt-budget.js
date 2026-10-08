@@ -133,6 +133,7 @@ const wrapContextSlot = (contextLabel, packedBullets) => (
 );
 
 // 将人设、只读 context 和用户原文分成三个槽，并受总字符预算保护。
+// C31：可选 history（已归一化的 user/assistant）插在 context 与当前 user 之间，不进入 system/context 槽。
 export function buildPromptMessages({
   systemPrompt,
   questionLabel,
@@ -141,15 +142,19 @@ export function buildPromptMessages({
   instruction = '',
   snippets = [],
   budget = promptBudget,
+  history = [],
 }) {
   const systemText = normalizePromptText(
     [systemPrompt, PROMPT_UNTRUSTED_DATA_NOTICE, instruction].filter(Boolean).join('\n'),
   );
   const userText = `${questionLabel}${String(question ?? '')}`;
+  const historyList = Array.isArray(history) ? history : [];
+  const historyText = historyList.map((item) => String(item?.content ?? '')).join('');
   const emptyContext = wrapContextSlot(contextLabel, '');
   const contextWrapperOverhead = emptyContext.length;
   const maxChars = getBudgetChars(budget?.maxChars, promptBudget.maxChars);
   const maxDescChars = getBudgetChars(budget?.maxDescChars, promptBudget.maxDescChars);
+  // 预算仍只保护 B1 三槽；历史按条截断后追加，不挤占 system/题面预留。
   const fixedLength = systemText.length + userText.length + contextWrapperOverhead;
   const contextMaxChars = Math.max(0, maxChars - fixedLength);
 
@@ -157,7 +162,8 @@ export function buildPromptMessages({
     system: systemText,
     context: contextText,
     user: userText,
-    promptTokens: estimatePromptTokens(`${systemText}${contextText}${userText}`),
+    history: historyList,
+    promptTokens: estimatePromptTokens(`${systemText}${contextText}${userText}${historyText}`),
     ...(budgetError ? { budgetError } : {}),
   });
 

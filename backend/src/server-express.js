@@ -9,10 +9,7 @@ import fs from 'node:fs/promises';
 import Redis from 'ioredis';
 import { SystemMessage, HumanMessage, AIMessage } from "@langchain/core/messages";
 import { buildPromptMessages, promptBudget, PROMPT_BUDGET_ERROR_RESERVED } from './prompt-budget.js';
-import {
-  normalizeChatHistoryMessages,
-  CHAT_HISTORY_MAX_MESSAGES,
-} from './chat-history.js';
+import { normalizeChatHistory, CHAT_HISTORY_WINDOW } from './chat-history.js';
 import { scoreRagSnippets } from './rag-rank.js';
 import {
   rebuildProblemsFts,
@@ -876,6 +873,10 @@ app.post('/api/chat', authenticateToken, requirePermission('chat_ai'), aiGuard.m
       + '2) 内容准确、可落地，避免空话；\n'
       + '3) 使用清晰的分点列表组织回答，可用 Markdown 排版。';
 
+    // C31：归一化客户端 messages[]（尾窗 N=6、按条截断）；无/空数组时 history=[]，上游仍为 B1 三槽。
+    const history = normalizeChatHistory(req.body?.messages, {
+      maxInputChars: aiGuard.config.maxInputChars,
+    });
     const promptMessages = buildPromptMessages({
       systemPrompt,
       questionLabel: '用户问题：',
@@ -884,6 +885,7 @@ app.post('/api/chat', authenticateToken, requirePermission('chat_ai'), aiGuard.m
       instruction: '请结合背景知识，以资深面试官的角度回答用户的问题。',
       snippets,
       budget: promptBudget,
+      history,
     });
     promptTokens = promptMessages.promptTokens;
     if (promptMessages.budgetError === PROMPT_BUDGET_ERROR_RESERVED) {
@@ -897,23 +899,18 @@ app.post('/api/chat', authenticateToken, requirePermission('chat_ai'), aiGuard.m
       return res.end();
     }
 
-    // C31：最近 N=6 历史插在 B1 context 槽与当前 user 槽之间；题面/RAG 仍走固定 context 槽。
-    const historyMessages = normalizeChatHistoryMessages(req.body?.messages, {
-      maxChars: aiGuard.config.maxInputChars,
-    });
-    const upstreamMessages = [
+    upstreamReached = true;
+    // B1：system → context(RAG) → 历史（若有）→ 当前 user；伪造 system role 已在归一化阶段丢弃。
+    const stream = await model.stream([
       new SystemMessage(promptMessages.system),
       new HumanMessage(promptMessages.context),
-      ...historyMessages.map((item) => (
+      ...promptMessages.history.map((item) => (
         item.role === 'assistant'
           ? new AIMessage(item.content)
           : new HumanMessage(item.content)
       )),
       new HumanMessage(promptMessages.user),
-    ];
-
-    upstreamReached = true;
-    const stream = await model.stream(upstreamMessages, {
+    ], {
       signal: abortController.signal,
     });
 
@@ -987,8 +984,8 @@ export {
   scoreRagSnippets,
   rebuildProblemsFts,
   PROBLEMS_FTS_TABLE,
-  normalizeChatHistoryMessages,
-  CHAT_HISTORY_MAX_MESSAGES,
+  normalizeChatHistory,
+  CHAT_HISTORY_WINDOW,
 };
 
 // 启动服务（单测通过 BAGUJING_SKIP_LISTEN=1 跳过 listen，便于离线挂载 /api/chat）

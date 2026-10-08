@@ -1,51 +1,42 @@
 /**
- * C31：chat 多轮 messages 窗口规范化。
- * 只接受 user/assistant，窗口写死 N=6，每条按 maxChars 截断；不做滚动摘要。
+ * C31 / P1-1：chat 多轮 messages 窗口归一化。
+ * 只保留最近 N=6 条合法 user/assistant，按条截断到 maxInputChars；不做滚动摘要。
  */
 
-/** 发往上游的历史窗口上限（写死，客户端不可改） */
-export const CHAT_HISTORY_MAX_MESSAGES = 6;
+/** 对话历史尾窗上限（写死，禁止读环境变量改 N）。 */
+export const CHAT_HISTORY_WINDOW = 6;
 
 const ALLOWED_ROLES = new Set(['user', 'assistant']);
 
-/**
- * 与 server-express sanitizeUserText 同源：去 NUL 后按 maxChars 截断。
- * @param {unknown} value
- * @param {number} maxChars
- * @returns {string}
- */
-function sanitizeHistoryContent(value, maxChars) {
-  const text = typeof value === 'string' ? value : '';
-  return text.replaceAll(String.fromCodePoint(0), '').slice(0, maxChars);
-}
+const DEFAULT_MAX_INPUT_CHARS = 1200;
+
+// 将 maxInputChars 归一为合法正整数，非法时回退默认。
+const resolveMaxInputChars = (value) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : DEFAULT_MAX_INPUT_CHARS;
+};
 
 /**
- * 规范化客户端回传的 messages[]：校验角色、截断 content、只保留最近 6 条。
- * 故意忽略 options.maxCount / body.N 等客户端窗口参数。
- *
- * @param {unknown} raw 原始 body.messages
- * @param {{ maxChars?: number, maxCount?: number }} [options]
+ * 过滤非法项、按条截断 content，并只保留时间正序尾窗最近 N 条。
+ * @param {unknown} messages 客户端回传的 messages[]（可为缺省/非数组）
+ * @param {{ maxInputChars?: number }} [options] 单条 content 上限，对齐 AI_MAX_INPUT_CHARS
  * @returns {{ role: 'user'|'assistant', content: string }[]}
  */
-export function normalizeChatHistoryMessages(raw, options = {}) {
-  const maxChars = Number.isFinite(options.maxChars) && options.maxChars > 0
-    ? Math.floor(options.maxChars)
-    : 1200;
+export function normalizeChatHistory(messages, { maxInputChars } = {}) {
+  const limit = resolveMaxInputChars(maxInputChars);
+  const list = Array.isArray(messages) ? messages : [];
+  const filtered = [];
 
-  if (!Array.isArray(raw)) return [];
-
-  const accepted = [];
-  for (const item of raw) {
-    if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
-    const role = item.role;
+  for (const item of list) {
+    if (item === null || typeof item !== 'object') continue;
+    const { role, content } = item;
     if (!ALLOWED_ROLES.has(role)) continue;
-    if (typeof item.content !== 'string') continue;
-    accepted.push({
+    if (typeof content !== 'string') continue;
+    filtered.push({
       role,
-      content: sanitizeHistoryContent(item.content, maxChars),
+      content: content.replaceAll(String.fromCodePoint(0), '').slice(0, limit),
     });
   }
 
-  // 窗口写死为 CHAT_HISTORY_MAX_MESSAGES；忽略 options.maxCount
-  return accepted.slice(-CHAT_HISTORY_MAX_MESSAGES);
+  return filtered.slice(-CHAT_HISTORY_WINDOW);
 }
