@@ -910,10 +910,7 @@ app.post('/api/chat', authenticateToken, requirePermission('chat_ai'), aiGuard.m
           : new HumanMessage(item.content)
       )),
       new HumanMessage(promptMessages.user),
-    ];
-
-    upstreamReached = true;
-    const stream = await model.stream(upstreamMessages, {
+    ], {
       signal: abortController.signal,
     });
 
