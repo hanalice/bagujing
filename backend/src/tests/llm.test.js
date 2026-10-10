@@ -357,7 +357,7 @@ describe('Chat stream consumption loop (idle timeout & resource cleanup)', () =>
 });
 
 describe('Answer generation invoke path & finalize contract', () => {
-  it('finalize executes without throwing when upstreamStatus is 200 or null', () => {
+  it('UT-AUDIT-01: 生成成功安全记账（合法三字段 JSON）', () => {
     let capturedAudit = null;
     const mockGuardContext = {
       finalize: ({
@@ -377,12 +377,17 @@ describe('Answer generation invoke path & finalize contract', () => {
       },
     };
 
-    // 模拟 answer/generate 成功生成路径的 finalize 调用
+    // C41：completionText 为入库用规范序列化三字段 JSON
+    const structuredCompletion = JSON.stringify({
+      summary: '结论',
+      keyPoints: ['要点1'],
+      nextStep: '下一步',
+    });
     assert.doesNotThrow(() => {
       mockGuardContext.finalize({
         status: 'ok',
         reason: 'generated_answer',
-        completionText: '<p>HTML Answer</p>',
+        completionText: structuredCompletion,
         upstreamStatus: 200,
         upstreamReached: true,
       });
@@ -392,6 +397,11 @@ describe('Answer generation invoke path & finalize contract', () => {
     assert.equal(capturedAudit.reason, 'generated_answer');
     assert.equal(capturedAudit.upstreamStatus, 200);
     assert.equal(capturedAudit.upstreamReached, true);
+    assert.ok(capturedAudit.completionText);
+    const parsed = JSON.parse(capturedAudit.completionText);
+    assert.equal(parsed.summary, '结论');
+    assert.deepEqual(parsed.keyPoints, ['要点1']);
+    assert.equal(parsed.nextStep, '下一步');
   });
 
   it('UT-AUDIT-02: 缓存命中安全记账且不计配额', () => {
@@ -469,21 +479,37 @@ describe('Answer generation invoke path & finalize contract', () => {
   });
 
   it('UT-QUOTA-CACHE-04: 对照：真实生成仍按上游触达计费（响应契约）', () => {
-    // handler 成功生成路径的响应与 finalize 契约（不计费不得误伤此路径）
+    // handler 成功生成路径的响应与 finalize 契约（不计费不得误伤此路径；对齐 C41 三字段）
+    const structured = {
+      summary: '短结论',
+      keyPoints: ['要点'],
+      nextStep: '去练题',
+    };
+    const answerJson = JSON.stringify(structured);
     const response = {
       code: 0,
-      data: { id: 1, answer: '<p>短</p>', cached: false },
+      data: {
+        id: 1,
+        summary: structured.summary,
+        keyPoints: structured.keyPoints,
+        nextStep: structured.nextStep,
+        answer: answerJson,
+        cached: false,
+      },
       message: 'success',
     };
     const finalizePayload = {
       status: 'ok',
       reason: 'generated_answer',
-      completionText: response.data.answer,
+      completionText: answerJson,
       upstreamStatus: 200,
       upstreamReached: true,
     };
 
     assert.equal(response.data.cached, false);
+    assert.equal(response.data.summary, '短结论');
+    assert.deepEqual(response.data.keyPoints, ['要点']);
+    assert.equal(response.data.nextStep, '去练题');
     assert.equal(finalizePayload.reason, 'generated_answer');
     assert.equal(finalizePayload.upstreamReached, true);
     assert.ok(

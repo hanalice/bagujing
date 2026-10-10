@@ -64,7 +64,7 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | C3  | feat | P1-1 | assist | split | 已拆为 C31 |
 | C31 | feat | P1-1 | auto | done | chat 接收最近 6 轮 messages，绑定当前题面 |
 | C4  | feat | P1-4 | manual | split | 已拆为 C41 / C42 |
-| C41 | feat | P1-4 | auto | todo | 解析生成返回 JSON 三字段，失败不入库 |
+| C41 | feat | P1-4 | auto | done | 解析生成返回 JSON 三字段，失败不入库 |
 | C42 | feat | P1-4 | auto | todo | 前端按三字段渲染，不再整篇模型 HTML |
 | C5  | fix | P1-6 | assist | split | 已拆为 C51 |
 | C51 | fix | P1-6 | auto | todo | 有上游 usage 则回写审计，否则标记估算 |
@@ -260,3 +260,4 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | 2026-09-23 | E1 依赖漏洞改为每月报告、不挡合并；高危按后续 milestone 排期 |
 | 2026-09-23 | C22 完成：FTS5 虚表查询，失败回退 LIKE |
 | 2026-10-01 | C31 完成：chat 接收最近 6 轮 messages，绑定当前题面 |
+| 2026-10-10 | C41 完成：解析生成返回 JSON 三字段，失败不入库 |
