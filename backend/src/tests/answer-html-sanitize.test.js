@@ -7,6 +7,7 @@ import {
   TEST_DB_PATH,
   configureRouteTestEnv,
   invokeRoute,
+  readAuditLines,
   restoreTestEnv,
   saveTestEnv,
   seedPromptBudgetDatabase,
@@ -140,30 +141,30 @@ describe('B21 / P0-7: 解析入库前服务端 HTML 白名单消毒', () => {
       try { fs.unlinkSync(TEST_AUDIT_PATH); } catch { /* ignore */ }
     });
 
-    it('IT-HTML-SANITIZE-01: 生成入库端到端闭环：库内无 script 与 javascript', async () => {
+    it('IT-HTML-SANITIZE-01: 生成路径脏 HTML 非整 JSON：502 且不入库（对齐 C41）', async () => {
+      const baselineRow = await getProblemDetailById(pool, 42);
+      const baselineAnswer = baselineRow?.answer ?? null;
+
       const response = await invokeRoute(app, '/api/problems/42/answer/generate', { force: true });
-      assert.equal(response.statusCode, 200);
+      assert.equal(response.statusCode, 502);
 
       const jsonPayload = response.callOrder.find((entry) => entry.op === 'json')?.payload;
-      assert.equal(jsonPayload?.code, 0);
+      assert.equal(jsonPayload?.code, 502);
+      assert.notEqual(jsonPayload?.code, 0);
 
-      // 1. 验证接口响应中的 answer 已经被白名单消毒
-      const apiAnswer = jsonPayload.data.answer;
-      assert.equal(/<\/?script/i.test(apiAnswer), false, 'API 响应中不得含 script 标签');
-      assert.equal(/javascript\s*:/i.test(apiAnswer), false, 'API 响应中不得含 javascript 伪协议');
-      assert.equal(/\sonerror\s*=/i.test(apiAnswer), false, 'API 响应中不得含 onerror');
-      assert.match(apiAnswer, /<p>解析正文<\/p>/);
-      assert.match(apiAnswer, /<p>结论已明确。<\/p>/);
-
-      // 2. 直接查询 SQLite 数据库 details 表，断言落库数据严格合规
       const row = await getProblemDetailById(pool, 42);
-      assert.ok(row, '数据库中应存在题目详情');
-      const dbAnswer = row.answer;
+      assert.equal(row?.answer ?? null, baselineAnswer);
+      const dbAnswer = row?.answer || '';
+      assert.equal(dbAnswer.includes('<script>stealTokens()</script>'), false);
+      assert.equal(/<\/?script/i.test(dbAnswer), false, `库内不得写入脏 HTML script: ${dbAnswer}`);
+      assert.equal(/javascript\s*:/i.test(dbAnswer), false, `库内不得写入 javascript: ${dbAnswer}`);
 
-      assert.equal(/<\/?script/i.test(dbAnswer), false, `SQLite details.answer 必须无 script 标签: ${dbAnswer}`);
-      assert.equal(/javascript\s*:/i.test(dbAnswer), false, `SQLite details.answer 必须无 javascript 伪协议: ${dbAnswer}`);
-      assert.equal(/\sonerror\s*=/i.test(dbAnswer), false, `SQLite details.answer 必须无 onerror: ${dbAnswer}`);
-      assert.match(dbAnswer, /<p>解析正文<\/p>/);
+      const [audit] = await readAuditLines(1);
+      assert.equal(audit.status, 'error');
+      assert.ok(
+        ['invalid_structured_answer', 'empty_answer'].includes(audit.reason),
+        `期望结构化失败 reason，实际: ${audit.reason}`,
+      );
     });
   });
 });

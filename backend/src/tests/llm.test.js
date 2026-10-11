@@ -469,10 +469,23 @@ describe('Answer generation invoke path & finalize contract', () => {
   });
 
   it('UT-QUOTA-CACHE-04: 对照：真实生成仍按上游触达计费（响应契约）', () => {
-    // handler 成功生成路径的响应与 finalize 契约（不计费不得误伤此路径）
+    // handler 成功生成路径的响应与 finalize 契约（不计费不得误伤此路径；对齐 C41 三字段）
+    const structured = {
+      summary: '短结论',
+      keyPoints: ['短要点'],
+      nextStep: '短下一步',
+    };
+    const answerJson = JSON.stringify(structured);
     const response = {
       code: 0,
-      data: { id: 1, answer: '<p>短</p>', cached: false },
+      data: {
+        id: 1,
+        answer: answerJson,
+        summary: structured.summary,
+        keyPoints: structured.keyPoints,
+        nextStep: structured.nextStep,
+        cached: false,
+      },
       message: 'success',
     };
     const finalizePayload = {
@@ -484,6 +497,9 @@ describe('Answer generation invoke path & finalize contract', () => {
     };
 
     assert.equal(response.data.cached, false);
+    assert.equal(response.data.summary, '短结论');
+    assert.deepEqual(response.data.keyPoints, ['短要点']);
+    assert.equal(response.data.nextStep, '短下一步');
     assert.equal(finalizePayload.reason, 'generated_answer');
     assert.equal(finalizePayload.upstreamReached, true);
     assert.ok(

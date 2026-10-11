@@ -111,6 +111,9 @@ describe('C6 / C61 / P1-8: 模型分层路由集成', () => {
     const json = response.callOrder.find((entry) => entry.op === 'json').payload;
     assert.equal(json.code, 0);
     assert.equal(json.data.cached, false);
+    assert.ok(json.data.summary);
+    assert.ok(Array.isArray(json.data.keyPoints));
+    assert.ok(json.data.nextStep);
     assert.equal(modelCalls.length, 1);
     assert.deepEqual(getUpstreamModelCall(modelCalls[0]), {
       model: 'generation-large-test',

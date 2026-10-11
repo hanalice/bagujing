@@ -235,19 +235,40 @@ export function invokeRoute(app, route, body, options = {}) {
   });
 }
 
+/** C41 合法三字段 JSON，供 generate 路径默认 stub（chat 流式仍用短文本） */
+export const MOCK_STRUCTURED_ANSWER_JSON = JSON.stringify({
+  summary: 'mock结论',
+  keyPoints: ['mock要点'],
+  nextStep: 'mock下一步',
+});
+
 // 安装只返回固定 OpenAI 兼容响应的 fetch stub，阻断所有外部网络访问。
-export function installMockModelFetch(calls) {
+export function installMockModelFetch(calls, options = {}) {
   const originalFetch = globalThis.fetch;
   const encoder = new TextEncoder();
+
+  // 每次请求再解析 content，便于集成套件在 beforeEach 切换 stub 正文。
+  const resolveInvokeContent = () => (
+    typeof options.invokeContent === 'string'
+      ? options.invokeContent
+      : MOCK_STRUCTURED_ANSWER_JSON
+  );
+  const resolveStreamContent = () => (
+    typeof options.streamContent === 'string'
+      ? options.streamContent
+      : '<p>mock answer</p>'
+  );
+
   globalThis.fetch = async (_url, init = {}) => {
     const request = JSON.parse(String(init.body));
     calls.push(request);
     if (request.stream) {
+      const streamContent = resolveStreamContent();
       const events = [
         `data: ${JSON.stringify({
           id: 'chatcmpl-test',
           object: 'chat.completion.chunk',
-          choices: [{ index: 0, delta: { role: 'assistant', content: '<p>mock answer</p>' }, finish_reason: null }],
+          choices: [{ index: 0, delta: { role: 'assistant', content: streamContent }, finish_reason: null }],
         })}\n\n`,
         `data: ${JSON.stringify({
           id: 'chatcmpl-test',
@@ -269,7 +290,11 @@ export function installMockModelFetch(calls) {
     return new Response(JSON.stringify({
       id: 'chatcmpl-test',
       object: 'chat.completion',
-      choices: [{ index: 0, message: { role: 'assistant', content: '<p>mock answer</p>' }, finish_reason: 'stop' }],
+      choices: [{
+        index: 0,
+        message: { role: 'assistant', content: resolveInvokeContent() },
+        finish_reason: 'stop',
+      }],
       usage: { prompt_tokens: 1, completion_tokens: 3, total_tokens: 4 },
     }), { status: 200, headers: { 'content-type': 'application/json' } });
   };

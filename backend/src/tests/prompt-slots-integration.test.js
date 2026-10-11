@@ -68,7 +68,11 @@ describe('B1 / P0-6: Prompt 分槽路由集成', () => {
     const response = await invokeRoute(app, '/api/problems/42/answer/generate', { force: true });
 
     assert.equal(response.statusCode, 200);
-    assert.equal(response.callOrder.find((entry) => entry.op === 'json').payload.code, 0);
+    const json = response.callOrder.find((entry) => entry.op === 'json').payload;
+    assert.equal(json.code, 0);
+    assert.ok(json.data.summary);
+    assert.ok(Array.isArray(json.data.keyPoints));
+    assert.ok(json.data.nextStep);
     assert.equal(modelCalls.length, 1);
     const { messages } = modelCalls[0];
     assert.equal(messages.length, 3);

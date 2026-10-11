@@ -352,7 +352,12 @@ describe('A7/P0-8: cached_answer does not consume quota (upstreamReached)', () =
   it('UT-QUOTA-CACHE-04: 对照：真实生成仍按上游触达计费', async () => {
     configureQuotaCacheEnv({ globalTokenLimit: 100000 });
     const guard = createAiGuard({ jwtSecret: 'test' });
-    const shortHtml = '<p>短答案</p>';
+    // C41：合法三字段 JSON 正文作为 completionText（Guard 仍按文本估算 token）
+    const structuredJson = JSON.stringify({
+      summary: '短结论',
+      keyPoints: ['短要点'],
+      nextStep: '短下一步',
+    });
 
     const http = mockHttp({
       method: 'POST',
@@ -363,7 +368,7 @@ describe('A7/P0-8: cached_answer does not consume quota (upstreamReached)', () =
     http.req.aiGuard.finalize({
       status: 'ok',
       reason: 'generated_answer',
-      completionText: shortHtml,
+      completionText: structuredJson,
       upstreamStatus: 200,
       // upstreamReached 默认 true：不得因 A7 误把生成路径记零
     });
@@ -372,7 +377,7 @@ describe('A7/P0-8: cached_answer does not consume quota (upstreamReached)', () =
     const generated = lines.find((l) => l.reason === 'generated_answer');
     assert.ok(generated);
     assert.ok(generated.totalTokens > 0, '真实生成须至少含 prompt 估算');
-    assert.equal(generated.completionTokens, estimateTokensByText(shortHtml));
+    assert.equal(generated.completionTokens, estimateTokensByText(structuredJson));
   });
 
   it('UT-QUOTA-CACHE-05: 仅 reason=cached_answer 但未传 upstreamReached 仍计费', async () => {

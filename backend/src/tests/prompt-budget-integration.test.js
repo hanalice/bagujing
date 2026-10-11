@@ -104,8 +104,12 @@ describe('C1 / P1-3: Prompt 预算与模型调用/审计集成', () => {
 
     assert.equal(response.statusCode, 200);
     assert.equal(response.callOrder.filter((entry) => entry.op === 'json').length, 1);
-    assert.equal(response.callOrder.find((entry) => entry.op === 'json').payload.code, 0);
-    assert.equal(response.callOrder.find((entry) => entry.op === 'json').payload.data.cached, false);
+    const generateJson = response.callOrder.find((entry) => entry.op === 'json').payload;
+    assert.equal(generateJson.code, 0);
+    assert.equal(generateJson.data.cached, false);
+    assert.ok(generateJson.data.summary);
+    assert.ok(Array.isArray(generateJson.data.keyPoints));
+    assert.ok(generateJson.data.nextStep);
     assert.equal(modelCalls.length, 1);
 
     const request = modelCalls[0];
