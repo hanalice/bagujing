@@ -16,6 +16,7 @@ import {
   saveTestEnv,
   seedPromptBudgetDatabase,
 } from './prompt-budget-route-helpers.js';
+import { GENERATE_ANSWER_SYSTEM_PROMPT } from '../structured-answer.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SERVER_EXPRESS_PATH = path.resolve(__dirname, '../server-express.js');
@@ -110,10 +111,8 @@ function assertRoleAndStructurePreserved(systemPrompt) {
 describe('B22 / P0-7: 助教 system 不再要求仅 HTML 输出', () => {
   const serverSource = fs.readFileSync(SERVER_EXPRESS_PATH, 'utf8');
   const chatSystemPrompt = extractSystemPromptForRoute(serverSource, "app.post('/api/chat'");
-  const generateSystemPrompt = extractSystemPromptForRoute(
-    serverSource,
-    "app.post('/api/problems/:id/answer/generate'",
-  );
+  // generate Prompt 已迁至 structured-answer.js 常量（C41），不再从字面量拼接抽取
+  const generateSystemPrompt = GENERATE_ANSWER_SYSTEM_PROMPT;
 
   it('UT-CHAT-PROMPT-01: 助教 system 不再要求「仅 body 内 HTML」', () => {
     assertNoHtmlOnlyMandate(chatSystemPrompt);
@@ -127,18 +126,18 @@ describe('B22 / P0-7: 助教 system 不再要求仅 HTML 输出', () => {
     assertRoleAndStructurePreserved(chatSystemPrompt);
   });
 
-  it('UT-CHAT-PROMPT-04: 对照：answer/generate 的 HTML Prompt 不在 B22 范围', () => {
+  it('UT-CHAT-PROMPT-04: 对照：answer/generate 的 Prompt 不在 B22 范围', () => {
     assertNoHtmlOnlyMandate(chatSystemPrompt);
     assertNoForcedHtmlTags(chatSystemPrompt);
-    // generate 仍可含 HTML 指令；出现时不得因此判本项 FAIL（此处仅作范围对照，不要求其去掉）
-    const generateStillMentionsHtml =
-      generateSystemPrompt.includes('HTML 片段')
-      || generateSystemPrompt.includes('仅 body 内')
-      || generateSystemPrompt.includes('<p>/<h3>');
+    // generate 是否含/已去掉 HTML 指令属 C41，不得据此判 B22 PASS/FAIL
+    const generateMentionsJsonFields =
+      generateSystemPrompt.includes('summary')
+      && generateSystemPrompt.includes('keyPoints')
+      && generateSystemPrompt.includes('nextStep');
     assert.equal(
-      typeof generateStillMentionsHtml,
+      typeof generateMentionsJsonFields,
       'boolean',
-      '对照：generate Prompt 是否含 HTML 字样不影响 B22 PASS',
+      '对照：generate Prompt 形态不影响 B22 PASS',
     );
     // 证明两处文案不同路由、本项只约束 chat
     assert.notEqual(chatSystemPrompt, generateSystemPrompt);
