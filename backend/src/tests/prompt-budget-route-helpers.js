@@ -266,10 +266,16 @@ export function installMockModelFetch(calls) {
       return new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } });
     }
 
+    // C41：非流式 generation 须返回可解析的三字段 JSON，避免共享 mock 把既有 IT 打成 502
+    const structuredContent = JSON.stringify({
+      summary: 'mock 结论',
+      keyPoints: ['mock 要点'],
+      nextStep: 'mock 下一步',
+    });
     return new Response(JSON.stringify({
       id: 'chatcmpl-test',
       object: 'chat.completion',
-      choices: [{ index: 0, message: { role: 'assistant', content: '<p>mock answer</p>' }, finish_reason: 'stop' }],
+      choices: [{ index: 0, message: { role: 'assistant', content: structuredContent }, finish_reason: 'stop' }],
       usage: { prompt_tokens: 1, completion_tokens: 3, total_tokens: 4 },
     }), { status: 200, headers: { 'content-type': 'application/json' } });
   };

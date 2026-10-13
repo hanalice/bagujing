@@ -110,7 +110,12 @@ describe('B21 / P0-7: 解析入库前服务端 HTML 白名单消毒', () => {
       ({ app } = await import('../server-express.js'));
 
       originalFetch = globalThis.fetch;
-      // Mock LLM API：返回包含恶意标签和伪协议的复杂 HTML
+      // C41 后整篇 HTML 不再入库；B21 作用于合法三字段字符串内的危险片段
+      const structuredWithXss = JSON.stringify({
+        summary: '<script>stealTokens()</script>解析正文',
+        keyPoints: ['<a href="javascript:alert(1)">点我领奖</a>', '<img src="x" onerror="evil()">保留要点'],
+        nextStep: '结论已明确。',
+      });
       globalThis.fetch = async () => new Response(JSON.stringify({
         id: 'chatcmpl-xss-test',
         object: 'chat.completion',
@@ -118,7 +123,7 @@ describe('B21 / P0-7: 解析入库前服务端 HTML 白名单消毒', () => {
           index: 0,
           message: {
             role: 'assistant',
-            content: '<script>stealTokens()</script><p>解析正文</p><a href="javascript:alert(1)">点我领奖</a><img src="x" onerror="evil()"><p>结论已明确。</p>',
+            content: structuredWithXss,
           },
           finish_reason: 'stop',
         }],
@@ -147,13 +152,15 @@ describe('B21 / P0-7: 解析入库前服务端 HTML 白名单消毒', () => {
       const jsonPayload = response.callOrder.find((entry) => entry.op === 'json')?.payload;
       assert.equal(jsonPayload?.code, 0);
 
-      // 1. 验证接口响应中的 answer 已经被白名单消毒
+      // 1. 验证接口响应中的 answer / 三字段已经被白名单消毒
       const apiAnswer = jsonPayload.data.answer;
       assert.equal(/<\/?script/i.test(apiAnswer), false, 'API 响应中不得含 script 标签');
       assert.equal(/javascript\s*:/i.test(apiAnswer), false, 'API 响应中不得含 javascript 伪协议');
       assert.equal(/\sonerror\s*=/i.test(apiAnswer), false, 'API 响应中不得含 onerror');
-      assert.match(apiAnswer, /<p>解析正文<\/p>/);
-      assert.match(apiAnswer, /<p>结论已明确。<\/p>/);
+      assert.match(apiAnswer, /解析正文/);
+      assert.match(apiAnswer, /结论已明确。/);
+      assert.equal(/<\/?script/i.test(jsonPayload.data.summary || ''), false);
+      assert.equal(/javascript\s*:/i.test(JSON.stringify(jsonPayload.data.keyPoints || [])), false);
 
       // 2. 直接查询 SQLite 数据库 details 表，断言落库数据严格合规
       const row = await getProblemDetailById(pool, 42);
@@ -163,7 +170,7 @@ describe('B21 / P0-7: 解析入库前服务端 HTML 白名单消毒', () => {
       assert.equal(/<\/?script/i.test(dbAnswer), false, `SQLite details.answer 必须无 script 标签: ${dbAnswer}`);
       assert.equal(/javascript\s*:/i.test(dbAnswer), false, `SQLite details.answer 必须无 javascript 伪协议: ${dbAnswer}`);
       assert.equal(/\sonerror\s*=/i.test(dbAnswer), false, `SQLite details.answer 必须无 onerror: ${dbAnswer}`);
-      assert.match(dbAnswer, /<p>解析正文<\/p>/);
+      assert.match(dbAnswer, /解析正文/);
     });
   });
 });

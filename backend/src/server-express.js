@@ -20,6 +20,11 @@ import {
 } from './rag-fts.js';
 import { createLlmModel } from './llm.js';
 import { sanitizeHtml } from './security/html-sanitizer.js';
+import {
+  ANSWER_GENERATE_SYSTEM_PROMPT,
+  parseStructuredAnswer,
+  serializeStructuredAnswer,
+} from './answer-structured.js';
 
 import { createSqlitePool } from './db/sqlite-pool.js';
 import { initCategorySchema, listCategories, countCategories, listCategoryGroupNames } from './db/category-repo.js';
@@ -505,21 +510,6 @@ const sanitizeUserText = (value, maxLen) => {
   return text.replaceAll(String.fromCodePoint(0), '').slice(0, maxLen);
 };
 
-const normalizeHtmlParagraphs = (value) => {
-  const text = typeof value === 'string' ? value.trim() : '';
-  if (!text) return '';
-  if (/<[^>]+>/.test(text)) return text;
-
-  const lines = text
-    .split(/\r?\n/)
-    .map(line => line.trim())
-    .filter(Boolean);
-
-  if (!lines.length) return '';
-
-  return lines.map(line => `<p>${line}</p>`).join('');
-};
-
 const isNonEmptyText = (value) => typeof value === 'string' && value.trim().length > 0;
 
 const parseJsonSafe = (value, fallback = null) => {
@@ -748,12 +738,7 @@ app.post('/api/problems/:id/answer/generate', authenticateToken, requirePermissi
       problemId: id,
     });
 
-    const systemPrompt =
-      '你是资深技术面试官。请直接输出可用于前端展示的 HTML 片段（仅 body 内内容，不要 markdown 代码块）。\n'
-      + '要求：\n'
-      + '1) 先给简短结论，再给分点说明；\n'
-      + '2) 内容准确、可落地，避免空话；\n'
-      + '3) 建议使用 <p>/<h3>/<ul>/<li> 标签。';
+    const systemPrompt = ANSWER_GENERATE_SYSTEM_PROMPT;
 
     const promptMessages = buildPromptMessages({
       systemPrompt,
@@ -784,19 +769,38 @@ app.post('/api/problems/:id/answer/generate', authenticateToken, requirePermissi
       new HumanMessage(promptMessages.user),
     ]);
 
-    const answerRaw = response.content;
-    const answerHtml = sanitizeHtml(normalizeHtmlParagraphs(answerRaw));
-
-    if (!isNonEmptyText(answerHtml)) {
-      finalizeGuard({ status: 'error', reason: 'empty_answer', promptTokens });
-      return res.status(502).json({ code: 502, message: 'Empty answer from AI model' });
+    const parsed = parseStructuredAnswer(response.content);
+    if (!parsed.ok) {
+      const reason = parsed.reason === 'empty_answer' ? 'empty_answer' : 'invalid_structured_answer';
+      const message = reason === 'empty_answer'
+        ? 'Empty answer from AI model'
+        : 'Invalid structured answer from AI model';
+      finalizeGuard({ status: 'error', reason, promptTokens });
+      return res.status(502).json({ code: 502, message });
     }
+
+    // B21：成功入库前对字符串字段做白名单消毒，不替代 JSON schema 校验
+    const structured = {
+      summary: sanitizeHtml(parsed.value.summary),
+      keyPoints: parsed.value.keyPoints.map((point) => sanitizeHtml(point)),
+      nextStep: sanitizeHtml(parsed.value.nextStep),
+    };
+    if (
+      !isNonEmptyText(structured.summary)
+      || !isNonEmptyText(structured.nextStep)
+      || !structured.keyPoints.every((point) => typeof point === 'string')
+    ) {
+      finalizeGuard({ status: 'error', reason: 'invalid_structured_answer', promptTokens });
+      return res.status(502).json({ code: 502, message: 'Invalid structured answer from AI model' });
+    }
+
+    const answerStored = serializeStructuredAnswer(structured);
 
     await upsertProblemAnswerById(pool, {
       id,
       categoryId: problem?.categoryId,
       name: detail?.name || problem?.briefName,
-      answer: answerHtml,
+      answer: answerStored,
       keyPoints: problem?.keyPoints,
       companies,
       years,
@@ -805,7 +809,7 @@ app.post('/api/problems/:id/answer/generate', authenticateToken, requirePermissi
     finalizeGuard({
       status: 'ok',
       reason: 'generated_answer',
-      completionText: answerHtml,
+      completionText: answerStored,
       upstreamStatus: 200,
       promptTokens,
     });
@@ -814,7 +818,10 @@ app.post('/api/problems/:id/answer/generate', authenticateToken, requirePermissi
       code: 0,
       data: {
         id: Number(id),
-        answer: answerHtml,
+        answer: answerStored,
+        summary: structured.summary,
+        keyPoints: structured.keyPoints,
+        nextStep: structured.nextStep,
         cached: false,
       },
       message: 'success',
@@ -986,6 +993,9 @@ export {
   PROBLEMS_FTS_TABLE,
   normalizeChatHistory,
   CHAT_HISTORY_WINDOW,
+  ANSWER_GENERATE_SYSTEM_PROMPT,
+  parseStructuredAnswer,
+  serializeStructuredAnswer,
 };
 
 // 启动服务（单测通过 BAGUJING_SKIP_LISTEN=1 跳过 listen，便于离线挂载 /api/chat）
