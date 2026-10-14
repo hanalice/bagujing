@@ -97,16 +97,26 @@ describe('B21 / P0-7: 解析入库前服务端 HTML 白名单消毒', () => {
     });
   });
 
-  describe('集成测试: 生成解析入库端到端闭环 (answer/generate -> SQLite)', () => {
+  describe('集成测试: 生成路径拒收脏 HTML（对齐 C41）', () => {
     const savedEnv = saveTestEnv();
     let app;
     let originalFetch;
     let pool;
+    const SAFE_SNAPSHOT = 'SAFE-B21-PRE';
+    const DIRTY_HTML =
+      '<script>stealCookie()</script><p>解析正文</p><a href="javascript:xss()">链接</a>';
 
     before(async () => {
       configureRouteTestEnv();
       await seedPromptBudgetDatabase();
       pool = createSqlitePool({ filename: TEST_DB_PATH });
+      const { upsertProblemDetail } = await import('../db/problem-detail-repo.js');
+      await upsertProblemDetail(pool, {
+        id: 42,
+        group_id: 1,
+        name: '缓存一致性设计',
+        answer: SAFE_SNAPSHOT,
+      });
       ({ app } = await import('../server-express.js'));
 
       originalFetch = globalThis.fetch;
@@ -145,12 +155,13 @@ describe('B21 / P0-7: 解析入库前服务端 HTML 白名单消毒', () => {
       try { fs.unlinkSync(TEST_AUDIT_PATH); } catch { /* ignore */ }
     });
 
-    it('IT-HTML-SANITIZE-01: 生成入库端到端闭环：库内无 script 与 javascript', async () => {
+    it('IT-HTML-SANITIZE-01: 生成路径拒收脏 HTML：502 且库内不落 script', async () => {
       const response = await invokeRoute(app, '/api/problems/42/answer/generate', { force: true });
-      assert.equal(response.statusCode, 200);
+      assert.equal(response.statusCode, 502);
 
       const jsonPayload = response.callOrder.find((entry) => entry.op === 'json')?.payload;
-      assert.equal(jsonPayload?.code, 0);
+      assert.equal(jsonPayload?.code, 502);
+      assert.notEqual(jsonPayload?.code, 0);
 
       // 1. 验证接口响应中的 answer / 三字段已经被白名单消毒
       const apiAnswer = jsonPayload.data.answer;
