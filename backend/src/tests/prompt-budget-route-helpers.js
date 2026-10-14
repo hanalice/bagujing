@@ -266,10 +266,20 @@ export function installMockModelFetch(calls) {
       return new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } });
     }
 
+    // C41：generate 非流式路径须返回合法 JSON 三字段，否则路由会 502
+    const structuredAnswer = JSON.stringify({
+      summary: 'mock summary',
+      keyPoints: ['mock point'],
+      nextStep: 'mock next',
+    });
     return new Response(JSON.stringify({
       id: 'chatcmpl-test',
       object: 'chat.completion',
-      choices: [{ index: 0, message: { role: 'assistant', content: '<p>mock answer</p>' }, finish_reason: 'stop' }],
+      choices: [{
+        index: 0,
+        message: { role: 'assistant', content: structuredAnswer },
+        finish_reason: 'stop',
+      }],
       usage: { prompt_tokens: 1, completion_tokens: 3, total_tokens: 4 },
     }), { status: 200, headers: { 'content-type': 'application/json' } });
   };

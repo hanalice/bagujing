@@ -19,7 +19,11 @@ import {
   noteRagSql,
 } from './rag-fts.js';
 import { createLlmModel } from './llm.js';
-import { sanitizeHtml } from './security/html-sanitizer.js';
+import {
+  GENERATE_ANSWER_SYSTEM_PROMPT,
+  parseGeneratedAnswerJson,
+  serializeStructuredAnswer,
+} from './answer-structured-json.js';
 
 import { createSqlitePool } from './db/sqlite-pool.js';
 import { initCategorySchema, listCategories, countCategories, listCategoryGroupNames } from './db/category-repo.js';
@@ -505,21 +509,6 @@ const sanitizeUserText = (value, maxLen) => {
   return text.replaceAll(String.fromCodePoint(0), '').slice(0, maxLen);
 };
 
-const normalizeHtmlParagraphs = (value) => {
-  const text = typeof value === 'string' ? value.trim() : '';
-  if (!text) return '';
-  if (/<[^>]+>/.test(text)) return text;
-
-  const lines = text
-    .split(/\r?\n/)
-    .map(line => line.trim())
-    .filter(Boolean);
-
-  if (!lines.length) return '';
-
-  return lines.map(line => `<p>${line}</p>`).join('');
-};
-
 const isNonEmptyText = (value) => typeof value === 'string' && value.trim().length > 0;
 
 const parseJsonSafe = (value, fallback = null) => {
@@ -748,12 +737,8 @@ app.post('/api/problems/:id/answer/generate', authenticateToken, requirePermissi
       problemId: id,
     });
 
-    const systemPrompt =
-      '你是资深技术面试官。请直接输出可用于前端展示的 HTML 片段（仅 body 内内容，不要 markdown 代码块）。\n'
-      + '要求：\n'
-      + '1) 先给简短结论，再给分点说明；\n'
-      + '2) 内容准确、可落地，避免空话；\n'
-      + '3) 建议使用 <p>/<h3>/<ul>/<li> 标签。';
+    // C41：要求模型输出 JSON 三字段；校验失败 502 且不入库（前端渲染属 C42）
+    const systemPrompt = GENERATE_ANSWER_SYSTEM_PROMPT;
 
     const promptMessages = buildPromptMessages({
       systemPrompt,
@@ -784,19 +769,33 @@ app.post('/api/problems/:id/answer/generate', authenticateToken, requirePermissi
       new HumanMessage(promptMessages.user),
     ]);
 
-    const answerRaw = response.content;
-    const answerHtml = sanitizeHtml(normalizeHtmlParagraphs(answerRaw));
+    const answerRaw = typeof response?.content === 'string'
+      ? response.content
+      : Array.isArray(response?.content)
+        ? response.content.map((part) => (typeof part?.text === 'string' ? part.text : '')).join('')
+        : String(response?.content ?? '');
 
-    if (!isNonEmptyText(answerHtml)) {
-      finalizeGuard({ status: 'error', reason: 'empty_answer', promptTokens });
-      return res.status(502).json({ code: 502, message: 'Empty answer from AI model' });
+    const parsed = parseGeneratedAnswerJson(answerRaw);
+    if (!parsed.ok) {
+      finalizeGuard({
+        status: 'error',
+        reason: 'invalid_structured_answer',
+        promptTokens,
+        upstreamReached: true,
+      });
+      return res.status(502).json({
+        code: 502,
+        message: 'Invalid structured answer from AI model',
+      });
     }
+
+    const answerJson = serializeStructuredAnswer(parsed.value);
 
     await upsertProblemAnswerById(pool, {
       id,
       categoryId: problem?.categoryId,
       name: detail?.name || problem?.briefName,
-      answer: answerHtml,
+      answer: answerJson,
       keyPoints: problem?.keyPoints,
       companies,
       years,
@@ -805,7 +804,7 @@ app.post('/api/problems/:id/answer/generate', authenticateToken, requirePermissi
     finalizeGuard({
       status: 'ok',
       reason: 'generated_answer',
-      completionText: answerHtml,
+      completionText: answerJson,
       upstreamStatus: 200,
       promptTokens,
     });
@@ -814,7 +813,10 @@ app.post('/api/problems/:id/answer/generate', authenticateToken, requirePermissi
       code: 0,
       data: {
         id: Number(id),
-        answer: answerHtml,
+        summary: parsed.value.summary,
+        keyPoints: parsed.value.keyPoints,
+        nextStep: parsed.value.nextStep,
+        answer: answerJson,
         cached: false,
       },
       message: 'success',
