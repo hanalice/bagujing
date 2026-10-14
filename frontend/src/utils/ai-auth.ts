@@ -1,5 +1,5 @@
-const aiClientId = import.meta.env.VITE_AI_CLIENT_ID ?? 'web';
-const aiClientSecret = import.meta.env.VITE_AI_CLIENT_SECRET ?? '';
+const getAiClientId = (): string => String(import.meta.env.VITE_AI_CLIENT_ID ?? 'web');
+const getAiClientSecret = (): string => String(import.meta.env.VITE_AI_CLIENT_SECRET ?? '');
 
 const toHex = (bytes: Uint8Array): string => {
   return [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('');
@@ -44,7 +44,10 @@ const hmacSha256Hex = async (secret: string, text: string): Promise<string> => {
   return toHex(new Uint8Array(signature));
 };
 
-const normalizePath = (apiPath: string): string => {
+/**
+ * 将 axios 相对路径或完整 API 路径归一化为 Express `req.path`（含 `/api` 前缀）。
+ */
+export const normalizeAiPath = (apiPath: string): string => {
   const path = String(apiPath || '').trim();
   if (!path.startsWith('/')) return `/api/${path}`;
   if (path.startsWith('/api/')) return path;
@@ -53,7 +56,7 @@ const normalizePath = (apiPath: string): string => {
 };
 
 export const isAiProtectedPath = (apiPath: string): boolean => {
-  const normalized = normalizePath(apiPath);
+  const normalized = normalizeAiPath(apiPath);
   if (normalized === '/api/chat') return true;
   return /^\/api\/problems\/[^/]+\/answer\/generate$/.test(normalized);
 };
@@ -66,11 +69,14 @@ const getApiBase = () => {
   return import.meta.env.VITE_API_BASE_URL ?? '';
 };
 
+/**
+ * 向 /api/auth/token 换取匿名 AI 会话票（仅无用户 Bearer 时使用）。
+ */
 export const fetchAiSessionToken = async (id: string, secret: string): Promise<string> => {
   const ts = String(Date.now());
   const nonce = safeRandomUUID();
   const apiPath = '/auth/token';
-  const normalizedPath = normalizePath(apiPath);
+  const normalizedPath = normalizeAiPath(apiPath);
   const body = JSON.stringify({ clientId: id, ts, nonce });
   const bodyHash = await sha256Hex(body);
   const signPayload = `${ts}.${nonce}.POST.${normalizedPath}.${bodyHash}`;
@@ -93,18 +99,52 @@ export const fetchAiSessionToken = async (id: string, secret: string): Promise<s
   return data.token;
 };
 
+/**
+ * 无用户登录票时确保有可用的 AI 会话 JWT；已登录路径不得调用此函数覆盖 Bearer。
+ */
+export const ensureAiSessionToken = async (): Promise<string> => {
+  const now = Date.now();
+  if (currentSessionToken && now < sessionExpiresAt) {
+    return currentSessionToken;
+  }
+  const secret = getAiClientSecret();
+  if (!secret) throw new Error('Missing VITE_AI_CLIENT_SECRET');
+  return fetchAiSessionToken(getAiClientId(), secret);
+};
+
+/** 测试钩子：清空内存中的 AI 会话票缓存。 */
+export const resetAiSessionTokenForTests = () => {
+  currentSessionToken = null;
+  sessionExpiresAt = 0;
+};
+
+/**
+ * 构建与 backend `ai-guard.js` 一致的六个 HMAC 签名头。
+ * 对传入的 bodyText（实际发出的 JSON 字符串）做 SHA-256；path 归一化为 Express req.path。
+ */
 export const buildAiAuthHeaders = async (
   method: string,
   apiPath: string,
   bodyText: string
 ): Promise<Record<string, string>> => {
-  const now = Date.now();
-  if (!currentSessionToken || now >= sessionExpiresAt) {
-    if (!aiClientSecret) throw new Error('Missing VITE_AI_CLIENT_SECRET');
-    await fetchAiSessionToken(aiClientId, aiClientSecret);
-  }
+  const secret = getAiClientSecret();
+  if (!secret) throw new Error('Missing VITE_AI_CLIENT_SECRET');
+
+  const clientId = getAiClientId();
+  const ts = String(Date.now());
+  const nonce = safeRandomUUID();
+  const path = normalizeAiPath(apiPath);
+  const bodyHash = await sha256Hex(bodyText);
+  const methodUpper = String(method || 'GET').toUpperCase();
+  const signPayload = `${ts}.${nonce}.${methodUpper}.${path}.${bodyHash}`;
+  const signature = await hmacSha256Hex(secret, signPayload);
 
   return {
-    token: currentSessionToken || '',
+    'X-Client-Id': clientId,
+    'X-Client-Token': secret,
+    'X-Ts': ts,
+    'X-Nonce': nonce,
+    'X-Body-Sha256': bodyHash,
+    'X-Signature': signature,
   };
 };

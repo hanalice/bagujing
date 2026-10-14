@@ -12,8 +12,9 @@
 - **解析三字段前端渲染 (C42 / P1-4)**：题目详情「参考答案」面板按冻约字段 `summary` / `keyPoints` / `nextStep` 渲染，**禁止**对整篇模型 HTML/`answer` 字符串使用 `v-html`；旧库 HTML `answer` 走安全降级展示；其它字段 DOMPurify 保持不动（§4.1 `E2E-ANSWER-*` / §4.3 `UT-FE-ANSWER-*`）。
 - **前端多层级质量保障体系 (Frontend QA Strategy)**：
   - **端到端测试 (Frontend E2E - Playwright)**：覆盖核心用户链路（Main Path / Happy Path），利用 `page.route` 对大模型流式 SSE 接口进行轻量 Mock，保障真实路由鉴权、题目浏览及 AI 交互界面的稳定可用；**C42** 另锁解析面板三字段可见性与无整篇 `v-html`。
-  - **状态机与单元测试 (Frontend UT/IT - Vitest)**：针对 Pinia Store（`user`、`settings`、`breadcrumb`）、题目解析归一化/渲染辅助及工具函数，快速验证状态迁移、本地持久化与边界容错。
+  - **状态机与单元测试 (Frontend UT/IT - Vitest)**：针对 Pinia Store（`user`、`settings`、`breadcrumb`）、题目解析归一化/渲染辅助及工具函数，快速验证状态迁移、本地持久化与边界容错；**B33** 另锁登录态 `chat` / `answer/generate` 的 HMAC 六头注入（§4.5 `UT-FE-SIG-*`）。
   - **静态类型与代码质量 (Static Check - vue-tsc & ESLint)**：基于 `vue-tsc` 严格类型推断与 ESLint 规范，在编译期杜绝类型断言失误与样式违规。
+- **登录态 AI 请求 HMAC 头 (B33 / P0-5)**：`AI_REQUIRE_SIGNED_HEADERS=true` 时，已登录用户的 `POST /api/chat` 与 `POST /api/problems/:id/answer/generate` 也须带齐与 `ai-guard.js` 一致的六头；后端有会话也验签见 **B31**（§2.19 / §3.1），生产开开关见 **B32**。
 
 ---
 
@@ -239,7 +240,7 @@
 
 **做**：`AI_REQUIRE_SIGNED_HEADERS=true` 时，有登录会话也必须走完整验签；缺任一必填签名头 → HTTP **401**，JSON `{ code: 401, message: 'Missing AI auth headers' }`，审计 `decision: 'reject'` + `reason: 'missing_headers'`；代码侧默认值仍为 `false`（`String(process.env.AI_REQUIRE_SIGNED_HEADERS ?? 'false').toLowerCase() === 'true'`）。
 
-**不做 / residual**：不得把仓库代码默认改成 `true`；不得改 Nginx / 部署配置；生产打开开关见 **B32**（manual）。本表不得以「默认必须 true」作为 PASS。
+**不做 / residual**：不得把仓库代码默认改成 `true`；不得改 Nginx / 部署配置；生产打开开关见 **B32**（manual）。前端登录态补齐 HMAC 六头见 **B33**（§4.5 `UT-FE-SIG-*`）。本表不得以「默认必须 true」作为 PASS。
 
 **测法**：stub `mockHttp`（参考 `ai-guard-cache.test.js`）直接调用 `createAiGuard(...).middleware`；目标文件 `backend/src/security/ai-guard.js`；命中 AI 路由优先 `POST /api/chat`，路由覆盖含 `POST /api/problems/:id/answer/generate`。credentials：`AI_CLIENT_CREDENTIALS=web:change_me`（或等价）。
 
@@ -610,3 +611,38 @@ Prompt 内容来自数据库，不能只依赖客户端 `AI_MAX_INPUT_CHARS` 防
 | :--- | :--- | :--- | :--- |
 | `FE-STATIC-01` | 全局 TypeScript 类型检查 | 执行 `npm run type-check` (`vue-tsc --build`) | 零类型推断错误 (0 errors)。 |
 | `FE-STATIC-02` | ESLint 代码质量与规范 | 执行 `npm run lint` (`eslint . --cache`) | 符合工程代码规范，无语法、未定义引用或未处理的响应式解构错误。 |
+
+### 4.5 登录态 chat / generate 补齐 HMAC 签名头（B33 / P0-5）(`frontend/src/utils/request.ts` / `ai-auth.ts` / `AiAssistant.vue`)
+
+对应 **B33 / P0-5**（`docs/backlog.md` §B33）。后端在 `AI_REQUIRE_SIGNED_HEADERS=true` 时已对有会话强制验签（**B31** / §2.19）；本项锁**前端**：已登录用户调用受保护 AI 路径时也必须注入与 `backend/src/security/ai-guard.js` 一致的六头，避免仅有 Bearer 却缺签名导致 401。
+
+**做**：
+
+1. 六头齐全：`X-Client-Id`、`X-Client-Token`、`X-Ts`、`X-Nonce`、`X-Body-Sha256`、`X-Signature`（HTTP 头名大小写不敏感，断言可用小写读出）。
+2. `X-Client-Id` = `VITE_AI_CLIENT_ID`（未设时缺省 `web`）；`X-Client-Token` = `VITE_AI_CLIENT_SECRET`（明文等值，不得为空串冒充）。
+3. Body 哈希：对**实际发出的 JSON 字符串**做 SHA-256 hex（与 `JSON.stringify` 后写入 `fetch`/`axios` body 的那份字节一致，不得另序列化一份再哈希）。
+4. 签名基串：`` `${ts}.${nonce}.${METHOD}.${path}.${bodyHash}` ``，HMAC-SHA256 hex，密钥为同一 `VITE_AI_CLIENT_SECRET`；`METHOD` 为大写（如 `POST`）。
+5. `path` 必须是 Express `req.path`：`/api/chat`、`/api/problems/<id>/answer/generate`；**禁止**用 axios 相对路径（如 `/problems/42/answer/generate`，缺 `/api` 前缀）作为签名 path。
+6. `getHeaders` 与 `AiAssistant.vue` 的 chat `fetch`：受保护路径上**无论有没有**登录 Bearer 都注入六头；已有用户 Bearer（`localStorage.token`）时**保留**该 `Authorization`，**不得**换成 `/api/auth/token` 换来的票。
+7. 密钥缺失（`VITE_AI_CLIENT_SECRET` 未设或空串）时明确失败（抛错 / 拒绝发请求），**不要**发空 `X-Signature` / 空 `X-Client-Token`。
+
+**不做**：改 `AI_REQUIRE_SIGNED_HEADERS` 代码默认值（仍为 `false`，属 **B32**）；改后端验签规则（**B31**）；改 `/api/auth/token` 换票协议或其 JWT claims（**S1**）；把客户端密钥挪到别的存储或做轮换。
+
+**residual**：浏览器包仍可见 `VITE_AI_CLIENT_SECRET`（本项不解决可提取）；生产是否打开开关仍是 **B32**；`docs/security-ai-guard.md` 措辞属 **S5**。
+
+**协议对照**（与 §2.19 / `ai-guard.js` 一致）：`bodyHash = sha256Hex(bodyText)`；`signatureBase = \`${ts}.${nonce}.${METHOD}.${path}.${bodyHash}\``；`X-Signature = hmacHex(secret, signatureBase)`。测试用同一 secret 重算必须与发出的头逐字相等。
+
+**测法**：Vitest；建议文件 `frontend/src/utils/ai-auth.hmac.spec.ts`（或 `request.hmac.spec.ts`）直接测 `getHeaders` / `buildAiAuthHeaders`（或 B33 实现导出的签名辅助）；`frontend/src/views/AiAssistant.hmac.spec.ts`（或同目录等价）stub `fetch` 锁 chat 发出头；generate 经 stub axios/`post` 或拦截 `getHeaders('POST', '/problems/:id/answer/generate', body)`（注意 baseURL 场景下入参可能无 `/api` 前缀，签名 path 仍须归一化为 `/api/...`）。`it()` 标题须包含下表 ID。
+
+| ID | 用例标题 | 场景描述 | 预期结果 |
+| :--- | :--- | :--- | :--- |
+| `UT-FE-SIG-01` | 已登录 chat：`getHeaders` 带齐六头且保留用户 Bearer | 前置：`localStorage.token = 'user-jwt-login'`；`VITE_AI_CLIENT_ID` 未设或 `'web'`，`VITE_AI_CLIENT_SECRET = 'change_me'`；调用 `getHeaders('POST', '/api/chat', { message: 'hello', context: {} })`（或 AiAssistant 实际 payload 形状）。 | 1. 返回头含 `Authorization: Bearer user-jwt-login`（**不是** `/api/auth/token` 票）；<br>2. 同时含非空六头：`X-Client-Id`/`x-client-id` === `web`，`X-Client-Token` === `change_me`，以及 `X-Ts`、`X-Nonce`、`X-Body-Sha256`、`X-Signature`；<br>3. **零次**对 `/api/auth/token`（或 `/auth/token`）发起换票 `fetch`/`post`（可用 spy 断言）。 |
+| `UT-FE-SIG-02` | 已登录 generate：六头注入且 path 含 `/api` | 前置：同 UT-FE-SIG-01 的 token 与 secret；模拟 axios 入参 `getHeaders('POST', '/problems/42/answer/generate', { force: false })`（无 `/api` 前缀，对齐 `frontend/src/api/problemItem.ts` + `baseURL: '/api'`）；或经 `generateProblemAnswer('42', { force: false })` stub 网络层捕获最终请求头。 | 1. 发出请求头含完整六元组 + `Authorization: Bearer user-jwt-login`；<br>2. 用于签名的 `path`（从基串解析或实现导出）精确为 `/api/problems/42/answer/generate`，**不得**为 `/problems/42/answer/generate`；<br>3. `X-Client-Id` === `web`（或当前 `VITE_AI_CLIENT_ID`），`X-Client-Token` === secret。 |
+| `UT-FE-SIG-03` | AiAssistant chat `fetch`：登录态发出六头 | 前置：已登录（`localStorage.token` 非空）；挂载或调用 `AiAssistant` 发送路径；stub 全局 `fetch`，用户发送非空消息触发 `POST /api/chat`。 | 1. `fetch` 第 1 个参数 URL 为 `/api/chat`（或同源绝对 URL 且 pathname 为 `/api/chat`）；method `POST`；<br>2. `RequestInit.headers`（或 Headers 对象）含六头全部非空，且 `Authorization` 为 `Bearer <localStorage.token>`；<br>3. `body` 为 JSON 字符串，且 `X-Body-Sha256` 等于对该 **同一** `body` 字符串的 SHA-256 hex（禁止对另一份 `JSON.stringify` 结果哈希）。 |
+| `UT-FE-SIG-04` | 同一密钥按基串重算 HMAC 必须对上 | 前置：`VITE_AI_CLIENT_SECRET = 'change_me'`；对 chat 与 generate 各取一次已注入六头的结果（来自 `getHeaders` 或 UT-FE-SIG-03 捕获）；读取 `X-Ts`=`ts`、`X-Nonce`=`nonce`、`X-Body-Sha256`=`bodyHash`、`X-Signature`=`sig`。 | 1. 用 Web Crypto 或 Node `crypto` 计算 `expected = HMAC-SHA256-hex('change_me', \`${ts}.${nonce}.POST.${path}.${bodyHash}\`)`，其中 chat 的 `path === '/api/chat'`，generate 的 `path === '/api/problems/<id>/answer/generate'`；<br>2. `sig === expected`（大小写按 hex 小写或与实现对齐后全等）；<br>3. 两条路径各至少验证 1 次，证明不仅「有头」且算法与 Guard 一致。 |
+| `UT-FE-SIG-05` | Body 哈希锁定实际发出的 JSON 字符串 | 前置：构造含稳定键序的 payload，例如 chat `{ message: 'a', context: { problemId: 1 } }`；调用签名/`getHeaders` 后，再人为 `JSON.stringify` 出**键序不同**的另一份字符串（或增删空格）。 | 1. `X-Body-Sha256` === `sha256Hex(实际 bodyText)`，其中 `bodyText` 是将写入 `fetch`/`axios` 的那份；<br>2. 对「另一份」字符串的 hash **不等于** `X-Body-Sha256`（证明哈希对象是发出串，不是「语义等价对象」另序列化）；<br>3. 用发出串重算的 HMAC 与 `X-Signature` 一致（与 UT-FE-SIG-04 衔接）。 |
+| `UT-FE-SIG-06` | 无登录 Bearer 时受保护路径仍注入六头（对照） | 前置：**清除** `localStorage.token`；secret 已配置；调用 `getHeaders('POST', '/api/chat', { message: 'anon' })`。 | 1. 返回头仍含完整非空六元组；<br>2. 允许存在由既有换票逻辑设置的 `Authorization: Bearer <ai-session>`（S1 / 旧路径），但六头不得因此省略；<br>3. 证明「有无用户 Bearer」都不跳过 HMAC 头注入（与 B33「无论有没有登录 Bearer 都注入」字面一致）。 |
+| `UT-FE-SIG-07` | 已登录时不得用换票结果覆盖用户 Bearer | 前置：`localStorage.token = 'user-jwt-keep'`；spy `fetchAiSessionToken` / 对 `/auth/token` 的 `fetch`；调用 `getHeaders('POST', '/api/chat', { message: 'keep' })`。 | 1. `Authorization` 精确为 `Bearer user-jwt-keep`；<br>2. 换票 spy 调用次数为 **0**，或即便内部被调也不改写最终 `Authorization`；<br>3. 六头仍齐全（与 UT-FE-SIG-01 合取）。 |
+| `UT-FE-SIG-08` | 密钥缺失：明确失败且不发空签名 | 前置：`VITE_AI_CLIENT_SECRET` 未设或 `''`；`localStorage.token = 'user-jwt'`；对 `getHeaders('POST', '/api/chat', { message: 'nosecret' })` 与（若可）AiAssistant 发送各测一次。 | 1. 调用以抛错结束（错误信息含 `VITE_AI_CLIENT_SECRET` 或等价「密钥缺失」语义），**或**在发网络前中止；<br>2. **不得**返回/发出 `X-Signature: ''` / `X-Client-Token: ''` 的「空签名放行」头集合；<br>3. stub `fetch` 时受保护 AI 路径的成功发出次数为 0。 |
+| `UT-FE-SIG-09` | `VITE_AI_CLIENT_ID` 显式值写入 X-Client-Id | 前置：设置 `VITE_AI_CLIENT_ID = 'web-custom'`、`VITE_AI_CLIENT_SECRET = 'change_me'`；已登录；`getHeaders('POST', '/api/chat', { message: 'id' })`。 | 1. `X-Client-Id` === `web-custom`（不是硬编码死 `web`）；<br>2. `X-Client-Token` === `change_me`；<br>3. 其余四头非空且 UT-FE-SIG-04 重算可通过。 |
+| `UT-FE-SIG-10` | B33 边界：不要求改后端默认开关 / 换票协议 | 前置：只读审查本小节测试断言与 B33 **不做**列表；可选：确认用例未要求 `AI_REQUIRE_SIGNED_HEADERS` 默认 `true`，未断言修改 `/api/auth/token` body/claims。 | 1. 本表 PASS 判据仅约束前端六头注入、path 归一化、Bearer 保留与缺密钥失败；<br>2. **不得**以「代码默认必须 true」或「必须改 token 换票 JWT」为 FAIL 条件（后者属 B32 / S1）；<br>3. 与 §2.19 UT-GUARD-SIG-01 / SEC-GUARD-08/09 的 residual 分界一致。 |
