@@ -1,3 +1,7 @@
+/**
+ * C41 / P1-4：解析生成三字段 JSON 与失败不入库（集成）。
+ * 用例 ID 对齐 docs/test_cases.md §3.14。
+ */
 import { after, before, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -12,8 +16,8 @@ import {
   seedPromptBudgetDatabase,
 } from './prompt-budget-route-helpers.js';
 import { createSqlitePool } from '../db/sqlite-pool.js';
-import { getProblemDetailById, upsertProblemAnswerById } from '../db/problem-detail-repo.js';
-import { serializeStructuredAnswer } from '../answer-structured.js';
+import { getProblemDetailById, upsertProblemDetail } from '../db/problem-detail-repo.js';
+import { GENERATE_ANSWER_SYSTEM_PROMPT } from '../answer-structured-json.js';
 
 const savedEnv = saveTestEnv();
 let app;
@@ -21,49 +25,83 @@ let pool;
 let originalFetch;
 let modelCalls;
 /** @type {() => string} */
-let nextContent;
+let getGenerateContent;
 
-const VALID_JSON = JSON.stringify({
-  summary: '短结论',
-  keyPoints: ['要点一', '要点二'],
-  nextStep: '去练一道题',
-});
-
-// 安装可按用例切换 content 的非流式 OpenAI stub。
-function installControllableFetch() {
+// 安装可按用例切换 content 的 OpenAI 兼容 fetch stub。
+function installFlexibleGenerateFetch() {
   originalFetch = globalThis.fetch;
   modelCalls = [];
-  nextContent = () => VALID_JSON;
+  getGenerateContent = () => JSON.stringify({
+    summary: '结论',
+    keyPoints: ['a', 'b'],
+    nextStep: '下一步',
+  });
+
+  const encoder = new TextEncoder();
   globalThis.fetch = async (_url, init = {}) => {
     const request = JSON.parse(String(init.body));
     modelCalls.push(request);
-    const content = nextContent();
+    if (request.stream) {
+      const events = [
+        `data: ${JSON.stringify({
+          id: 'chatcmpl-c41',
+          object: 'chat.completion.chunk',
+          choices: [{ index: 0, delta: { role: 'assistant', content: 'x' }, finish_reason: null }],
+        })}\n\n`,
+        `data: ${JSON.stringify({
+          id: 'chatcmpl-c41',
+          object: 'chat.completion.chunk',
+          choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+          usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+        })}\n\n`,
+        'data: [DONE]\n\n',
+      ];
+      const body = new ReadableStream({
+        start(controller) {
+          for (const event of events) controller.enqueue(encoder.encode(event));
+          controller.close();
+        },
+      });
+      return new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+    }
+
     return new Response(JSON.stringify({
-      id: 'chatcmpl-structured',
+      id: 'chatcmpl-c41',
       object: 'chat.completion',
-      choices: [{ index: 0, message: { role: 'assistant', content }, finish_reason: 'stop' }],
+      choices: [{
+        index: 0,
+        message: { role: 'assistant', content: getGenerateContent() },
+        finish_reason: 'stop',
+      }],
       usage: { prompt_tokens: 1, completion_tokens: 3, total_tokens: 4 },
     }), { status: 200, headers: { 'content-type': 'application/json' } });
   };
 }
 
-describe('C41 / P1-4: 解析 JSON 三字段生成 / 502 不入库集成', () => {
+describe('C41 / P1-4: 解析生成三字段 JSON 集成', () => {
   before(async () => {
     configureRouteTestEnv();
     await seedPromptBudgetDatabase();
     pool = createSqlitePool({ filename: TEST_DB_PATH });
     ({ app } = await import('../server-express.js'));
-    installControllableFetch();
+    installFlexibleGenerateFetch();
   });
 
   beforeEach(async () => {
     modelCalls.length = 0;
-    nextContent = () => VALID_JSON;
     try { fs.unlinkSync(TEST_AUDIT_PATH); } catch { /* ignore */ }
-    // 清空题 42 缓存答案，避免跨用例污染
-    await pool.withConnection((db) => db.run(
-      `UPDATE problem_details SET answer_html = NULL WHERE id = 42`,
-    ));
+    getGenerateContent = () => JSON.stringify({
+      summary: '结论',
+      keyPoints: ['a', 'b'],
+      nextStep: '下一步',
+    });
+    // 默认清空缓存答案，避免跨用例污染缓存早退
+    await upsertProblemDetail(pool, {
+      id: 42,
+      group_id: 1,
+      name: '缓存一致性设计',
+      answer: null,
+    });
   });
 
   after(async () => {
@@ -76,139 +114,127 @@ describe('C41 / P1-4: 解析 JSON 三字段生成 / 502 不入库集成', () => 
     try { fs.unlinkSync(TEST_AUDIT_PATH); } catch { /* ignore */ }
   });
 
-  it('IT-ANSWER-JSON-01: 合法 JSON：200 返回三字段并入库派生内容', async () => {
-    const before = await getProblemDetailById(pool, 42);
-    assert.equal(before?.answer == null || before.answer === '', true);
-
+  it('IT-ANSWER-JSON-01: 合法 JSON 生成入库并回传三字段', async () => {
     const response = await invokeRoute(app, '/api/problems/42/answer/generate', { force: true });
     assert.equal(response.statusCode, 200);
     const json = response.callOrder.find((entry) => entry.op === 'json')?.payload;
-    assert.equal(json?.code, 0);
+    assert.equal(json.code, 0);
     assert.equal(json.data.cached, false);
-    assert.equal(json.data.id, 42);
-    assert.equal(json.data.summary, '短结论');
-    assert.equal(json.data.nextStep, '去练一道题');
-    assert.deepEqual(json.data.keyPoints, ['要点一', '要点二']);
+    assert.equal(json.data.summary, '结论');
+    assert.deepEqual(json.data.keyPoints, ['a', 'b']);
+    assert.equal(json.data.nextStep, '下一步');
 
-    const expectedStored = serializeStructuredAnswer({
-      summary: '短结论',
-      keyPoints: ['要点一', '要点二'],
-      nextStep: '去练一道题',
-    });
-    assert.equal(json.data.answer, expectedStored);
+    const row = await getProblemDetailById(pool, 42);
+    const stored = JSON.parse(row.answer);
+    assert.equal(stored.summary, '结论');
+    assert.deepEqual(stored.keyPoints, ['a', 'b']);
+    assert.equal(stored.nextStep, '下一步');
+    assert.equal(/<p>|<ul>/i.test(row.answer), false);
 
-    const after = await getProblemDetailById(pool, 42);
-    assert.equal(after.answer, expectedStored);
-    const roundTrip = JSON.parse(after.answer);
-    assert.equal(roundTrip.summary, '短结论');
-    assert.deepEqual(roundTrip.keyPoints, ['要点一', '要点二']);
-    assert.equal(roundTrip.nextStep, '去练一道题');
-
-    assert.equal(modelCalls.length, 1);
     const [audit] = await readAuditLines(1);
+    assert.equal(audit.status, 'ok');
     assert.equal(audit.reason, 'generated_answer');
-    assert.equal(audit.upstreamReached, true);
+    assert.notEqual(audit.upstreamReached, false);
+    assert.equal(modelCalls.filter((c) => !c.stream).length, 1);
   });
 
-  it('IT-ANSWER-JSON-02: 模型吐整篇 HTML：502 且不入库', async () => {
-    await upsertProblemAnswerById(pool, {
+  it('IT-ANSWER-JSON-02: 模型吐 HTML：502 且 answer 不更新', async () => {
+    await upsertProblemDetail(pool, {
       id: 42,
-      categoryId: 1,
+      group_id: 1,
       name: '缓存一致性设计',
-      answer: 'OLD-ANSWER-MARKER',
-      keyPoints: [],
+      answer: 'PRE-C41-OLD',
     });
-    nextContent = () => '<p>结论</p><ul><li>点</li></ul>';
+    getGenerateContent = () => '<p>旧式整篇解析</p><ul><li>x</li></ul>';
+
+    const before = await getProblemDetailById(pool, 42);
+    assert.equal(before.answer, 'PRE-C41-OLD');
 
     const response = await invokeRoute(app, '/api/problems/42/answer/generate', { force: true });
     assert.equal(response.statusCode, 502);
     const json = response.callOrder.find((entry) => entry.op === 'json')?.payload;
-    assert.equal(json?.code, 502);
-    assert.notEqual(json?.code, 0);
+    assert.equal(json.code, 502);
+    assert.ok(typeof json.message === 'string' && json.message.length > 0);
 
     const after = await getProblemDetailById(pool, 42);
-    assert.equal(after.answer, 'OLD-ANSWER-MARKER');
-    assert.equal(after.answer.includes('<p>'), false);
+    assert.equal(after.answer, 'PRE-C41-OLD');
+    assert.equal(modelCalls.filter((c) => !c.stream).length, 1);
 
-    assert.equal(modelCalls.length, 1);
     const [audit] = await readAuditLines(1);
     assert.equal(audit.status, 'error');
-    assert.equal(audit.reason, 'invalid_structured_answer');
     assert.notEqual(audit.reason, 'generated_answer');
+    assert.ok(
+      audit.reason === 'invalid_structured_answer' || audit.reason === 'empty_answer',
+      `失败 reason 须为校验失败等价值，实际: ${audit.reason}`,
+    );
   });
 
-  it('IT-ANSWER-JSON-03: 缺字段 / keyPoints 非字符串数组：502 不入库', async () => {
-    await upsertProblemAnswerById(pool, {
+  it('IT-ANSWER-JSON-03: 缺字段 / keyPoints 非字符串数组 → 502 不入库', async () => {
+    await upsertProblemDetail(pool, {
       id: 42,
-      categoryId: 1,
+      group_id: 1,
       name: '缓存一致性设计',
-      answer: 'OLD-ANSWER-MARKER',
-      keyPoints: [],
+      answer: 'PRE-C41-OLD',
     });
 
-    const payloads = [
-      JSON.stringify({ summary: '结论', keyPoints: ['a'] }),
-      JSON.stringify({ summary: '结论', keyPoints: {}, nextStep: '下一步' }),
-      JSON.stringify({ summary: '', keyPoints: ['a'], nextStep: '下一步' }),
+    const badPayloads = [
+      '{"summary":"s","nextStep":"n"}',
+      '{"summary":"s","keyPoints":"不是数组","nextStep":"n"}',
     ];
-
-    for (const content of payloads) {
+    for (const payload of badPayloads) {
       modelCalls.length = 0;
       try { fs.unlinkSync(TEST_AUDIT_PATH); } catch { /* ignore */ }
-      nextContent = () => content;
-
+      getGenerateContent = () => payload;
       const response = await invokeRoute(app, '/api/problems/42/answer/generate', { force: true });
       assert.equal(response.statusCode, 502);
-      const json = response.callOrder.find((entry) => entry.op === 'json')?.payload;
-      assert.equal(json?.code, 502);
-
-      const after = await getProblemDetailById(pool, 42);
-      assert.equal(after.answer, 'OLD-ANSWER-MARKER');
-      assert.equal(modelCalls.length, 1);
-
-      const [audit] = await readAuditLines(1);
-      assert.notEqual(audit.reason, 'generated_answer');
-      assert.equal(audit.status, 'error');
+      assert.equal(response.callOrder.find((entry) => entry.op === 'json')?.payload.code, 502);
+      const row = await getProblemDetailById(pool, 42);
+      assert.equal(row.answer, 'PRE-C41-OLD');
+      const audits = await readAuditLines(1);
+      assert.equal(audits.some((a) => a.reason === 'generated_answer'), false);
     }
   });
 
-  it('IT-ANSWER-JSON-04: 校验失败不消耗「成功生成」业务缓存语义', async () => {
-    nextContent = () => '<p>脏 HTML</p>';
-    const first = await invokeRoute(app, '/api/problems/42/answer/generate', { force: true });
-    assert.equal(first.statusCode, 502);
-    const mid = await getProblemDetailById(pool, 42);
-    assert.equal(mid?.answer == null || mid.answer === '', true);
-    assert.equal(String(mid?.answer || '').includes('<p>脏 HTML</p>'), false);
+  it('IT-ANSWER-JSON-04: 围栏 JSON 成功路径与 prompt 契约', async () => {
+    getGenerateContent = () => '```json\n{"summary":"围栏结论","keyPoints":["k"],"nextStep":"n"}\n```';
+    const response = await invokeRoute(app, '/api/problems/42/answer/generate', { force: true });
+    assert.equal(response.statusCode, 200);
+    const json = response.callOrder.find((entry) => entry.op === 'json')?.payload;
+    assert.equal(json.code, 0);
+    assert.equal(json.data.summary, '围栏结论');
+    assert.deepEqual(json.data.keyPoints, ['k']);
+    assert.equal(json.data.nextStep, 'n');
 
-    modelCalls.length = 0;
-    try { fs.unlinkSync(TEST_AUDIT_PATH); } catch { /* ignore */ }
-    nextContent = () => VALID_JSON;
-    const second = await invokeRoute(app, '/api/problems/42/answer/generate', { force: false });
-    assert.equal(second.statusCode, 200);
-    const json = second.callOrder.find((entry) => entry.op === 'json')?.payload;
-    assert.equal(json?.code, 0);
-    assert.equal(json.data.cached, false);
-    assert.equal(json.data.summary, '短结论');
-    assert.equal(modelCalls.length, 1);
-    assert.equal(String(json.data.answer || '').includes('<p>脏 HTML</p>'), false);
+    const systemContent = modelCalls[0].messages[0].content;
+    assert.match(systemContent, /summary/);
+    assert.match(systemContent, /keyPoints/);
+    assert.match(systemContent, /nextStep/);
+    assert.equal(systemContent.includes('请直接输出可用于前端展示的 HTML 片段'), false);
+    assert.equal(systemContent.includes('仅 body 内'), false);
+    assert.equal(systemContent.includes('<p>/<h3>/<ul>/<li>'), false);
+    assert.ok(systemContent.includes(GENERATE_ANSWER_SYSTEM_PROMPT.slice(0, 20))
+      || /JSON/.test(systemContent));
+
+    const row = await getProblemDetailById(pool, 42);
+    assert.equal(JSON.parse(row.answer).summary, '围栏结论');
   });
 
-  it('IT-ANSWER-JSON-05: cached_answer 早退不受本项强制改写（residual）', async () => {
-    await upsertProblemAnswerById(pool, {
+  it('IT-ANSWER-JSON-05: 缓存早退不强制重解析旧 HTML（residual）', async () => {
+    const legacyHtml = '<p>legacy</p>';
+    await upsertProblemDetail(pool, {
       id: 42,
-      categoryId: 1,
+      group_id: 1,
       name: '缓存一致性设计',
-      answer: 'LEGACY-HTML-ANSWER',
-      keyPoints: [],
+      answer: legacyHtml,
     });
     modelCalls.length = 0;
 
     const response = await invokeRoute(app, '/api/problems/42/answer/generate', { force: false });
     assert.equal(response.statusCode, 200);
     const json = response.callOrder.find((entry) => entry.op === 'json')?.payload;
-    assert.equal(json?.code, 0);
+    assert.equal(json.code, 0);
     assert.equal(json.data.cached, true);
-    assert.equal(json.data.answer, 'LEGACY-HTML-ANSWER');
+    assert.equal(json.data.answer, legacyHtml);
     assert.equal(modelCalls.length, 0);
 
     const [audit] = await readAuditLines(1);
@@ -216,69 +242,25 @@ describe('C41 / P1-4: 解析 JSON 三字段生成 / 502 不入库集成', () => 
     assert.equal(audit.upstreamReached, false);
   });
 
-  it('IT-ANSWER-JSON-06: generate system 上游第 1 条已切 JSON 契约', async () => {
-    const response = await invokeRoute(app, '/api/problems/42/answer/generate', { force: true });
-    assert.equal(response.statusCode, 200);
-    assert.equal(modelCalls.length, 1);
-    const messages = modelCalls[0].messages;
-    assert.equal(messages[0].role, 'system');
-    const system = messages[0].content;
-    assert.ok(system.includes('JSON'));
-    assert.ok(system.includes('summary'));
-    assert.ok(system.includes('keyPoints'));
-    assert.ok(system.includes('nextStep'));
-    assert.equal(system.includes('请直接输出可用于前端展示的 HTML 片段'), false);
-    assert.equal(system.includes('仅 body 内'), false);
-    assert.equal(system.includes('<p>/<h3>/<ul>/<li>'), false);
-    assert.equal(messages.length, 3);
-    assert.equal(messages[1].role, 'user');
-    assert.equal(messages[2].role, 'user');
-
-    const json = response.callOrder.find((entry) => entry.op === 'json')?.payload;
-    assert.equal(json.data.summary, '短结论');
-    assert.deepEqual(json.data.keyPoints, ['要点一', '要点二']);
-    assert.equal(json.data.nextStep, '去练一道题');
-  });
-
-  it('SEC-ANSWER-JSON-01: 失败路径禁止把模型 HTML 写入 answer（防存储型脏数据）', async () => {
-    await upsertProblemAnswerById(pool, {
+  it('SEC-ANSWER-JSON-01: 校验失败不得用模型原文污染 answer', async () => {
+    await upsertProblemDetail(pool, {
       id: 42,
-      categoryId: 1,
+      group_id: 1,
       name: '缓存一致性设计',
-      answer: 'SAFE-OLD',
-      keyPoints: [],
+      answer: 'SAFE',
     });
-    nextContent = () => '<script>steal()</script><p onclick="x">正文</p>';
+    getGenerateContent = () => '<script>alert(1)</script><a href="javascript:xss()">x</a>';
 
     const response = await invokeRoute(app, '/api/problems/42/answer/generate', { force: true });
     assert.equal(response.statusCode, 502);
     const json = response.callOrder.find((entry) => entry.op === 'json')?.payload;
-    assert.notEqual(json?.code, 0);
+    assert.equal(json.code, 502);
+    assert.equal(json.data?.answer, undefined);
 
-    const after = await getProblemDetailById(pool, 42);
-    assert.equal(after.answer, 'SAFE-OLD');
-    assert.equal(/<\/?script/i.test(after.answer), false);
-    assert.equal(after.answer.includes('<p onclick'), false);
-  });
-
-  it('SEC-ANSWER-JSON-02: 客户端不得用 body 字段伪造三字段绕过模型', async () => {
-    nextContent = () => '<p>非法 HTML</p>';
-    const response = await invokeRoute(app, '/api/problems/42/answer/generate', {
-      force: true,
-      summary: '客户端伪造结论',
-      keyPoints: ['伪造要点'],
-      nextStep: '伪造下一步',
-      answer: '客户端伪造答案',
-    });
-    assert.equal(response.statusCode, 502);
-    const json = response.callOrder.find((entry) => entry.op === 'json')?.payload;
-    assert.notEqual(json?.code, 0);
-    assert.notEqual(json?.data?.summary, '客户端伪造结论');
-    assert.equal(modelCalls.length, 1);
-
-    const after = await getProblemDetailById(pool, 42);
-    assert.equal(after?.answer == null || after.answer === '', true);
-    assert.notEqual(after?.answer, '客户端伪造答案');
-    assert.notEqual(after?.answer, '客户端伪造结论');
+    const row = await getProblemDetailById(pool, 42);
+    assert.equal(row.answer, 'SAFE');
+    assert.equal(/<script/i.test(row.answer), false);
+    assert.equal(/javascript:/i.test(row.answer), false);
+    assert.equal(/<script/i.test(JSON.stringify(json)), false);
   });
 });

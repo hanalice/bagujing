@@ -16,6 +16,7 @@ import {
   saveTestEnv,
   seedPromptBudgetDatabase,
 } from './prompt-budget-route-helpers.js';
+import { GENERATE_ANSWER_SYSTEM_PROMPT } from '../answer-structured-json.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SERVER_EXPRESS_PATH = path.resolve(__dirname, '../server-express.js');
@@ -110,10 +111,13 @@ function assertRoleAndStructurePreserved(systemPrompt) {
 describe('B22 / P0-7: 助教 system 不再要求仅 HTML 输出', () => {
   const serverSource = fs.readFileSync(SERVER_EXPRESS_PATH, 'utf8');
   const chatSystemPrompt = extractSystemPromptForRoute(serverSource, "app.post('/api/chat'");
-  const generateSystemPrompt = extractSystemPromptForRoute(
+  // C41 后 generate 使用导出常量；断言源码仍注入该常量，文案取自模块
+  assert.match(
     serverSource,
-    "app.post('/api/problems/:id/answer/generate'",
+    /const systemPrompt\s*=\s*GENERATE_ANSWER_SYSTEM_PROMPT/,
+    'generate 路由须使用 GENERATE_ANSWER_SYSTEM_PROMPT',
   );
+  const generateSystemPrompt = GENERATE_ANSWER_SYSTEM_PROMPT;
 
   it('UT-CHAT-PROMPT-01: 助教 system 不再要求「仅 body 内 HTML」', () => {
     assertNoHtmlOnlyMandate(chatSystemPrompt);
