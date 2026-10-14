@@ -1,9 +1,13 @@
 <script setup lang="ts">
-  import { ref,  watch } from 'vue';
+  import { computed, ref, watch } from 'vue';
   import { generateProblemAnswer, getProblemById, type Problem } from '@/api/problemItem';
     import DOMPurify from 'dompurify';
     import { useBreadcrumbStore } from '@/stores/breadcrumb'
     import LabelTag from '@/components/LabelTag.vue';
+    import {
+      legacyAnswerToPlainText,
+      normalizeStructuredAnswer,
+    } from '@/utils/normalizeStructuredAnswer';
 
     const props = defineProps<{
       problemId: number;
@@ -15,6 +19,8 @@
 
     const breadcrumbStore = useBreadcrumbStore()
     const problem = ref<Problem>();
+    /** 供归一化的答案载荷（与题目标签 keyPoints 隔离） */
+    const answerSource = ref<Record<string, unknown>>({})
     const selectedTab = ref<'answer' | 'analysis' | 'more-ask'>('answer');
     const isGeneratingAnswer = ref(false)
     const answerGenerateError = ref<string | null>(null)
@@ -34,6 +40,40 @@
       return ''
     }
 
+    /**
+     * 从详情/generate 载荷提取答案归一化输入；仅当顶层含冻约三字段时才带上 keyPoints，
+     * 避免把题目标签 keyPoints 误当作解析要点。
+     */
+    const buildAnswerSource = (data: Record<string, unknown>): Record<string, unknown> => {
+      const answer = typeof data.answer === 'string' ? data.answer : ''
+      const summary = data.summary
+      const nextStep = data.nextStep
+      const keyPoints = data.keyPoints
+      if (
+        typeof summary === 'string'
+        && typeof nextStep === 'string'
+        && Array.isArray(keyPoints)
+        && keyPoints.every((item) => typeof item === 'string')
+      ) {
+        return { summary, keyPoints, nextStep, answer }
+      }
+      return { answer }
+    }
+
+    const normalizedAnswer = computed(() => normalizeStructuredAnswer(answerSource.value))
+
+    const structuredAnswer = computed(() =>
+      normalizedAnswer.value.kind === 'structured' ? normalizedAnswer.value.value : null
+    )
+
+    const legacyAnswerText = computed(() =>
+      normalizedAnswer.value.kind === 'legacy'
+        ? legacyAnswerToPlainText(normalizedAnswer.value.raw)
+        : ''
+    )
+
+    const hasAnswerPanel = computed(() => normalizedAnswer.value.kind !== 'empty')
+
     const refreshAnswerWithRetry = async (problemId: number, seq: number) => {
       // Use a slightly larger retry count but still finite
       const MAX_RETRIES = 10;
@@ -44,11 +84,16 @@
         const refreshed = await getProblemById(problemId)
         if (seq !== fetchSeq) return false
 
-        const refreshedAnswer = sanitizeFromKeys(refreshed as unknown as Record<string, unknown>, ['answer', 'answerHtml', 'answer_html'])
-        if (refreshedAnswer.trim()) {
+        const refreshedRec = refreshed as unknown as Record<string, unknown>
+        const nextSource = buildAnswerSource(refreshedRec)
+        const nextNormalized = normalizeStructuredAnswer(nextSource)
+        if (nextNormalized.kind !== 'empty') {
+          answerSource.value = nextSource
           problem.value = {
             ...problem.value,
-            answer: refreshedAnswer,
+            answer: typeof refreshedRec.answer === 'string' ? refreshedRec.answer : problem.value.answer,
+            summary: typeof refreshedRec.summary === 'string' ? refreshedRec.summary : problem.value.summary,
+            nextStep: typeof refreshedRec.nextStep === 'string' ? refreshedRec.nextStep : problem.value.nextStep,
           }
           return true
         }
@@ -67,11 +112,11 @@
       answerGenerateError.value = null
       try {
         let generateError: unknown = null
-        let responseAnswer = ''
+        let generatePayload: Record<string, unknown> | null = null
         try {
           const res = await generateProblemAnswer(problemId, { force })
-          if (res && res.answer) {
-            responseAnswer = res.answer
+          if (res) {
+            generatePayload = res as unknown as Record<string, unknown>
           }
         } catch (error) {
           generateError = error
@@ -80,15 +125,27 @@
         if (seq !== fetchSeq) return
         if (!problem.value || Number(problem.value.id) !== problemId) return
 
-        // If the generation call returned the answer directly (e.g., from cache),
-        // update the state immediately and skip polling to avoid loops.
-        if (responseAnswer) {
-          problem.value = {
-            ...problem.value,
-            answer: responseAnswer,
+        // 优先消费 generate 顶层三字段；不得仅把 answer 整串交给 v-html
+        if (generatePayload) {
+          const nextSource = buildAnswerSource(generatePayload)
+          const nextNormalized = normalizeStructuredAnswer(nextSource)
+          if (nextNormalized.kind !== 'empty') {
+            answerSource.value = nextSource
+            problem.value = {
+              ...problem.value,
+              answer: typeof generatePayload.answer === 'string'
+                ? generatePayload.answer
+                : problem.value.answer,
+              summary: typeof generatePayload.summary === 'string'
+                ? generatePayload.summary
+                : problem.value.summary,
+              nextStep: typeof generatePayload.nextStep === 'string'
+                ? generatePayload.nextStep
+                : problem.value.nextStep,
+            }
+            answerGenerateError.value = null
+            return
           }
-          answerGenerateError.value = null
-          return
         }
 
         const updated = await refreshAnswerWithRetry(problemId, seq)
@@ -119,30 +176,37 @@
     const fetchProblem = async (idParam: string | number) => {
       const seq = ++fetchSeq
       problem.value = undefined
+      answerSource.value = {}
       answerGenerateError.value = null
       const data = await getProblemById(idParam);
       if (seq !== fetchSeq) return
 
+      const dataRec = data as unknown as Record<string, unknown>
+      const rawAnswer = typeof dataRec.answer === 'string' ? dataRec.answer : ''
+
       const next: Problem = {
         ...data,
-        name: sanitizeFromKeys(data as unknown as Record<string, unknown>, ['name', 'nameHtml', 'name_html', 'briefName', 'brief_name']),
-        answer: sanitizeFromKeys(data as unknown as Record<string, unknown>, ['answer', 'answerHtml', 'answer_html']),
+        name: sanitizeFromKeys(dataRec, ['name', 'nameHtml', 'name_html', 'briefName', 'brief_name']),
+        // 答案原文保留供归一化；禁止在此整段 DOMPurify 后当作 HTML 展示
+        answer: rawAnswer,
+        summary: typeof dataRec.summary === 'string' ? dataRec.summary : undefined,
+        nextStep: typeof dataRec.nextStep === 'string' ? dataRec.nextStep : undefined,
         analysis: DOMPurify.sanitize(data.analysis ?? ''),
-        moreAsk: sanitizeFromKeys(data as unknown as Record<string, unknown>, ['moreAsk', 'more_ask', 'moreAskHtml', 'more_ask_html']),
+        moreAsk: sanitizeFromKeys(dataRec, ['moreAsk', 'more_ask', 'moreAskHtml', 'more_ask_html']),
         mindmap: DOMPurify.sanitize(data.mindmap ?? ''),
         options: Array.isArray(data.options) ? data.options.map(opt => DOMPurify.sanitize(opt)) : data.options,
         keyPoints: Array.isArray(data.keyPoints) ? data.keyPoints.map(kp => DOMPurify.sanitize(kp)) : data.keyPoints,
         companies: Array.isArray(data.companies) ? data.companies.map(corp => DOMPurify.sanitize(corp)) : data.companies,
         years: Array.isArray(data.years) ? data.years.map(year => DOMPurify.sanitize(year)) : data.years,
-        // freq: (() => {
-        //   const freq = Number(data.freq)
-        //   return Number.isFinite(freq) ? Number((freq * 100).toFixed(2)) : 0
-        // })(),
       }
 
+      answerSource.value = buildAnswerSource({
+        ...dataRec,
+        answer: rawAnswer,
+      })
       problem.value = next
 
-      const noAnswer = !next.answer || !next.answer.trim()
+      const noAnswer = normalizeStructuredAnswer(answerSource.value).kind === 'empty'
       const nextProblemId = Number(next.id)
       if (!noAnswer || !Number.isFinite(nextProblemId) || generatedForProblemIds.value.has(nextProblemId)) return
 
@@ -206,7 +270,7 @@
                 : 'text-black border-transparent hover:text-black',
             ]"
             @click="selectedTab = 'answer'"
-            v-if="problem?.answer"
+            v-if="hasAnswerPanel"
           >
             回答
           </button>
@@ -260,8 +324,19 @@
     </nav>
 
     <section class="content">
-      <div v-if="selectedTab === 'answer'" class="relative min-h-[160px]">
-        <div v-if="problem?.answer" v-html="problem?.answer"></div>
+      <div v-if="selectedTab === 'answer'" class="relative min-h-[160px]" data-testid="answer-panel">
+        <div v-if="structuredAnswer" class="answer-structured" data-testid="answer-structured">
+          <p class="answer-summary" data-testid="answer-summary">{{ structuredAnswer.summary }}</p>
+          <ul class="answer-keypoints list-disc pl-5 my-2" data-testid="answer-keypoints">
+            <li v-for="(point, idx) in structuredAnswer.keyPoints" :key="idx">{{ point }}</li>
+          </ul>
+          <p class="answer-next-step" data-testid="answer-next-step">{{ structuredAnswer.nextStep }}</p>
+        </div>
+        <div
+          v-else-if="legacyAnswerText"
+          class="answer-legacy"
+          data-testid="answer-legacy"
+        >{{ legacyAnswerText }}</div>
         <div v-if="answerGenerateError" class="text-red-500 text-sm mt-2">{{ answerGenerateError }}</div>
 
         <div
