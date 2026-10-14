@@ -8,10 +8,11 @@
 - **AI 安全防护网关测试 (Security & E2E)**：基于专用自动化套件 `backend/scripts/qa-verify.js`，端到端验证 HMAC 请求签名、时钟防漂移、Nonce 防重放、Origin 跨域白名单及 429 速率限制。
 - **数据库与数据完整性 (Data Integrity)**：验证 SQLite 数据库中初始题库数据、客户端授权表 `ai_clients` 及审计日志 `ai_audit_logs` 的持久化与一致性；**C22** 另覆盖 FTS5 虚表启动重建与查询失败回退 LIKE（§2.23 / §3.12）。
 - **多轮对话窗口 (C31 / P1-1)**：`POST /api/chat` 接收 `messages[]`（`role` + `content`），只取最近 **N=6**（写死）并按条截断到 `AI_MAX_INPUT_CHARS`；当前 `problemId` 题面仍走固定槽；B1 三槽顺序不变（§2.24 / §3.13）。前端是否回传历史属 **S3**，本层不测。
-- **解析结构化输出 (C41 / P1-4)**：`POST /api/problems/:id/answer/generate` 在真实生成路径解析模型返回为 JSON `{ summary, keyPoints, nextStep }`（`keyPoints` 为字符串数组）；校验失败 HTTP **502** 且**不**把脏 HTML/原文写入 `details.answer`；前端三字段渲染属 **C42**（§2.25 / §3.14）。
+- **解析结构化输出 (C41 / P1-4)**：`POST /api/problems/:id/answer/generate` 在真实生成路径解析模型返回为 JSON `{ summary, keyPoints, nextStep }`（`keyPoints` 为字符串数组）；校验失败 HTTP **502** 且**不**把脏 HTML/原文写入 `details.answer`；后端契约见 §2.25 / §3.14。
+- **解析三字段前端渲染 (C42 / P1-4)**：题目详情「参考答案」面板按冻约字段 `summary` / `keyPoints` / `nextStep` 渲染，**禁止**对整篇模型 HTML/`answer` 字符串使用 `v-html`；旧库 HTML `answer` 走安全降级展示；其它字段 DOMPurify 保持不动（§4.1 `E2E-ANSWER-*` / §4.3 `UT-FE-ANSWER-*`）。
 - **前端多层级质量保障体系 (Frontend QA Strategy)**：
-  - **端到端测试 (Frontend E2E - Playwright)**：覆盖核心用户链路（Main Path / Happy Path），利用 `page.route` 对大模型流式 SSE 接口进行轻量 Mock，保障真实路由鉴权、题目浏览及 AI 交互界面的稳定可用。
-  - **状态机与单元测试 (Frontend UT/IT - Vitest)**：针对 Pinia Store（`user`、`settings`、`breadcrumb`）及工具函数，快速验证状态迁移、本地持久化与边界容错。
+  - **端到端测试 (Frontend E2E - Playwright)**：覆盖核心用户链路（Main Path / Happy Path），利用 `page.route` 对大模型流式 SSE 接口进行轻量 Mock，保障真实路由鉴权、题目浏览及 AI 交互界面的稳定可用；**C42** 另锁解析面板三字段可见性与无整篇 `v-html`。
+  - **状态机与单元测试 (Frontend UT/IT - Vitest)**：针对 Pinia Store（`user`、`settings`、`breadcrumb`）、题目解析归一化/渲染辅助及工具函数，快速验证状态迁移、本地持久化与边界容错。
   - **静态类型与代码质量 (Static Check - vue-tsc & ESLint)**：基于 `vue-tsc` 严格类型推断与 ESLint 规范，在编译期杜绝类型断言失误与样式违规。
 
 ---
@@ -376,9 +377,9 @@ C22 合入后 problems 关键字召回主路径改为 FTS（失败回退 LIKE）
 
 **做**：`POST /api/problems/:id/answer/generate` 真实生成路径将模型 `content` 解析为 JSON 对象 `{ summary, keyPoints, nextStep }`，其中 `summary`/`nextStep` 为非空字符串，`keyPoints` 为**字符串数组**（元素均为 `typeof === 'string'`）；校验通过后才写入 `details.answer`（规范序列化为上述三字段的 JSON 文本，或与响应同构的等价持久化），响应 `data` 暴露三字段；校验失败返回 HTTP **502**（`code === 502`），**不**把模型原文/脏 HTML 写入 `answer`。
 
-**不做**：改前端按三字段渲染 / 去掉整篇 `v-html`（属 **C42**）；继续要求模型吐整篇 HTML（generate `systemPrompt` 不得再硬性要求「仅 body 内 HTML 片段」或强制 `<p>/<h3>/<ul>/<li>` 作为唯一输出形态）。
+**不做**：改前端按三字段渲染 / 去掉整篇 `v-html`（属 **C42**，见 §4.1 / §4.3）；继续要求模型吐整篇 HTML（generate `systemPrompt` 不得再硬性要求「仅 body 内 HTML 片段」或强制 `<p>/<h3>/<ul>/<li>` 作为唯一输出形态）。
 
-**residual**：库内旧版整篇 HTML `answer` 如何展示由 C42 处理；本表缓存早退（`cached_answer`）仍可原样回传既有 `answer` 字符串，不强制对旧缓存做三字段重解析。
+**residual**：库内旧版整篇 HTML `answer` 如何展示由 C42 处理（§4.1 `E2E-ANSWER-03` / §4.3 `UT-FE-ANSWER-06`）；本表缓存早退（`cached_answer`）仍可原样回传既有 `answer` 字符串，不强制对旧缓存做三字段重解析。
 
 **测法**：纯函数解析/校验（可导出 `parseGeneratedAnswerJson` 或 handler 内同等模块）+ spy `upsertProblemAnswerById`；集成见 §3.14。允许剥离常见 markdown 代码围栏（`` ```json ... ``` ``）后再 `JSON.parse`。`it()` 标题须包含下表 ID。
 
@@ -535,7 +536,7 @@ Prompt 内容来自数据库，不能只依赖客户端 `AI_MAX_INPUT_CHARS` 防
 
 ### 3.14 C41 解析生成三字段 JSON 与失败不入库集成 (`backend/src/tests/answer-structured-json-integration.test.js`)
 
-对应 **C41 / P1-4** 完成标准：经 `app.handle`（鉴权 → Guard → generate handler）走真实生成路径；stub `model.invoke` 返回可控 `content`；成功则 HTTP 200 且响应/库内为三字段；失败则 HTTP **502** 且 `details.answer` 保持请求前快照。前端渲染属 C42，本表禁止断言 Vue/`v-html`。旧 HTML 缓存展示属 residual/C42；`cached_answer` 早退行为仍由 §2.10 / §3.3 覆盖。`it()` 标题须包含下表 ID。
+对应 **C41 / P1-4** 完成标准：经 `app.handle`（鉴权 → Guard → generate handler）走真实生成路径；stub `model.invoke` 返回可控 `content`；成功则 HTTP 200 且响应/库内为三字段；失败则 HTTP **502** 且 `details.answer` 保持请求前快照。前端渲染属 **C42**（§4.1 `E2E-ANSWER-*` / §4.3 `UT-FE-ANSWER-*`），本表禁止断言 Vue/`v-html`。旧 HTML 缓存展示属 residual/C42；`cached_answer` 早退行为仍由 §2.10 / §3.3 覆盖。`it()` 标题须包含下表 ID。
 
 | ID | 用例标题 | 场景描述 | 预期结果 |
 | :--- | :--- | :--- | :--- |
@@ -556,12 +557,16 @@ Prompt 内容来自数据库，不能只依赖客户端 `AI_MAX_INPUT_CHARS` 防
 | :--- | :--- | :--- | :--- | :--- |
 | `E2E-MAIN-01` | 认证与受保护路由拦截 | 匿名访问受保护路由 `/` 或 `/settings` | 拦截 `/api/auth/login` 模拟成功登录返回 | 自动拦截并重定向到 `/login`；填入账号密码提交后成功保存登录凭证并跳转回主页面 |
 | `E2E-MAIN-02` | 题库浏览与技术栈分类联动 | 已登录状态下进入首页分类列表 (`/`) | 拦截 `/api/categories` 与 `/api/problems` | 页面正确渲染分类标签树；切换分类标签时即时刷新题目列表并重置分页 |
-| `E2E-MAIN-03` | 题目详情浏览与解析切换 | 在列表中点击具体题目卡片 | 拦截 `/api/problems/:id` 返回题目详情 | 路由跳转至 `/problem-detail`，完整呈现题目背景、难度徽标及参考答案/解析面板 |
+| `E2E-MAIN-03` | 题目详情浏览与解析切换 | 在列表中点击具体题目卡片 | 拦截 `GET /api/problems/:id`：`code === 0`，`data.answer` 为合法三字段 JSON 字符串 `{"summary":"主路径结论","keyPoints":["要点A"],"nextStep":"去练题"}`（或顶层同构三字段）；`analysis`/`moreAsk` 为短安全 HTML | 1. 路由跳转至 `/problem-detail`（或等价详情路由），呈现题面背景与难度徽标；<br>2. 「参考答案」面板**按三字段**展示：可见文本含 `主路径结论`、`要点A`、`去练题`（对齐 **C42** / `E2E-ANSWER-01`）；<br>3. 答案面板 DOM **不**出现整篇 `answer` JSON 原始串作为单一 `v-html` 块；切换「分析/拓展」仍可渲染 `analysis`/`moreAsk`。 |
 | `E2E-MAIN-04` | AI 面试助手流式交互主流程 | 导航至 `/assistant` 并在输入框发送提问 | 利用 Playwright `page.route` 拦截 `/api/chat/stream`，模拟返回 `text/event-stream` 分块数据 | 1. 触发发送后输入框禁用且按钮显示加载状态<br>2. 界面接收流式 Chunk 呈打字机增量渲染<br>3. 完成传输后渲染为安全 Markdown（经 DOMPurify 过滤，无 XSS 隐患） |
 | `E2E-MAIN-05` | 个人设置与模型偏好持久化 | 进入 `/settings` 修改大模型供应商与参数并保存 | 操作 LocalStorage 结合表单提交 | 页面提示保存成功，刷新浏览器后配置项维持更新后的自定义状态 |
 | `E2E-CHAT-01` | chat 早退 type:error 时界面展示原因 | 已登录进入 `/assistant`；用户发送任意非空提问（A5 完成标准：前端能展示原因） | `page.route` 拦截 `POST /api/chat`：status 200，`Content-Type: text/event-stream`，body **仅** `data: {"type":"error","message":"OPENAI_API_KEY is required"}\n\n` 后结束（模拟缺 Key 早退） | 1. 页面错误提示区（`errorText` / 可见错误条）文案等于 `OPENAI_API_KEY is required`；<br>2. 该文案不作为助手正常回复气泡内容；<br>3. 流式加载态结束，可再次发送。 |
 | `E2E-MODEL-LAYER-01` | 助手页面使用 chat 模型且正常渲染流 | 前置：E2E 后端以 `OPENAI_CHAT_MODEL='chat-e2e-test'`、`OPENAI_GENERATION_MODEL='generation-e2e-test'` 启动；已登录进入 `/assistant`，输入非空问题。 | 通过本地 OpenAI 兼容 stub 记录上游请求并返回 `context`、一个 `delta`、`done`；断言上游 `model === 'chat-e2e-test'` 且 HTTP 200；页面按顺序显示用户问题与助手回复，加载态结束，不出现生成模型名。 |
-| `E2E-MODEL-LAYER-02` | 题目强制重新解析使用 generation 模型 | 前置：题目详情无缓存答案或页面触发“强制重新生成”；后端以两个 E2E 模型变量启动，已登录用户具备 `study`；上游 stub 返回合法三字段 JSON（**C41**，前端三字段渲染属 C42，本用例不锁 DOM 结构）。 | 断言浏览器发出的 `POST /api/problems/:id/answer/generate` body 精确包含 `force: true`；本地上游收到 `model === 'generation-e2e-test'` 且仅调用 1 次；页面收到 HTTP 200、`code === 0`（载荷含三字段或可展示的解析）后结束加载态，未调用 `chat-e2e-test`。 |
+| `E2E-MODEL-LAYER-02` | 题目强制重新解析使用 generation 模型 | 前置：题目详情无缓存答案或页面触发“强制重新生成”；后端以两个 E2E 模型变量启动，已登录用户具备 `study`；上游 stub 返回合法三字段 JSON（**C41**）。三字段 DOM 结构由 **C42** `E2E-ANSWER-*` 锁，本用例只锁选模与请求体。 | 1. 浏览器发出的 `POST /api/problems/:id/answer/generate` body 精确包含 `force: true`；<br>2. 本地上游收到 `model === 'generation-e2e-test'` 且仅调用 1 次；HTTP 200、`code === 0`，载荷含 `summary`/`keyPoints`/`nextStep`（及可选序列化 `answer`）；<br>3. 加载态结束；未调用 `chat-e2e-test`。 |
+| `E2E-ANSWER-01` | 三字段解析面板结构化渲染（C42） | 前置：已登录；进入题目详情；「参考答案」Tab 可见。 | `page.route` 拦截 `GET /api/problems/:id` 与（若触发）`POST .../answer/generate`：成功体为 `code === 0`，`data` 含 `summary: "结论E2E"`、`keyPoints: ["K1","K2"]`、`nextStep: "下一步E2E"`（generate 亦可另带 `answer` 为同构 JSON 字符串、`cached: false`）。 | 1. 答案面板可见纯文本/列表节点分别展示 `结论E2E`、`K1`、`K2`、`下一步E2E`（可用 `getByText` / role=listitem 断言）；<br>2. 面板内**不**存在把整段 `data.answer` HTML/JSON 一次性塞进 `innerHTML` 的单一容器（禁止答案区根节点 `innerHTML` 等于整篇模型 HTML）；<br>3. 加载态结束后无未捕获控制台 error。 |
+| `E2E-ANSWER-02` | 字段值含 HTML 标签时不按脚本执行（C42） | 前置：同 E2E-ANSWER-01 登录进详情。 | Mock `data.summary` 为 `看这里<script>window.__c42xss=1</script>`，`keyPoints: ["<img src=x onerror=window.__c42xss=2>"]`，`nextStep` 为 `javascript:alert(1)` 文本。 | 1. 页面文本仍可读到「看这里」及要点/下一步字面内容（或消毒后的等价可见字）；<br>2. 在页面上下文执行 `window.__c42xss` 为 `undefined`（脚本/onerror **未**执行）；<br>3. 不得因字段含尖括号而回退到整篇 `v-html` 渲染 `answer`。 |
+| `E2E-ANSWER-03` | 旧版 HTML answer 安全降级展示（C42 residual） | 前置：已登录进详情；模拟 C41 缓存早退仍回传旧 HTML 的库数据。 | 拦截 `GET /api/problems/:id`：`data.answer` 为 `<p>legacy-parse</p><script>window.__c42legacy=1</script>`，且**无**顶层 `summary`/`keyPoints`/`nextStep`（或三字段缺省）。 | 1. 答案面板以**非执行**方式展示旧内容（纯文本插值、去标签后的可见「legacy-parse」，或经 DOMPurify 后的安全片段均可，但 `window.__c42legacy` 必须仍为 `undefined`）；<br>2. **禁止**答案 Tab 根节点对未消毒的整篇模型 HTML 直接 `v-html`；<br>3. 不把该 HTML 误解析成三字段成功态（不得凭空编造 `summary`）。 |
+| `E2E-ANSWER-04` | 其它字段 DOMPurify 路径保持不动（C42 residual） | 前置：已登录；详情 `data.answer` 为合法三字段 JSON；`data.analysis` 含 `<b>分析加粗</b><script>window.__c42analysis=1</script>`；`data.moreAsk` 为短安全 HTML。 | 切换到「分析」Tab，再切「拓展」。 | 1. 「分析」可见加粗「分析加粗」（或等价消毒后强调节点），且 `window.__c42analysis === undefined`；<br>2. 「拓展」仍按既有 `v-html` + DOMPurify 路径渲染 `moreAsk`；<br>3. 本用例**不**要求改掉 `analysis`/`moreAsk`/`name` 的 DOMPurify，证明 C42 范围仅答案三字段渲染。 |
 
 ### 4.2 Vitest 状态机与核心逻辑测试用例 (Pinia Stores & Utilities)
 
@@ -575,7 +580,31 @@ Prompt 内容来自数据库，不能只依赖客户端 `AI_MAX_INPUT_CHARS` 防
 | `UT-FE-MODEL-LAYER-01` | `frontend/src/views/AiAssistant.vue` | chat 请求不暴露模型选择参数 | stub `fetch`，在助手输入非空问题并发送；检查 `POST /api/chat` 的 JSON body 仅含 `message` 与 `context`，不含 `model`、`modelName` 或任何由用户输入拼接的模型字段。 | 请求方法为 `POST`、`Content-Type` 为 `application/json`、`Accept` 为 `text/event-stream`；前端不允许通过请求体覆盖后端 `OPENAI_CHAT_MODEL`，并继续按 `context`/`delta`/`done` 处理响应。 |
 | `UT-FE-MODEL-LAYER-02` | `frontend/src/api/problemItem.ts` | 解析请求只传递 force 布尔值 | 分别调用 `generateProblemAnswer('42', { force: false })` 与 `generateProblemAnswer('42', { force: true })`，stub `post` 或网络请求捕获 body。 | 两次请求均为 `POST /problems/42/answer/generate`；body 分别为 `{ "force": false }` 与 `{ "force": true }`，不含 `model`/`modelName`；前端只表达是否绕过缓存，具体 generation 模型由后端环境变量选择。 |
 
-### 4.3 前端静态检查与构建规范 (Static Verification)
+### 4.3 C42 解析三字段前端渲染（P1-4）(`frontend/src/views/ProblemItem.vue` / 归一化辅助 / `frontend/src/api/problemItem.ts`)
+
+对应 **C42 / P1-4**（由 C4 拆出；宜在 C41 之后）。完成标准：
+
+**做**：题目详情「参考答案」按冻约字段 `summary`（非空字符串）、`keyPoints`（字符串数组）、`nextStep`（非空字符串）结构化渲染；**不再**对整篇模型 HTML 或整段 `answer` 字符串使用 `v-html`。数据来源优先级建议锁为：generate/详情响应顶层三字段 → 否则尝试将 `answer` 解析为同构 JSON → 否则走旧 HTML 安全降级（见 residual 用例）。
+
+**不做**：改生成协议字段名（禁止前端改用 `points`/`conclusion`/`next` 等别名作为正式契约）；改后端校验/入库（属 **C41**）。
+
+**residual**：`analysis` / `moreAsk` / `name` / 题目标签等既有 DOMPurify +（如适用）`v-html` **保持不动**；库内旧整篇 HTML `answer`（C41 缓存早退仍可能回传）须可展示且脚本不执行。
+
+**测法**：Vitest 组件挂载（`@vue/test-utils`）或可导出的纯函数归一化（如 `normalizeStructuredAnswer`）；对 `ProblemItem` 答案区断言文本节点/`ul>li`，并用 `innerHTML` / 查询选择器证明答案区无整篇 `v-html`。测试文件建议 `frontend/src/views/ProblemItem.answer-struct.spec.ts`（或同目录等价名）。`it()` 标题须包含下表 ID。
+
+| ID | 用例标题 | 场景描述 | 预期结果 |
+| :--- | :--- | :--- | :--- |
+| `UT-FE-ANSWER-01` | 顶层三字段归一化成功 | 前置：输入 generate/详情 `data` 形如 `{ summary: '结论A', keyPoints: ['p1','p2'], nextStep: '下一步A', answer: '{"summary":"结论A","keyPoints":["p1","p2"],"nextStep":"下一步A"}', cached: false }`。调用归一化函数或挂载 `ProblemItem` 注入该载荷。 | 1. 归一化结果 `{ summary: '结论A', keyPoints: ['p1','p2'], nextStep: '下一步A' }`（键名精确，大小写敏感）；<br>2. 答案区可见上述四段文本；`keyPoints` 以列表项呈现（2 个 `li` 或等价）；<br>3. 答案区根节点**未**对整段 `answer` 字符串调用 `v-html`（无 `innerHTML === data.answer`）。 |
+| `UT-FE-ANSWER-02` | 仅有序列化 `answer` JSON 时仍可三字段渲染 | 前置：`data` **无**顶层 `summary`/`keyPoints`/`nextStep`；`data.answer` 为紧凑 JSON `{"summary":"从answer来","keyPoints":["仅此项"],"nextStep":"继续"}`（对齐 C41 入库形态）。 | 1. 前端解析 `answer` 成功并渲染三字段文本；<br>2. **不得**把 JSON 原文整段 `v-html` 进 DOM（页面不应出现原始 `{"summary":` 作为 HTML 解析结果）；<br>3. `keyPoints` 长度为 1。 |
+| `UT-FE-ANSWER-03` | 空 keyPoints 仍展示 summary 与 nextStep | 前置：合法载荷 `summary: '只有结论'`、`keyPoints: []`、`nextStep: '去练习'`。 | 1. 可见 `只有结论` 与 `去练习`；<br>2. 要点列表容器存在但 **0** 个要点项（或不渲染空 `li`）；<br>3. 不因空数组回退到整篇 `v-html`。 |
+| `UT-FE-ANSWER-04` | 冻约字段名：别名不得当作正式三字段 | 前置：A) 仅有 `{ points: ['x'], conclusion: 'y', next: 'z' }` 且 `answer` 非合法三字段 JSON；B) 合法三字段 + 额外 `html: '<p>忽略我</p>'`。 | 1. A 不得渲染为成功三字段态（走旧内容降级或空态，且不把 `points` 当 `keyPoints`）；<br>2. B 成功渲染冻约三字段，**忽略** `html` 键，不得把 `html` 值 `v-html` 进答案区；<br>3. 证明协议字段名仍为 `summary`/`keyPoints`/`nextStep`（C42 **不做**改名）。 |
+| `UT-FE-ANSWER-05` | 字段内 HTML/脚本按文本安全展示 | 前置：`summary` 含 `<script>window.__ut=1</script>`；`keyPoints: ['<img src=x onerror=window.__ut=2>']`；`nextStep` 含 `<b>粗</b>`。挂载组件后检查 `window.__ut`。 | 1. `window.__ut` 为 `undefined`（脚本与 onerror 未执行）；<br>2. 用户仍能看到去标签或转义后的可读片段（至少含「粗」或字面尖括号文本，以实现为准但须可断言）；<br>3. 答案区未使用「整篇 answer 字符串 → `v-html`」路径。 |
+| `UT-FE-ANSWER-06` | 旧 HTML answer 降级：脚本不执行 | 前置：`answer: '<p>旧解析</p><script>window.__legacy=1</script>'`，无合法顶层三字段。 | 1. 组件不抛异常；可见「旧解析」或等价安全展示；<br>2. `window.__legacy === undefined`；<br>3. 若实现选择纯文本插值，则 DOM 中无未转义的可执行 `<script>` 子节点；若仍对**旧**内容消毒后局部渲染，必须先经 DOMPurify（或等价）且不得等于「对整篇模型 HTML 无条件 `v-html`」。 |
+| `UT-FE-ANSWER-07` | 其它字段 DOMPurify 保持不动 | 前置：挂载详情；`analysis`/`moreAsk`/`name` 含需消毒的短 HTML（如 `<b>t</b><script>…</script>`）；`answer` 为合法三字段 JSON。 | 1. `analysis`/`moreAsk`（及标题名）仍走既有 `DOMPurify.sanitize` 路径（可用 spy 断言 `sanitize` 仍被这些字段调用，或快照既有行为）；<br>2. 答案三字段渲染**不**要求、也不删除上述字段的消毒调用；<br>3. 本用例 FAIL 条件不包括「答案字段也必须继续整段 DOMPurify + `v-html`」（那与 C42 **做**冲突）。 |
+| `UT-FE-ANSWER-08` | generate 响应消费三字段而非仅 `answer` 字符串 | 前置：stub `generateProblemAnswer` 返回 `{ id: 42, cached: false, summary: '生成结论', keyPoints: ['g1'], nextStep: '生成下一步', answer: '{"summary":"生成结论","keyPoints":["g1"],"nextStep":"生成下一步"}' }`；触发自动生成或「重新生成」。 | 1. 生成结束后答案区展示 `生成结论` / `g1` / `生成下一步`；<br>2. 不得仅把 `res.answer` 整串写入后 `v-html`；<br>3. `frontend/src/api/problemItem.ts` 的 `GenerateProblemAnswerResponse`（或等价类型）须能表达三字段（类型检查见 `FE-STATIC-01`，本用例可用运行时字段读取断言）。 |
+| `UT-FE-ANSWER-09` | 模板静态约束：答案区禁止整篇 v-html | 前置：只读读取 `ProblemItem.vue`（或答案子组件）模板源码。 | 1. 答案 Tab 内容区**不**存在 `v-html="problem?.answer"` / `v-html="problem.answer"`（及把整段 `answer` 绑到 `v-html` 的等价写法）；<br>2. 允许 `analysis`/`moreAsk`/`name` 等非答案字段保留 `v-html`；<br>3. 与 C42「不再对整篇模型 HTML 使用 `v-html`」字面完成标准一致。 |
+
+### 4.4 前端静态检查与构建规范 (Static Verification)
 
 | ID | 用例标题 | 描述 | 预期结果 |
 | :--- | :--- | :--- | :--- |

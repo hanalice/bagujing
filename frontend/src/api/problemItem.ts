@@ -13,7 +13,11 @@ export interface Problem {
   level:number; // 题目难度等级 1：简单 2：中等 3：困难
   freq: number;  // 题目被考察频率
   categoryId: string; // 题目分组ID
-  answer: string;   // 题目答案
+  answer: string;   // 题目答案（C41 后可为三字段 JSON 字符串；旧数据可能为 HTML）
+  /** C41/C42 解析结论（generate/详情顶层字段；与题目标签 keyPoints 无关） */
+  summary?: string;
+  /** C41/C42 解析下一步建议 */
+  nextStep?: string;
   analysis: string; // 题目分析和考察要点归总
   moreAsk: string;  // 相关拓展问题
   mindmap: string;  // 思维导图文字，应该可以被组件渲染成思维导图
@@ -38,6 +42,12 @@ export interface GenerateProblemAnswerResponse {
   id: number;
   answer: string;
   cached: boolean;
+  /** C41 冻约：简短结论 */
+  summary?: string;
+  /** C41 冻约：分点说明（勿与题目标签 Problem.keyPoints 混淆） */
+  keyPoints?: string[];
+  /** C41 冻约：下一步建议 */
+  nextStep?: string;
 }
 
 export function generateProblemAnswer(id: string | number, options?: { force?: boolean }) {
