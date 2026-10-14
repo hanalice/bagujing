@@ -84,8 +84,10 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | S2  | fix | scan | auto | todo | Guard 非 debug 路径去掉常开 console.log |
 | S3  | feat | scan | auto | todo | 助教前端回传最近 6 轮 messages（对齐 C31） |
 | S4  | feat | scan | assist | split | 已判定助教 Markdown；实现见 S6 |
-| S5  | fix | scan | assist | todo | 对齐 security-ai-guard.md 与签名默认/会话跳过验签的实现 |
+| S5  | fix | scan | assist | split | 已拆为 S8 |
 | S6  | feat | scan | auto | todo | 助教助手气泡 Markdown + DOMPurify，用户气泡纯文本 |
+| S7  | fix | scan | auto | todo | 换票 fetch URL 与签名 path 对齐为 `/api/auth/token` |
+| S8  | fix | scan | auto | todo | 对齐 security-ai-guard.md 与签名默认/会话验签/前端 env 名 |
 | E1  | feat | gate | assist | todo | CI/安全/质量基线（契约未冻，禁止周扫描拆成 auto）：依赖漏洞每月出报告、不挡合并；口令与密钥硬编码单独拦截提交；新增代码覆盖率 ≥80%，前后端历史各 ≥60%；文档与实现一致要能拦住；提交说明按公约覆盖全部 type |
 
 
@@ -129,7 +131,7 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 
 - **做**：`AI_REQUIRE_SIGNED_HEADERS=true` 时，已登录用户调用 `POST /api/chat` 与 `POST /api/problems/:id/answer/generate` 也必须带上与 `backend/src/security/ai-guard.js` 一致的六个头：`X-Client-Id`、`X-Client-Token`、`X-Ts`、`X-Nonce`、`X-Body-Sha256`、`X-Signature`。`X-Client-Id` 取 `VITE_AI_CLIENT_ID`（缺省 `web`），`X-Client-Token` 等于 `VITE_AI_CLIENT_SECRET`。Body 哈希是对**实际发出的 JSON 字符串**做 SHA-256 hex；签名基串为 `` `${ts}.${nonce}.${METHOD}.${path}.${bodyHash}` ``，HMAC-SHA256 hex，密钥为同一 secret；`path` 必须是 Express `req.path`（`/api/chat`、`/api/problems/<id>/answer/generate`），不能是 axios 去掉 `/api` 前缀后的相对路径。`getHeaders` 与 `AiAssistant.vue` 的 chat `fetch`：受保护路径上无论有没有登录 Bearer 都注入这六头；已有用户 Bearer 时保留，不得换成 `/api/auth/token` 换来的票。密钥缺失时明确失败，不要发空签名。Vitest 单测 `it()` 标题含用例 ID，锁住：已登录时两条路径都带齐六头；用同一密钥按上述基串重算能对上；哈希对的是发出去的那份 JSON。同步 `docs/test_cases.md`。
 - **不做**：改 `AI_REQUIRE_SIGNED_HEADERS` 的代码默认值（仍为 `false`）；改 `backend/.env`、Nginx 或部署开关（B32）；改后端验签规则（B31）；改 `/api/auth/token` 换票协议或其 JWT claims（S1）；把客户端密钥挪到别的存储或做轮换。
-- **residual**：浏览器包里仍能看到 `VITE_AI_CLIENT_SECRET`，本项不解决密钥可被提取。生产是否打开开关仍是 B32。`docs/security-ai-guard.md` 里「仅无会话才验签」的措辞属 S5，本项不改那份文档。
+- **residual**：浏览器包里仍能看到 `VITE_AI_CLIENT_SECRET`，本项不解决密钥可被提取。生产是否打开开关仍是 B32。`docs/security-ai-guard.md` 里「仅无会话才验签」等过时措辞属 S8，本项不改那份文档。
 
 ### B51
 
@@ -233,6 +235,18 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 - **不做**：改 B22 的 Prompt；改题目解析页；把模型原文当 HTML 直接 `v-html`；用户消息走 Markdown。
 - **residual**：LaTeX / mermaid 不做。B22 可先合入（其间前端仍纯文本）。
 
+### S7
+
+- **做**：`frontend/src/utils/ai-auth.ts` 的 `fetchAiSessionToken`：实际 `fetch` 的 URL path 与 HMAC 签名基串中的 path 均为 `/api/auth/token`（与后端 `POST /api/auth/token` 的 Express `req.path` 一致）。`getApiBase()` 在 `VITE_API_BASE_URL` 未设置时回退与 axios 相同（`/api`），避免拼出 `/auth/token`。Vitest：`it()` 标题含用例 ID，锁住发出的请求 URL 含 `/api/auth/token`，且签名基串内 path 同为该值。
+- **不做**：改换票 JWT claims / 权限面（S1）；改 AI 路由六头注入（B33）；改后端换票验签算法或路由挂载点。
+- **residual**：机调票权限隔离仍见 S1；登录态/受保护路径 HMAC 六头仍见 B33。
+
+### S8
+
+- **做**：只改 `docs/security-ai-guard.md`，与当前代码对齐：①写明验签由 `AI_REQUIRE_SIGNED_HEADERS` 控制，代码默认 `false`；为 `true` 时有登录会话也验签（对齐 B31），不再写「仅无会话机调才验签」。②「默认拒绝 / 双重验证」等表述限定为开关打开后的行为，避免暗示默认已强制签名。③前端环境变量名改为与代码一致的 `VITE_AI_CLIENT_SECRET`（去掉错误的 `VITE_AI_CLIENT_TOKEN`）。④清单中限流/并发在有 Redis 时已落地（B51/B52）改为已完成或注明；配额仍进程内/SQL 的部分保留未完成。⑤§5.3 如实写现状：当前 `buildAiAuthHeaders` 以换票 JWT 为主，受保护路径 HMAC 六头注入见 B33，不要写成已全面注入。
+- **不做**：改任何代码或默认值；打开生产签名开关（B32）；改 B33/S1/S2 的实现范围。
+- **residual**：WAF、自动封禁、成本告警、审计报表等未勾选项仍属未来项，本项不拆 auto。公开文档不写利用步骤。
+
 ### E1
 
 登记用，契约未冻。禁止周扫描把本项改成 `auto` 或拆子项；由人拆。
@@ -270,3 +284,4 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | 2026-10-10 | C41 完成：解析生成返回 JSON 三字段，失败不入库 |
 | 2026-10-14 | C42 完成：前端按三字段渲染，不再整篇模型 HTML |
 | 2026-10-14 | 登记 auto B33 并排在队列表首个 auto+todo：登录态 chat/generate 补齐 HMAC 签名头 |
+| 2026-10-14 | 周扫描：新增 auto S7（换票 URL/签名 path）、S8（security-ai-guard 文档对齐，S5→split）；无逾期待决；待决表仍空 |
