@@ -1,7 +1,7 @@
 import type { QueryParams } from '@/interfaces/query';
 import axios, { type AxiosRequestConfig } from 'axios';
 import { captureApiError, captureApiTiming } from '@/monitoring';
-import { buildAiAuthHeaders, isAiProtectedPath } from '@/utils/ai-auth';
+import { buildAiAuthHeaders, ensureAiSessionToken, isAiProtectedPath } from '@/utils/ai-auth';
 
 type RequestMeta = {
   startedAt: number;
@@ -20,7 +20,7 @@ export const createRequestId = () => {
 };
 
 /**
- * Get unified authentication and tracing headers
+ * 组装统一鉴权与追踪头；受保护 AI 路径无论是否已登录都注入 HMAC 六头。
  */
 export async function getHeaders(method: string, url: string, data?: any) {
   const requestId = createRequestId();
@@ -33,11 +33,20 @@ export async function getHeaders(method: string, url: string, data?: any) {
 
   if (userToken) {
     headers['Authorization'] = `Bearer ${userToken}`;
-  } else if (isAiPath) {
+  }
+
+  if (isAiPath) {
+    // 与实际发出的 JSON 字符串一致：调用方（axios / AiAssistant）对同一对象序列化
     const bodyText = JSON.stringify(data ?? {});
-    const aiAuth = await buildAiAuthHeaders(method, url, bodyText);
-    if (aiAuth.token) {
-      headers['Authorization'] = `Bearer ${aiAuth.token}`;
+    const aiHeaders = await buildAiAuthHeaders(method, url, bodyText);
+    Object.assign(headers, aiHeaders);
+
+    // 已有用户 Bearer 时保留，禁止用 /api/auth/token 换票覆盖
+    if (!userToken) {
+      const sessionToken = await ensureAiSessionToken();
+      if (sessionToken) {
+        headers['Authorization'] = `Bearer ${sessionToken}`;
+      }
     }
   }
   return headers;

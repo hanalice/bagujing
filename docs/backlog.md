@@ -53,7 +53,7 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | B3  | fix | P0-5 | manual | split | 已拆为 B31 / B33；生产开签名仍为 B32 |
 | B31 | fix | P0-5 | auto | done | 签名开关打开时，有会话也验签 |
 | B32 | fix | P0-5 | manual | todo | 生产打开签名开关（运维，禁止改代码默认值） |
-| B33 | fix | P0-5 | auto | todo | 登录态的 chat 与 generate 补齐 HMAC 签名头 |
+| B33 | fix | P0-5 | auto | done | 登录态的 chat 与 generate 补齐 HMAC 签名头 |
 | B4  | fix | P2-1 | auto | done | CORS `allowedHeaders` 补 `Authorization` |
 | B5  | feat | P1-7 | manual | split | 已拆为 B51 / B52 |
 | B51 | feat | P1-7 | auto | done | 有 Redis 时限流走 Redis，否则内存 Map |
@@ -285,3 +285,4 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | 2026-10-14 | C42 完成：前端按三字段渲染，不再整篇模型 HTML |
 | 2026-10-14 | 登记 auto B33 并排在队列表首个 auto+todo：登录态 chat/generate 补齐 HMAC 签名头 |
 | 2026-10-14 | 周扫描：新增 auto S7（换票 URL/签名 path）、S8（security-ai-guard 文档对齐，S5→split）；无逾期待决；待决表仍空 |
+| 2026-10-14 | B33 完成：登录态的 chat 与 generate 补齐 HMAC 签名头 |
