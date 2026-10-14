@@ -50,9 +50,10 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | B2  | fix | P0-7 | assist | split | 已拆为 B21 / B22 |
 | B21 | fix | P0-7 | auto | done | 解析入库前服务端 HTML 白名单消毒 |
 | B22 | feat | P0-7 | auto | done | 助教 system 不再要求仅 HTML 输出 |
-| B3  | fix | P0-5 | manual | split | 已拆为 B31；生产开签名仍为 B32 |
+| B3  | fix | P0-5 | manual | split | 已拆为 B31 / B33；生产开签名仍为 B32 |
 | B31 | fix | P0-5 | auto | done | 签名开关打开时，有会话也验签 |
 | B32 | fix | P0-5 | manual | todo | 生产打开签名开关（运维，禁止改代码默认值） |
+| B33 | fix | P0-5 | auto | todo | 登录态的 chat 与 generate 补齐 HMAC 签名头 |
 | B4  | fix | P2-1 | auto | done | CORS `allowedHeaders` 补 `Authorization` |
 | B5  | feat | P1-7 | manual | split | 已拆为 B51 / B52 |
 | B51 | feat | P1-7 | auto | done | 有 Redis 时限流走 Redis，否则内存 Map |
@@ -122,7 +123,13 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 
 - **做**：当 `AI_REQUIRE_SIGNED_HEADERS=true` 时，有登录会话也必须验签；缺签名头返回 401。默认值仍为 `false`。
 - **不做**：把仓库默认改成 `true`；改 Nginx / 部署配置。
-- **residual**：生产打开开关见 B32（manual）。
+- **residual**：生产打开开关见 B32（manual）。前端补齐签名头见 B33。
+
+### B33
+
+- **做**：`AI_REQUIRE_SIGNED_HEADERS=true` 时，已登录用户调用 `POST /api/chat` 与 `POST /api/problems/:id/answer/generate` 也必须带上与 `backend/src/security/ai-guard.js` 一致的六个头：`X-Client-Id`、`X-Client-Token`、`X-Ts`、`X-Nonce`、`X-Body-Sha256`、`X-Signature`。`X-Client-Id` 取 `VITE_AI_CLIENT_ID`（缺省 `web`），`X-Client-Token` 等于 `VITE_AI_CLIENT_SECRET`。Body 哈希是对**实际发出的 JSON 字符串**做 SHA-256 hex；签名基串为 `` `${ts}.${nonce}.${METHOD}.${path}.${bodyHash}` ``，HMAC-SHA256 hex，密钥为同一 secret；`path` 必须是 Express `req.path`（`/api/chat`、`/api/problems/<id>/answer/generate`），不能是 axios 去掉 `/api` 前缀后的相对路径。`getHeaders` 与 `AiAssistant.vue` 的 chat `fetch`：受保护路径上无论有没有登录 Bearer 都注入这六头；已有用户 Bearer 时保留，不得换成 `/api/auth/token` 换来的票。密钥缺失时明确失败，不要发空签名。Vitest 单测 `it()` 标题含用例 ID，锁住：已登录时两条路径都带齐六头；用同一密钥按上述基串重算能对上；哈希对的是发出去的那份 JSON。同步 `docs/test_cases.md`。
+- **不做**：改 `AI_REQUIRE_SIGNED_HEADERS` 的代码默认值（仍为 `false`）；改 `backend/.env`、Nginx 或部署开关（B32）；改后端验签规则（B31）；改 `/api/auth/token` 换票协议或其 JWT claims（S1）；把客户端密钥挪到别的存储或做轮换。
+- **residual**：浏览器包里仍能看到 `VITE_AI_CLIENT_SECRET`，本项不解决密钥可被提取。生产是否打开开关仍是 B32。`docs/security-ai-guard.md` 里「仅无会话才验签」的措辞属 S5，本项不改那份文档。
 
 ### B51
 
@@ -262,3 +269,4 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | 2026-10-01 | C31 完成：chat 接收最近 6 轮 messages，绑定当前题面 |
 | 2026-10-10 | C41 完成：解析生成返回 JSON 三字段，失败不入库 |
 | 2026-10-14 | C42 完成：前端按三字段渲染，不再整篇模型 HTML |
+| 2026-10-14 | 登记 auto B33 并排在队列表首个 auto+todo：登录态 chat/generate 补齐 HMAC 签名头 |
