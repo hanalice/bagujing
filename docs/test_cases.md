@@ -11,6 +11,7 @@
 - **解析结构化输出 (C41 / P1-4)**：`POST /api/problems/:id/answer/generate` 在真实生成路径解析模型返回为 JSON `{ summary, keyPoints, nextStep }`（`keyPoints` 为字符串数组）；校验失败 HTTP **502** 且**不**把脏 HTML/原文写入 `details.answer`；后端契约见 §2.25 / §3.14。
 - **解析三字段前端渲染 (C42 / P1-4)**：题目详情「参考答案」面板按冻约字段 `summary` / `keyPoints` / `nextStep` 渲染，**禁止**对整篇模型 HTML/`answer` 字符串使用 `v-html`；旧库 HTML `answer` 走安全降级展示；其它字段 DOMPurify 保持不动（§4.1 `E2E-ANSWER-*` / §4.3 `UT-FE-ANSWER-*`）。
 - **真实 usage 回写审计 (C51 / P1-6)**：`finalize` 若收到上游 `usage.prompt_tokens` **与** `usage.completion_tokens` 则写入审计并标 `token_source=upstream`；否则沿用 `estimateTokensByText` 并标 `token_source=estimate`（§2.26 / §3.15）。**不做**供应商账单对账报表与按用户月结。
+- **同步生成有限重试 (D11 / P1-5)**：仅 `POST /api/problems/:id/answer/generate` 的同步 `invoke` 对上游 **429/5xx** 最多 **2** 次重试（合计至多 3 次调用），jitter 序列可注入/固定以便单测；`POST /api/chat` SSE **不重试**（§2.27 / §3.16）。**不做** chat 流式重试、改上游超时默认值。跨进程熔断属 residual（B5 / D12）。
 - **前端多层级质量保障体系 (Frontend QA Strategy)**：
   - **端到端测试 (Frontend E2E - Playwright)**：覆盖核心用户链路（Main Path / Happy Path），利用 `page.route` 对大模型流式 SSE 接口进行轻量 Mock，保障真实路由鉴权、题目浏览及 AI 交互界面的稳定可用；**C42** 另锁解析面板三字段可见性与无整篇 `v-html`。
   - **状态机与单元测试 (Frontend UT/IT - Vitest)**：针对 Pinia Store（`user`、`settings`、`breadcrumb`）、题目解析归一化/渲染辅助及工具函数，快速验证状态迁移、本地持久化与边界容错；**B33** 另锁登录态 `chat` / `answer/generate` 的 HMAC 六头注入（§4.5 `UT-FE-SIG-*`）。
@@ -427,6 +428,38 @@ C22 合入后 problems 关键字召回主路径改为 FTS（失败回退 LIKE）
 | UT-USAGE-06 | cached_answer + usage 仍记零（与 A7 合取） | 前置：同 UT-QUOTA-CACHE-01 手法；`finalize({ status: 'ok', reason: 'cached_answer', completionText: 长 HTML, upstreamReached: false, usage: { prompt_tokens: 999, completion_tokens: 999 } })`。 | 1. `promptTokens === 0`、`completionTokens === 0`、`totalTokens === 0`；<br>2. 不得因 usage 将 `token_source` 写成 `upstream` 且带非零 token（允许省略 `token_source` 或标 `estimate`，但计费必须为 0）；<br>3. 证明 C51 **不做**改变「未触达不计费」。 |
 | UT-USAGE-07 | upstream 回写后配额按实际 usage 结算 | 前置：内存日配额；`AI_GLOBAL_DAILY_TOKEN_LIMIT` 设为恰好允许「预扣一次 + 按小 usage 结算后再准入一次」的窗口（对照：若误按长 `completionText` 估算则会 429）；准入 `POST /api/chat` 后 `finalize` 带 `usage: { prompt_tokens: 10, completion_tokens: 5 }` 与**很长** `completionText`；再发第二次同路由 middleware。 | 1. 第一次审计 `token_source === 'upstream'` 且 `totalTokens === 15`；<br>2. 第二次 `next()` 被调用（非 429）；<br>3. 证明 usage 校正进入 `adjustQuotaTokens` 的 `actualTokens`，而非仅写审计字段却仍按估算扣满。 |
 
+### 2.27 D11 同步 `answer/generate` 对 429/5xx 有限重试（P1-5）(`backend/src/tests/upstream-retry.test.js`)
+
+对应 **D11 / P1-5**（由 D1 拆出；HLD `P1-5` / 阶段 D 项 D1 的重试半支）。完成标准：
+
+**做**：仅同步路径 `POST /api/problems/:id/answer/generate` 的 `model.invoke`（或等价封装 `invokeWithRetry`）：当上游拒绝/错误的 HTTP 状态为 **429** 或 **5xx**（至少覆盖 `500`/`502`/`503`）时，最多再重试 **2** 次（**合计至多 3 次** `invoke`）；两次重试之间的等待采用**可注入或导出的固定 jitter 序列**（禁止单测依赖不可控 `Math.random()` 导致 flaky）。SSE `POST /api/chat` 的 `model.stream` **零次重试**。
+
+**不做**：为 chat 流式增加重试；修改 `buildLlmConfig` / Guard 的上游超时默认值（`upstreamTimeoutMs` / `timeout` 既有回退规则见 §2.1 UT-LLM-10..12）。
+
+**residual**：跨进程/跨 worker 熔断与连续失败窗口属 **D12** / B5 家族，本表不得要求 Redis 共享熔断态。
+
+**协议 / 调用序**（下一阶段 `it()` 须对齐）：
+
+1. **可重试判定**：从 reject 的 Error（或 LangChain 包装）读取 `status` / `statusCode` / `response.status`（实现择一并在测码注释写明）；仅当该值为 `429` 或 `status >= 500 && status <= 599` 时进入重试；`400`/`401`/`403`/`404` 等非 429 的 4xx **立即失败、不 sleep、不二次 invoke**。
+2. **次数**：第 1 次失败后最多再调用 2 次；第 3 次仍失败则把最后一次错误向上抛出（或返回给 handler 既有 `catch` → HTTP **500** / `finalize({ status: 'error', reason: 'server_error', ... })`，与当前 `server-express.js` generate catch 一致），**不得**出现第 4 次 `invoke`。
+3. **jitter**：导出常量或允许测试注入序列，例如 `RETRY_JITTER_MS = [50, 100]`（具体毫秒以实现为准，但单测必须断言「第 i 次重试前等待 === 序列[i]」）；用 fake timer（`node:test` mock timers / 注入 `sleep`）推进，禁止真实 `setTimeout` 拖慢 CI。
+4. **成功短路**：任意一次 `invoke` resolve 合法响应后立即返回，不再继续重试；首次成功则 **恰好 1** 次 `invoke` 且 **0** 次 sleep。
+5. **范围**：重试封装只挂在 generate 同步 `invoke`；chat handler 仍直接 `model.stream(...)`，上游 429/5xx 时 `stream` 调用次数恒为 1。
+
+**测法**：优先单测可注入的 `invokeWithRetry`（或 `llm.js` / `server-express.js` 抽出的纯函数）；用 fake `invoke` 按调用序号抛带 `status` 的 Error 或返回成功；断言调用次数、sleep 间隔与最终 resolve/reject。路由闭环见 §3.16。`it()` 标题须包含下表 ID。
+
+| ID | 用例标题 | 场景描述 | 预期结果 |
+| :--- | :--- | :--- | :--- |
+| UT-RETRY-01 | 429 后第 2 次成功：共 2 次 invoke | 前置：注入 jitter `[0, 0]`（或 fake timer）；stub `invoke`：第 1 次 `reject` 带 `status: 429`，第 2 次 `resolve` `{ content: '{"summary":"ok","keyPoints":["k"],"nextStep":"n"}' }`；调用 generate 用重试封装（非 chat）。 | 1. `invoke` 调用次数精确为 **2**；<br>2. 第 1→2 次之间恰好 **1** 次 sleep，时长等于 jitter 序列第 0 项；<br>3. 封装 resolve 为第 2 次响应；不发起第 3 次调用。 |
+| UT-RETRY-02 | 5xx（503）后第 3 次成功：共 3 次 invoke | 前置：jitter 可注入；stub：第 1/2 次 `reject` 带 `status: 503`（另可参数化覆盖 `500`/`502` 各至少一组），第 3 次成功返回合法 content。 | 1. `invoke` 次数精确为 **3**；<br>2. 两次 sleep 时长分别等于 jitter[0]、jitter[1]；<br>3. 最终 resolve 成功响应；无第 4 次调用。 |
+| UT-RETRY-03 | 连续 3 次 429：耗尽后抛出且不再调用 | 前置：stub 三次均 `reject` 带 `status: 429`；jitter `[0, 0]`。 | 1. `invoke` 次数精确为 **3**（1 初次 + 2 重试）；<br>2. 封装 **reject**，错误对象仍可读到 `status === 429`（或等价上游状态）；<br>3. sleep 恰好 2 次；无第 4 次 `invoke`。 |
+| UT-RETRY-04 | 非 429 的 4xx（400/401/403）不重试 | 前置：分别 stub 一次 `reject` 带 `status: 400`、`401`、`403`（可 `it` 内循环或 3 个断言块）。 | 1. 每种状态 `invoke` 次数均为 **1**；<br>2. **零次** sleep；<br>3. 立即 reject 原错误，不得伪装成成功或改写为 429 重试路径。 |
+| UT-RETRY-05 | jitter 序列固定：断言精确等待 | 前置：注入 jitter 序列精确为 `[50, 100]`（ms）；stub 前两次 `status: 500`，第三次成功；使用 fake timer / mock `sleep` 记录入参。 | 1. 第一次重试前 `sleep(50)`（或等价 delay=50）；第二次重试前 `sleep(100)`；<br>2. **不得**出现未注入的随机毫秒（证明序列固定可测）；<br>3. 推进 timer 后第三次 `invoke` 才发生（调用序：invoke → sleep50 → invoke → sleep100 → invoke）。 |
+| UT-RETRY-06 | chat SSE：stream 遇 429/5xx 不重试 | 前置：stub `model.stream` 第 1 次即抛 `status: 429`（或 `503`）；走 chat 路径所用调用（直接 `stream` 或 chat handler 抽出的流启动函数），**不**经过 generate 的 `invokeWithRetry`。 | 1. `stream` 调用次数精确为 **1**；<br>2. **零次** 针对 stream 的重试 sleep；<br>3. 错误向上传递；证明 D11「SSE chat **不重试**」。 |
+| UT-RETRY-07 | 不做：上游超时默认值未被本项改写 | 前置：未设 Guard/`defaultConfig` 的 `upstreamTimeoutMs`；调用 `buildLlmConfig()`（同 §2.1 UT-LLM-12）；并只读比对 D11 相关改动是否改写超时常量默认。 | 1. `timeout` 仍为 `undefined`（与 UT-LLM-12 一致）；当仅 `defaultConfig.upstreamTimeoutMs === 30000` 时 `timeout === 30000`（UT-LLM-11）；<br>2. 本项 PASS **不得**要求把默认超时改成新值；<br>3. 证明完成标准「不做：改上游超时默认值」。 |
+| UT-RETRY-08 | residual：本项不引入跨进程熔断 | 前置：连续 3 次 UT-RETRY-03 式耗尽后，再发起第 4 次**全新** `invokeWithRetry` 调用（新 stub：首次即成功）；不注入 Redis。 | 1. 第 4 次封装调用中 `invoke` 次数为 **1** 且成功（无「熔断打开拒调」）；<br>2. 不要求、不断言 Redis key / 跨进程共享状态；<br>3. 连续失败窗口属 **D12**，本用例若把「必须熔断」写成 FAIL 条件则本项设计错误。 |
+| UT-RETRY-09 | 首次 invoke 成功：无 sleep、无二次调用 | 前置：stub `invoke` 第一次即 resolve 合法 content；任意 jitter 序列。 | 1. `invoke` 次数 === **1**；<br>2. sleep 次数 === **0**；<br>3. 返回值即该次响应。 |
+
 ---
 
 ## 3. 安全防护与集成测试用例 (Security & Integration)
@@ -590,6 +623,19 @@ Prompt 内容来自数据库，不能只依赖客户端 `AI_MAX_INPUT_CHARS` 防
 | IT-USAGE-04 | chat SSE：流结束无 usage → estimate | 前置：同 IT-USAGE-03，但 stub 流**不**提供 `usage`；delta 文本固定为可知长度（如 `'ping'`）。 | 1. SSE 仍完整结束；<br>2. 审计 `reason === 'stream_done'`、`token_source === 'estimate'`；<br>3. `completionTokens === estimateTokensByText(拼接后的 completionText)`。 |
 | IT-USAGE-05 | 两条路径对照：同 completion 不同 source | 前置：同一进程连续两次 `force: true` 的 generate；第 1 次 stub 带 `usage: { prompt_tokens: 40, completion_tokens: 6 }`；第 2 次 stub 无 usage 且 `content` 与第 1 次**相同**三字段 JSON；两次审计分行读取。 | 1. 第 1 行 `token_source === 'upstream'` 且 `completionTokens === 6`；<br>2. 第 2 行 `token_source === 'estimate'` 且 `completionTokens === estimateTokensByText(同一 completion 文本)`；<br>3. 两次 HTTP 均为 200/`code === 0`；证明 source 标签随上游是否返回 usage 切换，而非写死。 |
 | IT-USAGE-06 | 边界：不做月结/对账报表接口 | 前置：只读审查本小节断言范围与 C51 **不做**列表；可选：对仓库路由表断言不存在本项新增的 `/api/admin/usage-reconcile` 或「按用户月结」专用端点要求。 | 1. 本表 PASS 判据仅约束审计 NDJSON 的 token 数值与 `token_source`；<br>2. **不得**以「必须产出对账 CSV/月结 API」为 FAIL 条件；<br>3. 与 backlog C51 residual（无 usage 保持估算）一致。 |
+
+### 3.16 D11 同步 generate 429/5xx 有限重试路由集成（P1-5）(`backend/src/tests/upstream-retry-integration.test.js`)
+
+对应 **D11 / P1-5** 完成标准在 **鉴权 → Guard → `answer/generate` handler → 上游 invoke** 链路上的闭环：须经 `app.handle`（或 `invokeRoute` 等价完整中间件链）打 `POST /api/problems/:id/answer/generate`；stub/spy 上游 `model.invoke` 按调用序号抛带 HTTP 状态的错误或返回合法三字段 JSON；断言 **invoke 次数、最终 HTTP 状态/业务 JSON、写库次数**。对照路径：同进程打 `POST /api/chat`，stub `model.stream` 遇 429/5xx 证明 **不重试**。禁止只单测纯函数却不验证 handler 已挂上重试。**不做**：chat 流式重试、改超时默认。**residual**：熔断见 D12。`it()` 标题须包含下表 ID。
+
+| ID | 用例标题 | 场景描述 | 预期结果 |
+| :--- | :--- | :--- | :--- |
+| IT-RETRY-01 | generate：首调 429、次调成功 → 200 入库 | 前置：合法登录且 `study`；题无缓存或 `{ "force": true }`；注入 jitter `[0, 0]`（或 fake timer）；stub `invoke`：第 1 次 reject `status: 429`，第 2 次 resolve 合法三字段 JSON content；spy 写库。 | 1. HTTP **200**，`code === 0`，`data.cached === false`，三字段可读；<br>2. `invoke` 次数 === **2**；写库恰好 **1** 次；<br>3. `finalize` 一次：`status: 'ok'`、`reason: 'generated_answer'`、`upstreamReached !== false`；<br>4. 调用序：准入 → invoke(429) →（sleep）→ invoke(ok) → finalize → JSON 响应。 |
+| IT-RETRY-02 | generate：三次 503 耗尽 → 500 且不入库 | 前置：同鉴权；`details.answer` 预置 `'PRE-D11-OLD'`；`force: true`；stub `invoke` 连续 3 次 reject `status: 503`；jitter 短序列。 | 1. HTTP **500**，`code === 500`（与当前 generate `catch` 一致；若实现显式映射上游状态亦可，但须在测码固定一种并断言）；**不得** HTTP 200/`code === 0`；<br>2. `invoke` 次数精确为 **3**；写库次数为 **0**；读库 `answer === 'PRE-D11-OLD'`；<br>3. `finalize` 为 error（`reason: 'server_error'` 或等价），不得 `generated_answer`。 |
+| IT-RETRY-03 | chat SSE：上游 429 仅一次 stream、无重试 | 前置：合法 `chat_ai`；stub `model.stream` 在启动时立即 reject/`throw` 带 `status: 429`（或首 chunk 前失败）；`POST /api/chat` body `{ "message": "retry-chat-no" }`；探针记录 `stream` 调用次数。 | 1. `stream` 调用次数精确为 **1**；<br>2. 响应仍为 SSE 协议（已写 `Content-Type: text/event-stream`），随后出现 `type: 'error'` 帧或连接按既有错误路径结束（与 §2.5 / §2.8 一致即可）；<br>3. **不得**在失败后再调用第二次 `stream` 或对 chat 套用 generate 的 `invokeWithRetry`。 |
+| IT-RETRY-04 | generate：400 类上游错误不重试即失败 | 前置：`force: true`；stub `invoke` 单次 reject `status: 400`（或 `401`）；短 jitter 已注入但不应被使用。 | 1. `invoke` 次数 === **1**；<br>2. HTTP 非成功业务体（**500** 或实现固定的错误码），`code !== 0`；<br>3. 无第二次 invoke；证明「仅 429/5xx 重试」在路由层生效。 |
+| IT-RETRY-05 | 对照：缓存早退仍零次 invoke（不与重试耦合） | 前置：题已有非空 `answer`；body 无 `force`；spy `invoke`。 | 1. HTTP 200，`data.cached === true`；<br>2. `invoke` 次数 === **0**（无重试包装误触发）；<br>3. `finalize` `reason: 'cached_answer'`、`upstreamReached: false`（与 §2.10 / §3.3 合取）。 |
+| SEC-RETRY-01 | 重试不得绕过 Guard 准入或重复 finalize | 前置：`AI_REQUIRE_SIGNED_HEADERS=false`；合法 study；stub 第 1 次 429、第 2 次成功；spy `finalize` 与 middleware `next`。 | 1. 单次 HTTP 请求仅 **一次** Guard 准入（`next` 一次）与 **一次** `finalize`；<br>2. 重试只发生在 handler 内上游 `invoke`，不得重新走限流/配额预扣导致双计；<br>3. 成功审计仍单行 `generated_answer`。 |
 
 ---
 
