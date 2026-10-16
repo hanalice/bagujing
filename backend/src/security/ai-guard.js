@@ -128,6 +128,67 @@ const estimatePromptTokens = (body) => {
   return estimateTokensByText(JSON.stringify(body ?? {}));
 };
 
+/**
+ * 判定 usage 双字段是否齐全且可解析为非负有限数；齐全则返回计费用整数对，否则 null。
+ * 仅认 OpenAI 兼容 snake_case：prompt_tokens / completion_tokens（不得只靠 total_tokens）。
+ */
+const parseUpstreamUsagePair = (usage) => {
+  if (!usage || typeof usage !== 'object') return null;
+  const promptRaw = Number(usage.prompt_tokens);
+  const completionRaw = Number(usage.completion_tokens);
+  if (!Number.isFinite(promptRaw) || promptRaw < 0) return null;
+  if (!Number.isFinite(completionRaw) || completionRaw < 0) return null;
+  return {
+    promptTokens: Math.ceil(promptRaw),
+    completionTokens: Math.ceil(completionRaw),
+  };
+};
+
+/**
+ * 从 LangChain 消息/chunk 或测试 stub 提取 OpenAI 兼容 usage（snake_case）。
+ * 挂载点：顶层 usage → response_metadata.usage → usage_metadata → response_metadata.tokenUsage。
+ */
+export function extractUpstreamUsage(source) {
+  if (!source || typeof source !== 'object') return undefined;
+
+  const normalizePair = (promptTokens, completionTokens, totalTokens) => {
+    if (promptTokens === undefined && completionTokens === undefined) return undefined;
+    const out = {
+      prompt_tokens: promptTokens,
+      completion_tokens: completionTokens,
+    };
+    if (totalTokens !== undefined) out.total_tokens = totalTokens;
+    return out;
+  };
+
+  const fromSnakeOrCamel = (obj) => {
+    if (!obj || typeof obj !== 'object') return undefined;
+    return normalizePair(
+      obj.prompt_tokens ?? obj.promptTokens,
+      obj.completion_tokens ?? obj.completionTokens,
+      obj.total_tokens ?? obj.totalTokens,
+    );
+  };
+
+  const direct = fromSnakeOrCamel(source.usage);
+  if (direct) return direct;
+
+  const metaUsage = fromSnakeOrCamel(source.response_metadata?.usage);
+  if (metaUsage) return metaUsage;
+
+  const um = source.usage_metadata;
+  if (um && typeof um === 'object') {
+    const fromMeta = normalizePair(
+      um.input_tokens ?? um.prompt_tokens,
+      um.output_tokens ?? um.completion_tokens,
+      um.total_tokens,
+    );
+    if (fromMeta) return fromMeta;
+  }
+
+  return fromSnakeOrCamel(source.response_metadata?.tokenUsage);
+}
+
 const getIpFromRequest = (req) => {
   const xff = String(req.headers['x-forwarded-for'] ?? '').split(',')[0]?.trim();
   return xff || req.ip || req.socket?.remoteAddress || 'unknown';
@@ -707,7 +768,7 @@ export function createAiGuard({ dbPool = null, redis = null, jwtSecret = null } 
       maxCompletionTokens: config.maxCompletionTokens,
       upstreamTimeoutMs: config.upstreamTimeoutMs,
       sseIdleTimeoutMs: config.sseIdleTimeoutMs,
-      finalize: ({ completionText = '', status = 'ok', reason = 'completed', upstreamStatus = null, upstreamReached = true, promptTokens: reportedPromptTokens } = {}) => {
+      finalize: ({ completionText = '', status = 'ok', reason = 'completed', upstreamStatus = null, upstreamReached = true, promptTokens: reportedPromptTokens, usage } = {}) => {
         metrics.totalRequests += 1;
         const duration = Date.now() - startedAt;
         if (duration < 1000) metrics.latencyBuckets[0]++;
@@ -718,11 +779,25 @@ export function createAiGuard({ dbPool = null, redis = null, jwtSecret = null } 
         // 只有请求根本没发到上游（缺 Key、参数非法等）才全额回补预扣。一旦已经发出，
         // 即便中途 abort 或超时，prompt 与已流出的内容供应商照样计费，必须按实结算，
         // 否则客户端读到九成再断流即可零配额白嫖。
-        const completionTokens = upstreamReached ? estimateTokensByText(completionText) : 0;
-        const finalPromptTokens = Number.isFinite(Number(reportedPromptTokens)) && Number(reportedPromptTokens) >= 0
-          ? Math.ceil(Number(reportedPromptTokens))
-          : promptTokens;
-        const billedPromptTokens = upstreamReached ? finalPromptTokens : 0;
+        // C51：upstreamReached=false 时忽略 usage 记零；双字段齐全则回写 upstream，否则字符估算。
+        let billedPromptTokens = 0;
+        let completionTokens = 0;
+        let tokenSource = 'estimate';
+        if (upstreamReached) {
+          const upstreamPair = parseUpstreamUsagePair(usage);
+          if (upstreamPair) {
+            billedPromptTokens = upstreamPair.promptTokens;
+            completionTokens = upstreamPair.completionTokens;
+            tokenSource = 'upstream';
+          } else {
+            const finalPromptTokens = Number.isFinite(Number(reportedPromptTokens)) && Number(reportedPromptTokens) >= 0
+              ? Math.ceil(Number(reportedPromptTokens))
+              : promptTokens;
+            billedPromptTokens = finalPromptTokens;
+            completionTokens = estimateTokensByText(completionText);
+            tokenSource = 'estimate';
+          }
+        }
         const totalTokens = billedPromptTokens + completionTokens;
 
         if (!quotaFinalized) {
@@ -758,6 +833,7 @@ export function createAiGuard({ dbPool = null, redis = null, jwtSecret = null } 
           promptTokens: billedPromptTokens,
           completionTokens,
           totalTokens,
+          token_source: tokenSource,
           upstreamReached,
           upstreamStatus,
           durationMs: Date.now() - startedAt,

@@ -70,7 +70,7 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | C41 | feat | P1-4 | auto | done | 解析生成返回 JSON 三字段，失败不入库 |
 | C42 | feat | P1-4 | auto | done | 前端按三字段渲染，不再整篇模型 HTML |
 | C5  | fix | P1-6 | assist | split | 已拆为 C51 |
-| C51 | fix | P1-6 | auto | todo | 有上游 usage 则回写审计，否则标记估算 |
+| C51 | fix | P1-6 | auto | done | 有上游 usage 则回写审计，否则标记估算 |
 | C6  | feat | P1-8 | auto | done | 模型分层：chat 与解析可分别配置模型 |
 | C61 | fix | P1-8 | auto | done | chat 路由选模补齐 OPENAI_MODEL 向下兼容回退 |
 | D1  | feat | P1-5 | assist | split | 已拆为 D11 / D12 |
@@ -288,3 +288,4 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | 2026-10-14 | 登记 auto B33 并排在队列表首个 auto+todo：登录态 chat/generate 补齐 HMAC 签名头 |
 | 2026-10-14 | 周扫描：新增 auto S7（换票 URL/签名 path）、S8（security-ai-guard 文档对齐，S5→split）；无逾期待决；待决表仍空 |
 | 2026-10-14 | B33 完成：登录态的 chat 与 generate 补齐 HMAC 签名头 |
+| 2026-10-16 | C51 完成：有上游 usage 则回写审计，否则标记估算 |
