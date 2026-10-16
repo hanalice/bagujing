@@ -47,6 +47,12 @@ fi
 git checkout main
 git merge --ff-only origin/main
 
+# 独立脚本：先消化未合并的周扫描 / 日修 PR。失败则今天不新开任务。
+if ! ./scripts/automation/merge-remote-prs.sh; then
+  echo "远端 PR 未合并，本次不开启新日修。"
+  exit 1
+fi
+
 set +e
 ./scripts/automation/daily-fix.sh --yes --push
 code=$?
