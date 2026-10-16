@@ -10,6 +10,7 @@
 - **多轮对话窗口 (C31 / P1-1)**：`POST /api/chat` 接收 `messages[]`（`role` + `content`），只取最近 **N=6**（写死）并按条截断到 `AI_MAX_INPUT_CHARS`；当前 `problemId` 题面仍走固定槽；B1 三槽顺序不变（§2.24 / §3.13）。前端是否回传历史属 **S3**，本层不测。
 - **解析结构化输出 (C41 / P1-4)**：`POST /api/problems/:id/answer/generate` 在真实生成路径解析模型返回为 JSON `{ summary, keyPoints, nextStep }`（`keyPoints` 为字符串数组）；校验失败 HTTP **502** 且**不**把脏 HTML/原文写入 `details.answer`；后端契约见 §2.25 / §3.14。
 - **解析三字段前端渲染 (C42 / P1-4)**：题目详情「参考答案」面板按冻约字段 `summary` / `keyPoints` / `nextStep` 渲染，**禁止**对整篇模型 HTML/`answer` 字符串使用 `v-html`；旧库 HTML `answer` 走安全降级展示；其它字段 DOMPurify 保持不动（§4.1 `E2E-ANSWER-*` / §4.3 `UT-FE-ANSWER-*`）。
+- **真实 usage 回写审计 (C51 / P1-6)**：`finalize` 若收到上游 `usage.prompt_tokens` **与** `usage.completion_tokens` 则写入审计并标 `token_source=upstream`；否则沿用 `estimateTokensByText` 并标 `token_source=estimate`（§2.26 / §3.15）。**不做**供应商账单对账报表与按用户月结。
 - **前端多层级质量保障体系 (Frontend QA Strategy)**：
   - **端到端测试 (Frontend E2E - Playwright)**：覆盖核心用户链路（Main Path / Happy Path），利用 `page.route` 对大模型流式 SSE 接口进行轻量 Mock，保障真实路由鉴权、题目浏览及 AI 交互界面的稳定可用；**C42** 另锁解析面板三字段可见性与无整篇 `v-html`。
   - **状态机与单元测试 (Frontend UT/IT - Vitest)**：针对 Pinia Store（`user`、`settings`、`breadcrumb`）、题目解析归一化/渲染辅助及工具函数，快速验证状态迁移、本地持久化与边界容错；**B33** 另锁登录态 `chat` / `answer/generate` 的 HMAC 六头注入（§4.5 `UT-FE-SIG-*`）。
@@ -77,8 +78,8 @@
 
 | ID | 用例标题 | 场景描述 | 预期结果 |
 | :--- | :--- | :--- | :--- |
-| UT-AUDIT-01 | 生成成功安全记账 | 同步 `invoke` 成功产出合法三字段 JSON（`summary`/`keyPoints`/`nextStep`，对齐 **C41**）并传入 `upstreamStatus: 200` 调用 `finalize`（`reason: 'generated_answer'`，`completionText` 为入库用规范序列化文本或等价非空 completion）。 | 正常完成审计记录与 Token 统计，无未定义变量异常；不得因仍按「整篇 HTML」假设导致 finalize 参数缺失。 |
-| UT-AUDIT-02 | 缓存命中安全记账且不计配额 | 命中已有缓存答案；调用 `finalize({ status: 'ok', reason: 'cached_answer', completionText: 长 HTML, upstreamStatus: null, upstreamReached: false })`（对齐 A7 / P0-8，测试文件可同目录扩展或见 `ai-guard-quota.test.js`）。 | 1. 不抛异常；2. 审计/结算 `promptTokens`、`completionTokens`、`totalTokens` 均为 `0`（不得按 `estimate(answer)` 扣配额）；3. 与 A4「上游未触达即不计费」判据一致。 |
+| UT-AUDIT-01 | 生成成功安全记账 | 同步 `invoke` 成功产出合法三字段 JSON（`summary`/`keyPoints`/`nextStep`，对齐 **C41**）并传入 `upstreamStatus: 200` 调用 `finalize`（`reason: 'generated_answer'`，`completionText` 为入库用规范序列化文本或等价非空 completion）；本用例**不**传入上游 `usage`（无 `usage.prompt_tokens` / `usage.completion_tokens`）。真实 usage 回写见 §2.26 **C51**。 | 1. 不抛未定义变量异常；`finalize` 参数齐全（不得因仍按「整篇 HTML」假设导致缺失）；<br>2. 审计 NDJSON 恰好 1 行 `decision: 'allow'`、`reason === 'generated_answer'`、`upstreamStatus === 200`；<br>3. `promptTokens`/`completionTokens`/`totalTokens` 均为有限非负整数且 `totalTokens === promptTokens + completionTokens`；<br>4. 无 usage 时 `token_source === 'estimate'`（或等价字段名 `tokenSource`，断言与实现统一后二选一），`completionTokens === estimateTokensByText(completionText)`（`ceil(len/4)` 下限 1）。 |
+| UT-AUDIT-02 | 缓存命中安全记账且不计配额 | 命中已有缓存答案；调用 `finalize({ status: 'ok', reason: 'cached_answer', completionText: 长 HTML, upstreamStatus: null, upstreamReached: false })`（对齐 A7 / P0-8，测试文件可同目录扩展或见 `ai-guard-quota.test.js`）。即使额外误传 `usage: { prompt_tokens: 99, completion_tokens: 99 }` 也不得计费。 | 1. 不抛异常；2. 审计/结算 `promptTokens`、`completionTokens`、`totalTokens` 均为 `0`（不得按 `estimate(answer)` 或上游 usage 扣配额）；3. 与 A4「上游未触达即不计费」判据一致；`upstreamReached === false` 优先于 usage 回写。 |
 
 ### 2.7 Guard 响应缓存策略 (`backend/src/tests/ai-guard-cache.test.js`)
 
@@ -116,7 +117,7 @@
 | UT-QUOTA-CACHE-01 | cached_answer + upstreamReached:false 记零并回补预扣 | 前置：`AI_REQUIRE_SIGNED_HEADERS=false`；无 dbPool 走内存日配额；`AI_GLOBAL_DAILY_TOKEN_LIMIT` 仅够约 1 次保守预扣（同 A4 失败回补手法）；对 `POST /api/problems/1/answer/generate` 走 `createAiGuard().middleware` 准入后，调用 `finalize({ status: 'ok', reason: 'cached_answer', completionText: 很长的 HTML（≥1KB）, upstreamReached: false })`；再发第二次同路由 middleware。 | 1. 审计 NDJSON 存在 `reason === 'cached_answer'` 的行，且 `promptTokens === 0`、`completionTokens === 0`、`totalTokens === 0`（长 `completionText` 不得按 `ceil(len/4)` 结算）；2. 第二次 `next()` 被调用、HTTP 状态保持可准入（非 429）；3. 证明「上游未触达」路径全额回补预扣。 |
 | UT-QUOTA-CACHE-02 | 连续缓存命中不消耗日配额 | 前置：日 token 上限约等于 1～2 次保守预扣；同一 `clientId` 连续 ≥3 次：middleware 准入 `answer/generate` → `finalize({ status: 'ok', reason: 'cached_answer', completionText: 长 HTML, upstreamReached: false })`。 | 1. ≥3 次全部 `next()`，无一次 `statusCode === 429` / `client_daily_token_limit`；2. 审计中 `reason === 'cached_answer'` 的条数等于请求次数（可统计命中）；3. 每条上述审计的 `totalTokens === 0`。 |
 | UT-QUOTA-CACHE-03 | generate handler 缓存早退必须传 upstreamReached:false | 前置：SQLite 题详情已有非空 `answer`；请求 body 未设 `force`（或 `force !== true`）；spy/stub `model.invoke`（或 `getLlmModel`）与 `req.aiGuard.finalize`；经 handler（或等价抽取路径）处理 `POST /api/problems/:id/answer/generate`。 | 1. **零次**上游 `invoke`/`stream`；2. `finalize` 恰好一次，payload 含 `status: 'ok'`、`reason: 'cached_answer'`、`upstreamReached: false`（`upstreamStatus` 为 `null` 或不计费语义）；3. 响应 HTTP 200，JSON：`code === 0`、`data.cached === true`、`data.answer` 等于库内原文。 |
-| UT-QUOTA-CACHE-04 | 对照：真实生成仍按上游触达计费 | 前置：题无可用缓存答案，或 body `{ "force": true }`；mock `invoke` 返回合法短 JSON 三字段（`{"summary":"…","keyPoints":["…"],"nextStep":"…"}`，对齐 **C41**）；成功路径 `finalize` 走 `reason: 'generated_answer'`（`upstreamReached` 默认 `true` 或显式 `true`，可带 `upstreamStatus: 200`）。 | 1. 审计 `reason === 'generated_answer'`（或成功生成等价 reason）；2. `totalTokens > 0`（至少含 prompt 估算，不得因 A7 误把生成路径也记零）；3. 响应 `data.cached === false`，且 `data` 含可解析的 `summary`/`keyPoints`/`nextStep`（或与入库规范序列化一致的等价载荷）。 |
+| UT-QUOTA-CACHE-04 | 对照：真实生成仍按上游触达计费 | 前置：题无可用缓存答案，或 body `{ "force": true }`；mock `invoke` 返回合法短 JSON 三字段（`{"summary":"…","keyPoints":["…"],"nextStep":"…"}`，对齐 **C41**）；成功路径 `finalize` 走 `reason: 'generated_answer'`（`upstreamReached` 默认 `true` 或显式 `true`，可带 `upstreamStatus: 200`）；本用例 mock **不**附带 `usage`（有 usage 的回写见 §2.26 UT-USAGE-*）。 | 1. 审计 `reason === 'generated_answer'`（或成功生成等价 reason）；2. `totalTokens > 0`（至少含 prompt 估算，不得因 A7 误把生成路径也记零），且 `token_source === 'estimate'`；3. 响应 `data.cached === false`，且 `data` 含可解析的 `summary`/`keyPoints`/`nextStep`（或与入库规范序列化一致的等价载荷）。 |
 | UT-QUOTA-CACHE-05 | 仅 reason=cached_answer 但未传 upstreamReached 仍计费 | 前置：同 UT-QUOTA-CACHE-01 的 Guard 环境；`finalize({ status: 'ok', reason: 'cached_answer', completionText: 长 HTML })`，**故意省略** `upstreamReached`（依赖 Guard 默认 `upstreamReached = true`）。 | 1. 审计该行 `totalTokens > 0` 且 `completionTokens === estimateTokensByText(completionText)`；2. 说明不计费**不**由 `reason` 字符串单独决定，必须由调用方显式传 `upstreamReached: false`（护栏：防止只改 reason 文案却漏传判据）。 |
 
 ### 2.11 CORS 跨域预检与允许请求头契约 (`backend/src/tests/ai-guard-cors.test.js`)
@@ -397,6 +398,35 @@ C22 合入后 problems 关键字召回主路径改为 FTS（失败回退 LIKE）
 | UT-ANSWER-JSON-09 | generate systemPrompt 要求 JSON 三字段而非整篇 HTML | 前置：读取 `/api/problems/:id/answer/generate` 的 `systemPrompt`（源码字面量或导出常量；不得依赖模型回复）。 | 1. 文案要求输出 JSON，并点名 `summary`、`keyPoints`、`nextStep`（或等价 schema 说明 `keyPoints` 为数组）；<br>2. **不包含**「请直接输出可用于前端展示的 HTML 片段」「仅 body 内」类硬性 HTML 指令；<br>3. **不包含**「使用 `<p>/<h3>/<ul>/<li>`」作为唯一输出格式的强制句（允许在 JSON 字符串值内谈排版，但不得要求整篇 HTML 文档）。 |
 | UT-ANSWER-JSON-10 | 校验失败路径不得调用写库 | 前置：在可测 handler 片段或带 stub 的生成路径中，mock `invoke` 返回 UT-ANSWER-JSON-03 的 HTML；spy `upsertProblemAnswerById`（及任何 `UPDATE details SET answer`）；题已有旧 `answer='OLD-SAFE'`。 | 1. 写库 spy 调用次数为 **0**；<br>2. 随后读库 `answer === 'OLD-SAFE'`；<br>3. 与「失败不入库」完成标准一致（HTTP 层断言见 IT-ANSWER-JSON-02）。 |
 
+### 2.26 C51 上游 usage 回写审计与估算打标（P1-6）(`backend/src/tests/ai-guard-usage.test.js`)
+
+对应 **C51 / P1-6**（由 C5 拆出；HLD `P1-6` / 阶段 C 项 C5）。完成标准：
+
+**做**：`finalize` 若上游对象含 **同时存在且可解析** 的 `usage.prompt_tokens` 与 `usage.completion_tokens`（OpenAI 兼容 snake_case 整数），则审计写入这两个值（`promptTokens` / `completionTokens`），`totalTokens === promptTokens + completionTokens`，并标 `token_source=upstream`；否则沿用既有 `estimateTokensByText`（`Math.max(1, Math.ceil(len/4))`）估算，并标 `token_source=estimate`。须 **mock 两条路径**（有 usage / 无 usage）。
+
+**不做**：供应商账单对账报表、按用户精确月结、改准入 conservative 预扣公式本身（预扣仍属 A4）。
+
+**residual**：网关/上游不返回 `usage`（或缺任一字段）时保持估算并打 `estimate`；本表不断言周对账误差报表。
+
+**协议 / 传参**（实现契约，供下一阶段 `it()` 对齐）：
+
+1. 调用方将上游响应上的 `usage` 原样或子集传给 `finalize({ ..., usage: { prompt_tokens, completion_tokens } })`（允许额外 `total_tokens`，但**不得**仅靠 `total_tokens` 判定走 upstream 路径）。
+2. **双字段齐全**判定：`Number.isFinite(Number(prompt_tokens)) && Number(prompt_tokens) >= 0` 且同条件对 `completion_tokens`；否则整段落估算。
+3. `upstreamReached === false` 时仍记零并回补预扣（A7），**忽略**传入的 usage（不得因缓存命中却按上游 usage 扣费）。
+4. 审计 NDJSON 字段：`promptTokens`、`completionTokens`、`totalTokens`、`token_source`（取值精确为 `'upstream'` | `'estimate'`；若实现用 camelCase `tokenSource`，单测与文档统一后二选一，禁止混用两套键）。
+
+**测法**：`createAiGuard({ jwtSecret })` + `mockHttp`（同 `ai-guard-quota.test.js`）；`AI_REQUIRE_SIGNED_HEADERS=false`；设独立 `AI_AUDIT_FILE_PATH`；middleware 准入后直接调 `req.aiGuard.finalize(...)`；读 NDJSON 末行断言。handler 侧「把 invoke/stream 的 usage 传入 finalize」见 §3.15。`it()` 标题须包含下表 ID。
+
+| ID | 用例标题 | 场景描述 | 预期结果 |
+| :--- | :--- | :--- | :--- |
+| UT-USAGE-01 | 双字段 usage 齐全 → 审计回写 upstream | 前置：`AI_REQUIRE_SIGNED_HEADERS=false`；独立审计文件；`POST /api/chat` body `{ "message": "usage-up" }` 经 middleware `next()`；调用 `finalize({ status: 'ok', reason: 'stream_done', completionText: 'abcd'.repeat(50)（估计值必 ≠ 上游）, upstreamReached: true, upstreamStatus: 200, usage: { prompt_tokens: 123, completion_tokens: 45, total_tokens: 168 } })`。 | 1. 审计末行 `decision: 'allow'`、`reason === 'stream_done'`；<br>2. `promptTokens === 123`、`completionTokens === 45`、`totalTokens === 168`；<br>3. `token_source === 'upstream'`；<br>4. **不得**等于 `estimateTokensByText(completionText)` 的 completion 估算（证明未回落字符估算）。 |
+| UT-USAGE-02 | 无 usage → 估算并标 estimate（residual） | 前置：同 UT-USAGE-01 环境；`finalize({ status: 'ok', reason: 'stream_done', completionText: 'hello-world-estimate', upstreamReached: true, upstreamStatus: 200 })`，**故意省略** `usage`（或 `usage: undefined`）。 | 1. `completionTokens === estimateTokensByText('hello-world-estimate')`；<br>2. `promptTokens` 等于准入时 body 估算（或既有 `reportedPromptTokens` 回退规则），为有限正整数；<br>3. `totalTokens === promptTokens + completionTokens`；<br>4. `token_source === 'estimate'`。 |
+| UT-USAGE-03 | 仅有单侧 usage 字段 → 整段落估算 | 前置：同环境；两组分别：A) `usage: { prompt_tokens: 50 }`（缺 completion）；B) `usage: { completion_tokens: 50 }`（缺 prompt）；`completionText` 固定非空；`upstreamReached: true`。 | 1. A/B 均 `token_source === 'estimate'`；<br>2. `completionTokens === estimateTokensByText(completionText)`，**不得**部分采用 50；<br>3. 证明「两字段必须同时齐全」才走 upstream（与完成标准字面一致）。 |
+| UT-USAGE-04 | usage 非有限/负数 → 估算 | 前置：同环境；分别覆盖 `prompt_tokens: NaN`、`completion_tokens: -1`、`prompt_tokens: 'x'`、`usage: null`、`usage: {}`；每次 `upstreamReached: true` 且有非空 `completionText`。 | 1. 全部 `token_source === 'estimate'`；<br>2. `completionTokens` 均等于对该 `completionText` 的 `estimateTokensByText`；<br>3. 不抛异常、审计仍写入 `decision: 'allow'`。 |
+| UT-USAGE-05 | generate 路径：usage 优先于 completionText 估算 | 前置：middleware 准入 `POST /api/problems/1/answer/generate`；`finalize({ status: 'ok', reason: 'generated_answer', completionText: 很长 JSON 三字段串（估计 completion ≥ 20）, upstreamReached: true, upstreamStatus: 200, usage: { prompt_tokens: 11, completion_tokens: 7 } })`。 | 1. 审计 `reason === 'generated_answer'`；<br>2. `promptTokens === 11`、`completionTokens === 7`、`totalTokens === 18`；<br>3. `token_source === 'upstream'`；<br>4. `completionTokens !== estimateTokensByText(completionText)`。 |
+| UT-USAGE-06 | cached_answer + usage 仍记零（与 A7 合取） | 前置：同 UT-QUOTA-CACHE-01 手法；`finalize({ status: 'ok', reason: 'cached_answer', completionText: 长 HTML, upstreamReached: false, usage: { prompt_tokens: 999, completion_tokens: 999 } })`。 | 1. `promptTokens === 0`、`completionTokens === 0`、`totalTokens === 0`；<br>2. 不得因 usage 将 `token_source` 写成 `upstream` 且带非零 token（允许省略 `token_source` 或标 `estimate`，但计费必须为 0）；<br>3. 证明 C51 **不做**改变「未触达不计费」。 |
+| UT-USAGE-07 | upstream 回写后配额按实际 usage 结算 | 前置：内存日配额；`AI_GLOBAL_DAILY_TOKEN_LIMIT` 设为恰好允许「预扣一次 + 按小 usage 结算后再准入一次」的窗口（对照：若误按长 `completionText` 估算则会 429）；准入 `POST /api/chat` 后 `finalize` 带 `usage: { prompt_tokens: 10, completion_tokens: 5 }` 与**很长** `completionText`；再发第二次同路由 middleware。 | 1. 第一次审计 `token_source === 'upstream'` 且 `totalTokens === 15`；<br>2. 第二次 `next()` 被调用（非 429）；<br>3. 证明 usage 校正进入 `adjustQuotaTokens` 的 `actualTokens`，而非仅写审计字段却仍按估算扣满。 |
+
 ---
 
 ## 3. 安全防护与集成测试用例 (Security & Integration)
@@ -547,6 +577,19 @@ Prompt 内容来自数据库，不能只依赖客户端 `AI_MAX_INPUT_CHARS` 防
 | IT-ANSWER-JSON-04 | 围栏 JSON 成功路径与 prompt 契约 | 前置：`force: true`；stub 返回带 `` ```json `` 围栏的合法三字段；捕获发往模型的 `messages[0]` system。 | 1. HTTP 200、`code === 0`，三字段正确；<br>2. system content 满足 UT-ANSWER-JSON-09（要求 JSON 三字段、无整篇 HTML 硬性指令）；<br>3. 入库成功 1 次。 |
 | IT-ANSWER-JSON-05 | 缓存早退不强制重解析旧 HTML（residual） | 前置：题已有非空旧 HTML `answer`（形如 `<p>legacy</p>`）；body **无** `force` / `force: false`；spy `invoke`。 | 1. HTTP 200，`data.cached === true`，`data.answer` 等于库内旧 HTML 原文；<br>2. **零次** `invoke`；`finalize` `reason: 'cached_answer'`、`upstreamReached: false`；<br>3. 本用例**不**要求把旧 HTML 升级为三字段（属 C42 residual）；亦不得因旧 HTML 形状对缓存路径返回 502。 |
 | SEC-ANSWER-JSON-01 | 校验失败不得用模型原文污染 answer | 前置：预置 `answer='SAFE'`；`force: true`；stub 返回含 `<script>alert(1)</script>` 与 `javascript:xss()` 的非 JSON 脏串。 | 1. HTTP 502；<br>2. 读库仍为 `'SAFE'`，且**不含** `<script>` / `javascript:`；<br>3. 响应 body（若含 `message`）不得回显完整脏 HTML 作为成功 `data.answer`。 |
+
+### 3.15 C51 上游 usage 经路由回写审计集成（P1-6）(`backend/src/tests/ai-guard-usage-integration.test.js`)
+
+对应 **C51 / P1-6** 完成标准「有上游 usage 则回写审计，否则标记估算」在 **handler → finalize** 链路上的闭环：须经 `app.handle`（或等价完整中间件链）走 `POST /api/problems/:id/answer/generate` 与/或 `POST /api/chat`；stub 上游 `invoke`/`stream` **返回**带或不带 `usage` 的响应对象；断言审计 NDJSON 的 `promptTokens`/`completionTokens`/`token_source`。禁止只单测纯函数却不验证路由把 usage 传入 `finalize`。**不做**：账单对账报表、按用户月结 UI/API。`it()` 标题须包含下表 ID。
+
+| ID | 用例标题 | 场景描述 | 预期结果 |
+| :--- | :--- | :--- | :--- |
+| IT-USAGE-01 | generate：invoke 带 usage → 审计 upstream | 前置：合法登录且 `study`；题无缓存或 `{ "force": true }`；独立 `AI_AUDIT_FILE_PATH`；stub `model.invoke` 返回 `{ content: '{"summary":"s","keyPoints":["k"],"nextStep":"n"}', usage: { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120 } }`（或 LangChain 等价结构，使 handler 能读到同名字段）；`POST /api/problems/42/answer/generate`。 | 1. HTTP **200**，`code === 0`，`data.cached === false`；<br>2. 审计恰好 1 行成功：`reason === 'generated_answer'`；<br>3. `promptTokens === 100`、`completionTokens === 20`、`totalTokens === 120`；<br>4. `token_source === 'upstream'`；调用序：准入 middleware → `invoke` 1 次 → `finalize` 1 次（无二次 finalize）。 |
+| IT-USAGE-02 | generate：invoke 无 usage → 审计 estimate（residual） | 前置：同 IT-USAGE-01 鉴权与 force；stub `invoke` 仅返回 `{ content: 合法三字段 JSON }`，**无** `usage` 字段。 | 1. HTTP **200**，`code === 0`；<br>2. 审计 `reason === 'generated_answer'`；<br>3. `token_source === 'estimate'`；<br>4. `completionTokens === estimateTokensByText(入库/响应用 completion 文本)`，`totalTokens === promptTokens + completionTokens` 且均为有限正整数。 |
+| IT-USAGE-03 | chat SSE：stream 结束带 usage → upstream | 前置：合法 `chat_ai`；独立审计文件；stub `model.stream` 产出至少 1 个 delta 后结束，并在最终 chunk/聚合结果上暴露 `usage: { prompt_tokens: 30, completion_tokens: 8 }`（或 handler 约定的等价挂载点，须在测码注释写明）；`POST /api/chat` body `{ "message": "usage-sse" }`。 | 1. HTTP **200**，`Content-Type: text/event-stream; charset=utf-8`；SSE 序 `context` → `delta` → `done`；<br>2. `finalize` 恰好 1 次，`reason === 'stream_done'`；<br>3. 审计 `promptTokens === 30`、`completionTokens === 8`、`totalTokens === 38`、`token_source === 'upstream'`。 |
+| IT-USAGE-04 | chat SSE：流结束无 usage → estimate | 前置：同 IT-USAGE-03，但 stub 流**不**提供 `usage`；delta 文本固定为可知长度（如 `'ping'`）。 | 1. SSE 仍完整结束；<br>2. 审计 `reason === 'stream_done'`、`token_source === 'estimate'`；<br>3. `completionTokens === estimateTokensByText(拼接后的 completionText)`。 |
+| IT-USAGE-05 | 两条路径对照：同 completion 不同 source | 前置：同一进程连续两次 `force: true` 的 generate；第 1 次 stub 带 `usage: { prompt_tokens: 40, completion_tokens: 6 }`；第 2 次 stub 无 usage 且 `content` 与第 1 次**相同**三字段 JSON；两次审计分行读取。 | 1. 第 1 行 `token_source === 'upstream'` 且 `completionTokens === 6`；<br>2. 第 2 行 `token_source === 'estimate'` 且 `completionTokens === estimateTokensByText(同一 completion 文本)`；<br>3. 两次 HTTP 均为 200/`code === 0`；证明 source 标签随上游是否返回 usage 切换，而非写死。 |
+| IT-USAGE-06 | 边界：不做月结/对账报表接口 | 前置：只读审查本小节断言范围与 C51 **不做**列表；可选：对仓库路由表断言不存在本项新增的 `/api/admin/usage-reconcile` 或「按用户月结」专用端点要求。 | 1. 本表 PASS 判据仅约束审计 NDJSON 的 token 数值与 `token_source`；<br>2. **不得**以「必须产出对账 CSV/月结 API」为 FAIL 条件；<br>3. 与 backlog C51 residual（无 usage 保持估算）一致。 |
 
 ---
 

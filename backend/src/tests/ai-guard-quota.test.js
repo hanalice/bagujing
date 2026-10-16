@@ -378,6 +378,7 @@ describe('A7/P0-8: cached_answer does not consume quota (upstreamReached)', () =
     assert.ok(generated);
     assert.ok(generated.totalTokens > 0, '真实生成须至少含 prompt 估算');
     assert.equal(generated.completionTokens, estimateTokensByText(shortJson));
+    assert.equal(generated.token_source, 'estimate');
   });
 
   it('UT-QUOTA-CACHE-05: 仅 reason=cached_answer 但未传 upstreamReached 仍计费', async () => {

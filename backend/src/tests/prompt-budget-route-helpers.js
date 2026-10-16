@@ -236,6 +236,7 @@ export function invokeRoute(app, route, body, options = {}) {
 }
 
 // 安装只返回固定 OpenAI 兼容响应的 fetch stub，阻断所有外部网络访问。
+// 默认不附带 usage，使审计走 C51 residual 估算路径（有 usage 的回写由 C51 专用 stub 覆盖）。
 export function installMockModelFetch(calls) {
   const originalFetch = globalThis.fetch;
   const encoder = new TextEncoder();
@@ -253,7 +254,6 @@ export function installMockModelFetch(calls) {
           id: 'chatcmpl-test',
           object: 'chat.completion.chunk',
           choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
-          usage: { prompt_tokens: 1, completion_tokens: 3, total_tokens: 4 },
         })}\n\n`,
         'data: [DONE]\n\n',
       ];
@@ -280,7 +280,6 @@ export function installMockModelFetch(calls) {
         message: { role: 'assistant', content: structuredAnswer },
         finish_reason: 'stop',
       }],
-      usage: { prompt_tokens: 1, completion_tokens: 3, total_tokens: 4 },
     }), { status: 200, headers: { 'content-type': 'application/json' } });
   };
   return () => {

@@ -4,7 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import 'dotenv/config';
-import { createAiGuard, readStreamChunkWithTimeout } from './security/ai-guard.js';
+import { createAiGuard, extractUpstreamUsage, readStreamChunkWithTimeout } from './security/ai-guard.js';
 import fs from 'node:fs/promises';
 import Redis from 'ioredis';
 import { SystemMessage, HumanMessage, AIMessage } from "@langchain/core/messages";
@@ -768,6 +768,8 @@ app.post('/api/problems/:id/answer/generate', authenticateToken, requirePermissi
       new HumanMessage(promptMessages.context),
       new HumanMessage(promptMessages.user),
     ]);
+    // C51：从 invoke 响应提取上游 usage（顶层 / response_metadata / usage_metadata）
+    const upstreamUsage = extractUpstreamUsage(response);
 
     const answerRaw = typeof response?.content === 'string'
       ? response.content
@@ -782,6 +784,7 @@ app.post('/api/problems/:id/answer/generate', authenticateToken, requirePermissi
         reason: 'invalid_structured_answer',
         promptTokens,
         upstreamReached: true,
+        usage: upstreamUsage,
       });
       return res.status(502).json({
         code: 502,
@@ -807,6 +810,7 @@ app.post('/api/problems/:id/answer/generate', authenticateToken, requirePermissi
       completionText: answerJson,
       upstreamStatus: 200,
       promptTokens,
+      usage: upstreamUsage,
     });
 
     return res.json({
@@ -921,11 +925,15 @@ app.post('/api/chat', authenticateToken, requirePermission('chat_ai'), aiGuard.m
       ? stream.getReader()
       : (stream?.[Symbol.asyncIterator] ? stream[Symbol.asyncIterator]() : stream);
 
+    // C51：流式 chunk 上的 usage 通常出现在含 finish_reason/usage 的末包（见 extractUpstreamUsage）
+    let upstreamUsage;
     try {
       while (true) {
         const { done, value } = await readStreamChunkWithTimeout(reader, sseIdleTimeoutMs);
         if (done) break;
         const chunk = value;
+        const chunkUsage = extractUpstreamUsage(chunk);
+        if (chunkUsage) upstreamUsage = chunkUsage;
         const delta = chunk?.content;
         if (delta) {
           completionText += delta;
@@ -943,6 +951,7 @@ app.post('/api/chat', authenticateToken, requirePermission('chat_ai'), aiGuard.m
       reason: 'stream_done',
       completionText,
       promptTokens,
+      usage: upstreamUsage,
     });
     sendSSE(res, { type: 'done' });
     return res.end();
