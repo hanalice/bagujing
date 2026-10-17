@@ -21,6 +21,11 @@ import {
 import { createLlmModel } from './llm.js';
 import { invokeWithRetry } from './upstream-retry.js';
 import {
+  getUpstreamCircuit,
+  isCircuitOpenError,
+  runWithUpstreamCircuit,
+} from './upstream-circuit.js';
+import {
   GENERATE_ANSWER_SYSTEM_PROMPT,
   parseGeneratedAnswerJson,
   serializeStructuredAnswer,
@@ -763,13 +768,34 @@ app.post('/api/problems/:id/answer/generate', authenticateToken, requirePermissi
       });
     }
 
-    upstreamReached = true;
-    // D11：仅同步 generate 对 429/5xx 有限重试；chat SSE 仍直接 stream、不套用
-    const response = await invokeWithRetry(() => model.invoke([
-      new SystemMessage(promptMessages.system),
-      new HumanMessage(promptMessages.context),
-      new HumanMessage(promptMessages.user),
-    ]));
+    // D12：熔断判定在触达上游之前；open 时零次 invoke、upstreamReached 仍为 false
+    // D11：仅同步 generate 对 429/5xx 有限重试；整轮耗尽计 1 次熔断失败
+    let response;
+    try {
+      response = await runWithUpstreamCircuit(() => {
+        upstreamReached = true;
+        return invokeWithRetry(() => model.invoke([
+          new SystemMessage(promptMessages.system),
+          new HumanMessage(promptMessages.context),
+          new HumanMessage(promptMessages.user),
+        ]));
+      });
+    } catch (error) {
+      if (isCircuitOpenError(error)) {
+        finalizeGuard({
+          status: 'error',
+          reason: 'circuit_open',
+          upstreamReached: false,
+          promptTokens,
+        });
+        return res.status(503).json({
+          code: 503,
+          message: error.message || 'Upstream circuit is open',
+          reason: 'circuit_open',
+        });
+      }
+      throw error;
+    }
     // C51：从 invoke 响应提取上游 usage（顶层 / response_metadata / usage_metadata）
     const upstreamUsage = extractUpstreamUsage(response);
 
@@ -907,6 +933,24 @@ app.post('/api/chat', authenticateToken, requirePermission('chat_ai'), aiGuard.m
       return res.end();
     }
 
+    // D12：chat 流式亦经进程内熔断；open 时零次 stream（成功/失败在流结束后再记账，因 stream 创建即 resolve）
+    const circuit = getUpstreamCircuit();
+    try {
+      circuit.assertClosed();
+    } catch (error) {
+      if (isCircuitOpenError(error)) {
+        sendSSE(res, { type: 'error', message: error.message || 'Upstream circuit is open', reason: 'circuit_open' });
+        finalizeGuard({
+          status: 'error',
+          reason: 'circuit_open',
+          upstreamReached: false,
+          promptTokens,
+        });
+        return res.end();
+      }
+      throw error;
+    }
+
     upstreamReached = true;
     // B1：system → context(RAG) → 历史（若有）→ 当前 user；伪造 system role 已在归一化阶段丢弃。
     const stream = await model.stream([
@@ -948,6 +992,7 @@ app.post('/api/chat', authenticateToken, requirePermission('chat_ai'), aiGuard.m
       }
     }
 
+    getUpstreamCircuit().recordSuccess();
     finalizeGuard({
       status: 'ok',
       reason: 'stream_done',
@@ -960,6 +1005,9 @@ app.post('/api/chat', authenticateToken, requirePermission('chat_ai'), aiGuard.m
   } catch (error) {
     const isTimeout = error?.message === 'SSE idle timeout';
     const isAborted = abortController.signal.aborted;
+    if (upstreamReached && !isCircuitOpenError(error)) {
+      getUpstreamCircuit().recordFailure();
+    }
     finalizeGuard({
       status: 'error',
       reason: (isAborted || isTimeout) ? 'aborted_or_timeout' : 'server_error',
