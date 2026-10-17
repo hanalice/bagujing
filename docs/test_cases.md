@@ -11,7 +11,8 @@
 - **解析结构化输出 (C41 / P1-4)**：`POST /api/problems/:id/answer/generate` 在真实生成路径解析模型返回为 JSON `{ summary, keyPoints, nextStep }`（`keyPoints` 为字符串数组）；校验失败 HTTP **502** 且**不**把脏 HTML/原文写入 `details.answer`；后端契约见 §2.25 / §3.14。
 - **解析三字段前端渲染 (C42 / P1-4)**：题目详情「参考答案」面板按冻约字段 `summary` / `keyPoints` / `nextStep` 渲染，**禁止**对整篇模型 HTML/`answer` 字符串使用 `v-html`；旧库 HTML `answer` 走安全降级展示；其它字段 DOMPurify 保持不动（§4.1 `E2E-ANSWER-*` / §4.3 `UT-FE-ANSWER-*`）。
 - **真实 usage 回写审计 (C51 / P1-6)**：`finalize` 若收到上游 `usage.prompt_tokens` **与** `usage.completion_tokens` 则写入审计并标 `token_source=upstream`；否则沿用 `estimateTokensByText` 并标 `token_source=estimate`（§2.26 / §3.15）。**不做**供应商账单对账报表与按用户月结。
-- **同步生成有限重试 (D11 / P1-5)**：仅 `POST /api/problems/:id/answer/generate` 的同步 `invoke` 对上游 **429/5xx** 最多 **2** 次重试（合计至多 3 次调用），jitter 序列可注入/固定以便单测；`POST /api/chat` SSE **不重试**（§2.27 / §3.16）。**不做** chat 流式重试、改上游超时默认值。跨进程熔断属 residual（B5 / D12）。
+- **同步生成有限重试 (D11 / P1-5)**：仅 `POST /api/problems/:id/answer/generate` 的同步 `invoke` 对上游 **429/5xx** 最多 **2** 次重试（合计至多 3 次调用），jitter 序列可注入/固定以便单测；`POST /api/chat` SSE **不重试**（§2.27 / §3.16）。**不做** chat 流式重试、改上游超时默认值。连续失败熔断见 **D12**（§2.28 / §3.17）；跨进程共享熔断态不在 D11 范围。
+- **进程内连续失败熔断 (D12 / P1-5)**：进程内计数连续上游失败，达到可注入阈值后打开一段可注入时间窗口，打开期间**零次**上游调用即拒答；不依赖 Redis；单测可驱动时钟/阈值（§2.28 / §3.17）。**不做**跨 worker 共享熔断状态。**residual**：cluster 下每进程一份，文档写明。
 - **前端多层级质量保障体系 (Frontend QA Strategy)**：
   - **端到端测试 (Frontend E2E - Playwright)**：覆盖核心用户链路（Main Path / Happy Path），利用 `page.route` 对大模型流式 SSE 接口进行轻量 Mock，保障真实路由鉴权、题目浏览及 AI 交互界面的稳定可用；**C42** 另锁解析面板三字段可见性与无整篇 `v-html`。
   - **状态机与单元测试 (Frontend UT/IT - Vitest)**：针对 Pinia Store（`user`、`settings`、`breadcrumb`）、题目解析归一化/渲染辅助及工具函数，快速验证状态迁移、本地持久化与边界容错；**B33** 另锁登录态 `chat` / `answer/generate` 的 HMAC 六头注入（§4.5 `UT-FE-SIG-*`）。
@@ -436,7 +437,7 @@ C22 合入后 problems 关键字召回主路径改为 FTS（失败回退 LIKE）
 
 **不做**：为 chat 流式增加重试；修改 `buildLlmConfig` / Guard 的上游超时默认值（`upstreamTimeoutMs` / `timeout` 既有回退规则见 §2.1 UT-LLM-10..12）。
 
-**residual**：跨进程/跨 worker 熔断与连续失败窗口属 **D12** / B5 家族，本表不得要求 Redis 共享熔断态。
+**residual**：跨进程/跨 worker 共享熔断态不在本项；连续失败窗口与进程内熔断属 **D12**（§2.28 / §3.17），本表不得要求 Redis 共享熔断态。
 
 **协议 / 调用序**（下一阶段 `it()` 须对齐）：
 
@@ -457,8 +458,42 @@ C22 合入后 problems 关键字召回主路径改为 FTS（失败回退 LIKE）
 | UT-RETRY-05 | jitter 序列固定：断言精确等待 | 前置：注入 jitter 序列精确为 `[50, 100]`（ms）；stub 前两次 `status: 500`，第三次成功；使用 fake timer / mock `sleep` 记录入参。 | 1. 第一次重试前 `sleep(50)`（或等价 delay=50）；第二次重试前 `sleep(100)`；<br>2. **不得**出现未注入的随机毫秒（证明序列固定可测）；<br>3. 推进 timer 后第三次 `invoke` 才发生（调用序：invoke → sleep50 → invoke → sleep100 → invoke）。 |
 | UT-RETRY-06 | chat SSE：stream 遇 429/5xx 不重试 | 前置：stub `model.stream` 第 1 次即抛 `status: 429`（或 `503`）；走 chat 路径所用调用（直接 `stream` 或 chat handler 抽出的流启动函数），**不**经过 generate 的 `invokeWithRetry`。 | 1. `stream` 调用次数精确为 **1**；<br>2. **零次** 针对 stream 的重试 sleep；<br>3. 错误向上传递；证明 D11「SSE chat **不重试**」。 |
 | UT-RETRY-07 | 不做：上游超时默认值未被本项改写 | 前置：未设 Guard/`defaultConfig` 的 `upstreamTimeoutMs`；调用 `buildLlmConfig()`（同 §2.1 UT-LLM-12）；并只读比对 D11 相关改动是否改写超时常量默认。 | 1. `timeout` 仍为 `undefined`（与 UT-LLM-12 一致）；当仅 `defaultConfig.upstreamTimeoutMs === 30000` 时 `timeout === 30000`（UT-LLM-11）；<br>2. 本项 PASS **不得**要求把默认超时改成新值；<br>3. 证明完成标准「不做：改上游超时默认值」。 |
-| UT-RETRY-08 | residual：本项不引入跨进程熔断 | 前置：连续 3 次 UT-RETRY-03 式耗尽后，再发起第 4 次**全新** `invokeWithRetry` 调用（新 stub：首次即成功）；不注入 Redis。 | 1. 第 4 次封装调用中 `invoke` 次数为 **1** 且成功（无「熔断打开拒调」）；<br>2. 不要求、不断言 Redis key / 跨进程共享状态；<br>3. 连续失败窗口属 **D12**，本用例若把「必须熔断」写成 FAIL 条件则本项设计错误。 |
+| UT-RETRY-08 | residual：本项不引入跨进程熔断 | 前置：连续 3 次 UT-RETRY-03 式耗尽后，再发起第 4 次**全新** `invokeWithRetry` 调用（新 stub：首次即成功）；不注入 Redis。 | 1. 第 4 次封装调用中 `invoke` 次数为 **1** 且成功（无「熔断打开拒调」）；<br>2. 不要求、不断言 Redis key / 跨进程共享状态；<br>3. 连续失败窗口属 **D12**（§2.28），本用例若把「必须熔断」写成 FAIL 条件则本项设计错误。 |
 | UT-RETRY-09 | 首次 invoke 成功：无 sleep、无二次调用 | 前置：stub `invoke` 第一次即 resolve 合法 content；任意 jitter 序列。 | 1. `invoke` 次数 === **1**；<br>2. sleep 次数 === **0**；<br>3. 返回值即该次响应。 |
+
+### 2.28 D12 进程内连续失败熔断（P1-5）(`backend/src/tests/upstream-circuit.test.js`)
+
+对应 **D12 / P1-5**（由 D1 拆出；HLD `P1-5` / 阶段 D 项 D1 的熔断半支）。完成标准：
+
+**做**：进程内熔断器——对上游调用的**连续失败**达到可配置阈值后进入 **open**，并在一段可配置时间窗口内保持打开；打开期间新请求**不得**再触达上游（`invoke` / `stream` 调用次数为 0），直接以可识别错误短路。阈值与打开窗口须**可注入或可导出常量**，单测用 fake clock / 注入 `now` 推进，禁止依赖真实 `setTimeout` 拖慢 CI。状态仅存进程内内存（模块级变量 / 闭包 / 实例字段），**不**读写 Redis。
+
+**不做**：跨 worker / 跨进程共享熔断状态（不得要求 Redis key、不得要求第二进程读到第一进程的 open 态）。
+
+**residual**：PM2 cluster / 多 worker 下**每进程一份**熔断计数与窗口；实现或运维文档须写明（本表用「两独立实例互不影响」锁「不做跨 worker」；不得把「多进程共享」写成 PASS 条件）。
+
+**协议 / 状态机**（下一阶段 `it()` 须对齐；命名以实现为准，测码注释写明等价字段）：
+
+1. **失败计数单位**：以一次业务侧上游尝试结果计 1 次——对 generate，一次 `invokeWithRetry` **整轮**最终失败（含重试耗尽）计 **1** 次连续失败，**不得**把 D11 内部的 3 次 `invoke` 记成 3 次熔断失败（与 §2.27 解耦）。成功（整轮 resolve）将连续失败计数**清零**。
+2. **打开条件**：`consecutiveFailures >= failureThreshold`（默认阈值可导出，如 `DEFAULT_CIRCUIT_FAILURE_THRESHOLD`；单测注入较小值如 `2` 或 `3`）→ 状态 `open`，记录 `openedAt`（或等价截止时间 `openUntil = openedAt + openDurationMs`）。
+3. **打开窗口内**：`allowRequest()` / 包装函数在调用上游前判定为 open → 立即抛错或返回失败，错误须可读（如 `code`/`reason === 'circuit_open'`，或 Error 带 `circuitOpen: true`）；**零次**上游 `invoke`。
+4. **窗口结束**：当注入时钟 `now >= openUntil` 后，状态回到 `closed`（或允许一次 half-open 探测；若实现 half-open，探测失败重新 open、成功则 closed 且计数清零——测码固定一种并断言）。下一请求允许再次调用上游。
+5. **与 D11 调用序**（generate）：`circuit 判定` →（closed）`invokeWithRetry` → 按结果 `recordSuccess` / `recordFailure`；open 时**不进入** `invokeWithRetry`。
+6. **无 Redis**：构造/运行路径不得因未设置 `REDIS_URL`、未注入 `redis` 而跳过熔断；亦不得对 Redis 发起 `GET`/`SET`/`INCR`。
+
+**测法**：优先单测可注入的 `UpstreamCircuitBreaker`（或 `upstream-circuit.js` / 与 `upstream-retry.js` 并列的纯模块）；用 stub 回调记录「是否真正执行上游」；路由闭环见 §3.17。`it()` 标题须包含下表 ID。
+
+| ID | 用例标题 | 场景描述 | 预期结果 |
+| :--- | :--- | :--- | :--- |
+| UT-CIRCUIT-01 | 连续失败达阈值后进入 open | 前置：注入 `failureThreshold = 3`、`openDurationMs = 60_000`；熔断器初始 `closed`、连续失败 0；连续 3 次调用 `recordFailure()`（或 3 次包装调用均让上游 reject）。 | 1. 第 3 次失败返回后状态为 `open`（或 `getState() === 'open'` / `isOpen() === true`）；<br>2. `consecutiveFailures === 3`（或 ≥ threshold）；<br>3. `openUntil`（或等价）= 注入的 `now + 60_000`。 |
+| UT-CIRCUIT-02 | open 窗口内短路：零次上游调用 | 前置：同 UT-CIRCUIT-01 已 `open`；stub 上游 `invokeFn` 计数器归零；在窗口未结束时调用包装后的 `run`/`execute`（或 `assertClosedThenRun`）。 | 1. 包装**立即**失败，错误带 `circuit_open`（或约定布尔/`code`）；<br>2. `invokeFn` 调用次数精确为 **0**；<br>3. 不修改 `openUntil` 提前关闭（仍为 open）。 |
+| UT-CIRCUIT-03 | 打开窗口结束后恢复可调用 | 前置：`failureThreshold = 2`、`openDurationMs = 1000`；先制造 open；注入时钟从 `openedAt` 推进到 `openedAt + 1000`（或 `>= openUntil`）；stub 上游第 1 次即成功。 | 1. 推进后下一次包装调用允许执行上游，`invokeFn` 次数 === **1**；<br>2. 成功后状态为 `closed`，`consecutiveFailures === 0`；<br>3. 若实现 half-open：探测成功路径须落到 closed，不得仍 open。 |
+| UT-CIRCUIT-04 | 成功清零连续失败计数 | 前置：`failureThreshold = 3`；先 `recordFailure` 两次（未达阈值，仍 closed）；再 `recordSuccess`（或一次成功包装调用）；再 `recordFailure` 两次。 | 1. 前两次失败后仍 `closed`，允许上游；<br>2. 成功后 `consecutiveFailures === 0`；<br>3. 成功后再两次失败仍 `closed`（合计未连续满 3），证明成功打断连续串。 |
+| UT-CIRCUIT-05 | 阈值与窗口可注入：单测可驱动 | 前置：分别注入 A) `failureThreshold = 2`、`openDurationMs = 500`；B) `failureThreshold = 5`、`openDurationMs = 10_000`；用注入 `now` / fake timer，禁止真实等待。 | 1. A：第 2 次失败即 open，且 `openUntil - openedAt === 500`；<br>2. B：第 4 次失败后仍 closed，第 5 次失败后 open，窗口为 10_000；<br>3. 证明「单测可驱动」，不依赖模块内不可覆盖的随机或真实 clock。 |
+| UT-CIRCUIT-06 | 不依赖 Redis：无客户端亦生效 | 前置：不注入 `redis`、不设 `REDIS_URL`；`failureThreshold = 2`；两次失败后第三次包装调用。 | 1. 第三次以 `circuit_open` 短路，`invokeFn` 次数为 0；<br>2. 测试过程对 Redis mock 的 `get`/`set`/`incr` 调用次数均为 **0**（若未创建 mock，则仅断言无 Redis 依赖即可）；<br>3. 证明完成标准「不依赖 Redis」。 |
+| UT-CIRCUIT-07 | 不做：两独立实例不共享状态 | 前置：构造熔断器实例 A 与 B（或 `createCircuitBreaker()` 两次），各自 `failureThreshold = 2`；仅对 A 连续失败直至 open；B 侧 stub 上游可成功。 | 1. A 为 `open`；B 仍为 `closed`；<br>2. 对 B 的包装调用 `invokeFn` 次数 === **1** 且成功；<br>3. 证明「不做：跨 worker 共享」（同进程多实例尚且不共享，更不得要求跨进程）。 |
+| UT-CIRCUIT-08 | residual：cluster 每进程一份（文档/契约锁） | 前置：只读检查实现旁注释、导出模块头注释或项目内已有运维说明（实现阶段落点）；单测可断言「默认导出为进程内单例 + 测试可 `reset`/`create` 隔离」。 | 1. 存在可定位说明：cluster / 多 worker 下熔断状态**不**跨进程聚合；<br>2. 测试用 `resetUpstreamCircuitForTests()`（或等价）可恢复 closed/计数 0，避免用例间串扰；<br>3. **不得**出现「必须连 Redis 才能熔断」的断言。 |
+| UT-CIRCUIT-09 | 与 D11 解耦：整轮重试耗尽只计 1 次失败 | 前置：`failureThreshold = 2`；包装路径为 `circuit + invokeWithRetry`；stub `invoke` 每次 reject `status: 503`；jitter `[0,0]`；连续两轮业务调用均耗尽。 | 1. 第一轮：`invoke` 次数 === **3**（D11），结束后连续失败计数 === **1**，仍 `closed`；<br>2. 第二轮：再 3 次 `invoke` 后计数 === **2** 并 `open`；<br>3. 第三轮业务调用：`invoke` 次数 === **0**（熔断短路，不再进入重试）。 |
+| UT-CIRCUIT-10 | 未达阈值时行为与无熔断一致 | 前置：`failureThreshold = 5`；单次包装调用，stub 首次即成功；另测单次 `status: 400` 立即失败（D11 不重试）。 | 1. 成功路径：`invoke` === 1，之后 `closed`、计数 0；<br>2. 400 路径：`invoke` === 1，计数 +1 但仍 `closed`（未达阈值），错误仍带原 `status === 400`；<br>3. 不得在未 open 时伪造 `circuit_open`。 |
 
 ---
 
@@ -626,7 +661,7 @@ Prompt 内容来自数据库，不能只依赖客户端 `AI_MAX_INPUT_CHARS` 防
 
 ### 3.16 D11 同步 generate 429/5xx 有限重试路由集成（P1-5）(`backend/src/tests/upstream-retry-integration.test.js`)
 
-对应 **D11 / P1-5** 完成标准在 **鉴权 → Guard → `answer/generate` handler → 上游 invoke** 链路上的闭环：须经 `app.handle`（或 `invokeRoute` 等价完整中间件链）打 `POST /api/problems/:id/answer/generate`；stub/spy 上游 `model.invoke` 按调用序号抛带 HTTP 状态的错误或返回合法三字段 JSON；断言 **invoke 次数、最终 HTTP 状态/业务 JSON、写库次数**。对照路径：同进程打 `POST /api/chat`，stub `model.stream` 遇 429/5xx 证明 **不重试**。禁止只单测纯函数却不验证 handler 已挂上重试。**不做**：chat 流式重试、改超时默认。**residual**：熔断见 D12。`it()` 标题须包含下表 ID。
+对应 **D11 / P1-5** 完成标准在 **鉴权 → Guard → `answer/generate` handler → 上游 invoke** 链路上的闭环：须经 `app.handle`（或 `invokeRoute` 等价完整中间件链）打 `POST /api/problems/:id/answer/generate`；stub/spy 上游 `model.invoke` 按调用序号抛带 HTTP 状态的错误或返回合法三字段 JSON；断言 **invoke 次数、最终 HTTP 状态/业务 JSON、写库次数**。对照路径：同进程打 `POST /api/chat`，stub `model.stream` 遇 429/5xx 证明 **不重试**。禁止只单测纯函数却不验证 handler 已挂上重试。**不做**：chat 流式重试、改超时默认。**residual**：熔断见 **D12**（§2.28 / §3.17）。`it()` 标题须包含下表 ID。
 
 | ID | 用例标题 | 场景描述 | 预期结果 |
 | :--- | :--- | :--- | :--- |
@@ -636,6 +671,20 @@ Prompt 内容来自数据库，不能只依赖客户端 `AI_MAX_INPUT_CHARS` 防
 | IT-RETRY-04 | generate：400 类上游错误不重试即失败 | 前置：`force: true`；stub `invoke` 单次 reject `status: 400`（或 `401`）；短 jitter 已注入但不应被使用。 | 1. `invoke` 次数 === **1**；<br>2. HTTP 非成功业务体（**500** 或实现固定的错误码），`code !== 0`；<br>3. 无第二次 invoke；证明「仅 429/5xx 重试」在路由层生效。 |
 | IT-RETRY-05 | 对照：缓存早退仍零次 invoke（不与重试耦合） | 前置：题已有非空 `answer`；body 无 `force`；spy `invoke`。 | 1. HTTP 200，`data.cached === true`；<br>2. `invoke` 次数 === **0**（无重试包装误触发）；<br>3. `finalize` `reason: 'cached_answer'`、`upstreamReached: false`（与 §2.10 / §3.3 合取）。 |
 | SEC-RETRY-01 | 重试不得绕过 Guard 准入或重复 finalize | 前置：`AI_REQUIRE_SIGNED_HEADERS=false`；合法 study；stub 第 1 次 429、第 2 次成功；spy `finalize` 与 middleware `next`。 | 1. 单次 HTTP 请求仅 **一次** Guard 准入（`next` 一次）与 **一次** `finalize`；<br>2. 重试只发生在 handler 内上游 `invoke`，不得重新走限流/配额预扣导致双计；<br>3. 成功审计仍单行 `generated_answer`。 |
+
+### 3.17 D12 进程内连续失败熔断路由集成（P1-5）(`backend/src/tests/upstream-circuit-integration.test.js`)
+
+对应 **D12 / P1-5** 完成标准在 **鉴权 → Guard → `answer/generate` handler → 熔断判定 →（可选）`invokeWithRetry` → 上游** 链路上的闭环：须经 `app.handle`（或 `invokeRoute` 等价完整中间件链）打 `POST /api/problems/:id/answer/generate`；测试前 `resetUpstreamCircuitForTests()`（或等价）并注入较小 `failureThreshold` / 短 `openDurationMs` + fake clock；stub/spy `model.invoke`；断言 **open 前后的 invoke 次数、HTTP 状态/业务 JSON、写库次数、finalize 参数**。禁止只单测纯熔断器却不验证 handler 已挂上短路。**不做**：跨 worker 共享。**residual**：每进程一份。`it()` 标题须包含下表 ID。
+
+| ID | 用例标题 | 场景描述 | 预期结果 |
+| :--- | :--- | :--- | :--- |
+| IT-CIRCUIT-01 | generate：连续失败达阈值后下一请求零 invoke | 前置：合法登录且 `study`；`force: true`；注入 `failureThreshold = 2`、短 jitter；`reset` 熔断为 closed；stub `invoke` 恒 reject `status: 503`；连续两次 `POST .../answer/generate` 均失败；再发第三次同路由请求。 | 1. 前两次：每次 `invoke` 次数 === **3**（D11 耗尽），HTTP 非成功（**500** 或实现固定错误码），写库 **0**；<br>2. 第三次：`invoke` 次数精确为 **0**；HTTP **503**（或实现固定的熔断映射码，测码写死一种），业务体 `code !== 0`，可读 `circuit_open` / 等价 reason；<br>3. 第三次写库 **0**；库内 `answer` 保持请求前快照。 |
+| IT-CIRCUIT-02 | generate：窗口结束后恢复可生成 | 前置：同 IT-CIRCUIT-01 已 open；注入时钟推进越过 `openDurationMs`；将 stub 改为首次 `invoke` 即 resolve 合法三字段 JSON；再 `POST` 一次 `force: true`。 | 1. HTTP **200**，`code === 0`，`data.cached === false`，三字段可读；<br>2. `invoke` 次数 === **1**（无多余重试）；写库恰好 **1** 次；<br>3. `finalize` 一次：`status: 'ok'`、`reason: 'generated_answer'`；熔断回到 `closed`。 |
+| IT-CIRCUIT-03 | open 时 finalize 不计上游触达 | 前置：熔断已 open；spy `finalize`；发 `POST .../answer/generate`（`force: true`）。 | 1. `invoke` === **0**；<br>2. `finalize` 恰好一次：`status: 'error'`（或等价），`reason` 含 `circuit_open`（或约定枚举），且 `upstreamReached === false`（未触达上游不得按成功/估算扣满额配额语义与 A4 一致）；<br>3. 不得出现 `reason: 'generated_answer'`。 |
+| IT-CIRCUIT-04 | 对照：缓存早退不经过熔断计数 | 前置：题已有非空 `answer`；body 无 `force`；熔断器人为设为距阈值还差 1 次失败；spy `invoke` 与 `recordFailure`（或读连续失败计数）。 | 1. HTTP 200，`data.cached === true`；`invoke` === **0**；<br>2. 连续失败计数**不增加**（缓存早退不是上游失败）；<br>3. `finalize` `reason: 'cached_answer'`、`upstreamReached: false`（与 §2.10 / §3.3 合取）。 |
+| IT-CIRCUIT-05 | 成功生成清零计数，避免误打开 | 前置：`failureThreshold = 3`；先制造 2 次 generate 上游失败（仍 closed）；第三次 stub 成功并入库；第四次再 stub 503 耗尽一轮。 | 1. 第三次 HTTP 200 且写库 1 次后，连续失败计数 === **0**；<br>2. 第四次失败后计数 === **1**，仍允许后续请求进入 `invoke`（未 open）；<br>3. 证明成功打断连续失败串在路由层生效。 |
+| SEC-CIRCUIT-01 | 熔断短路不得绕过 Guard 准入 | 前置：`AI_REQUIRE_SIGNED_HEADERS=false`；熔断已 open；spy middleware `next` 与 `finalize`；合法 study 打 generate。 | 1. 仍须先经 Guard：`next` 被调用 **1** 次（或拒答发生在 handler 内熔断分支，但**不得**跳过鉴权/Guard 直接裸调 handler）；<br>2. 单次请求 `finalize` 至多 **1** 次；<br>3. 无上游 `invoke`；无因熔断而重复预扣配额（与 open + `upstreamReached: false` 回补语义一致，不得双计）。 |
+| SEC-CIRCUIT-02 | 不做跨 worker：本集成不要求 Redis 共享熔断 | 前置：不注入 Redis；同进程内按 IT-CIRCUIT-01 打开熔断后，仅断言本进程短路。 | 1. open 后本进程第三次请求 `invoke === 0`；<br>2. 测试**不**连接真实 Redis，**不**断言其它 worker 的熔断态；<br>3. 若误把「必须 SET Redis circuit key」写成 PASS 条件则本项设计错误（对齐 residual：每进程一份）。 |
 
 ---
 

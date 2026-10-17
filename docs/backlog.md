@@ -75,7 +75,7 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | C61 | fix | P1-8 | auto | done | chat 路由选模补齐 OPENAI_MODEL 向下兼容回退 |
 | D1  | feat | P1-5 | assist | split | 已拆为 D11 / D12 |
 | D11 | feat | P1-5 | auto | done | 同步生成路径对 429/5xx 有限重试 |
-| D12 | feat | P1-5 | auto | todo | 进程内连续失败熔断 |
+| D12 | feat | P1-5 | auto | done | 进程内连续失败熔断 |
 | D2  | feat | P1-5 | manual | split | 已拆为 D21 |
 | D21 | feat | P1-5 | auto | todo | 主 URL 在发出首字节前失败则切备用 URL |
 | D3  | feat | P1-2 | manual | todo | 向量检索与 FTS 混合 rerank（需先拆契约） |
@@ -290,3 +290,4 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | 2026-10-14 | B33 完成：登录态的 chat 与 generate 补齐 HMAC 签名头 |
 | 2026-10-16 | C51 完成：有上游 usage 则回写审计，否则标记估算 |
 | 2026-10-16 | D11 完成：同步生成路径对 429/5xx 有限重试 |
+| 2026-10-17 | D12 完成：进程内连续失败熔断 |
