@@ -74,7 +74,7 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | C6  | feat | P1-8 | auto | done | 模型分层：chat 与解析可分别配置模型 |
 | C61 | fix | P1-8 | auto | done | chat 路由选模补齐 OPENAI_MODEL 向下兼容回退 |
 | D1  | feat | P1-5 | assist | split | 已拆为 D11 / D12 |
-| D11 | feat | P1-5 | auto | todo | 同步生成路径对 429/5xx 有限重试 |
+| D11 | feat | P1-5 | auto | done | 同步生成路径对 429/5xx 有限重试 |
 | D12 | feat | P1-5 | auto | todo | 进程内连续失败熔断 |
 | D2  | feat | P1-5 | manual | split | 已拆为 D21 |
 | D21 | feat | P1-5 | auto | todo | 主 URL 在发出首字节前失败则切备用 URL |
@@ -289,3 +289,4 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | 2026-10-14 | 周扫描：新增 auto S7（换票 URL/签名 path）、S8（security-ai-guard 文档对齐，S5→split）；无逾期待决；待决表仍空 |
 | 2026-10-14 | B33 完成：登录态的 chat 与 generate 补齐 HMAC 签名头 |
 | 2026-10-16 | C51 完成：有上游 usage 则回写审计，否则标记估算 |
+| 2026-10-16 | D11 完成：同步生成路径对 429/5xx 有限重试 |

@@ -22,6 +22,8 @@ export function buildLlmConfig(guardContext, defaultConfig = {}, role = 'generat
     },
     modelName,
     temperature: 0.2,
+    // D11：关闭 LangChain/OpenAI 客户端内置重试，由 generate 的 invokeWithRetry 统一控次
+    maxRetries: 0,
     maxTokens: guardContext?.maxCompletionTokens ?? defaultConfig?.maxCompletionTokens,
     timeout: guardContext?.upstreamTimeoutMs ?? defaultConfig?.upstreamTimeoutMs,
   };

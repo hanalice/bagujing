@@ -19,6 +19,7 @@ import {
   noteRagSql,
 } from './rag-fts.js';
 import { createLlmModel } from './llm.js';
+import { invokeWithRetry } from './upstream-retry.js';
 import {
   GENERATE_ANSWER_SYSTEM_PROMPT,
   parseGeneratedAnswerJson,
@@ -763,11 +764,12 @@ app.post('/api/problems/:id/answer/generate', authenticateToken, requirePermissi
     }
 
     upstreamReached = true;
-    const response = await model.invoke([
+    // D11：仅同步 generate 对 429/5xx 有限重试；chat SSE 仍直接 stream、不套用
+    const response = await invokeWithRetry(() => model.invoke([
       new SystemMessage(promptMessages.system),
       new HumanMessage(promptMessages.context),
       new HumanMessage(promptMessages.user),
-    ]);
+    ]));
     // C51：从 invoke 响应提取上游 usage（顶层 / response_metadata / usage_metadata）
     const upstreamUsage = extractUpstreamUsage(response);
 
