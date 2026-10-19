@@ -18,13 +18,17 @@ import {
   PROBLEMS_FTS_TABLE,
   noteRagSql,
 } from './rag-fts.js';
-import { createLlmModel } from './llm.js';
+import { createLlmModel, createLlmModelForBaseUrl } from './llm.js';
 import { invokeWithRetry } from './upstream-retry.js';
 import {
   getUpstreamCircuit,
   isCircuitOpenError,
   runWithUpstreamCircuit,
 } from './upstream-circuit.js';
+import {
+  invokeWithBaseUrlFailover,
+  streamWithBaseUrlFailover,
+} from './upstream-failover.js';
 import {
   GENERATE_ANSWER_SYSTEM_PROMPT,
   parseGeneratedAnswerJson,
@@ -99,11 +103,15 @@ async function getSqlitePool() {
   return sqlitePoolPromise;
 }
 
-function getLlmModel(guardContext, role) {
-  return createLlmModel(guardContext, {
+function getLlmDefaults() {
+  return {
     maxCompletionTokens: aiGuard.config.maxCompletionTokens,
     upstreamTimeoutMs: aiGuard.config.upstreamTimeoutMs,
-  }, role);
+  };
+}
+
+function getLlmModel(guardContext, role) {
+  return createLlmModel(guardContext, getLlmDefaults(), role);
 }
 
 // 中间件
@@ -768,17 +776,22 @@ app.post('/api/problems/:id/answer/generate', authenticateToken, requirePermissi
       });
     }
 
-    // D12：熔断判定在触达上游之前；open 时零次 invoke、upstreamReached 仍为 false
+    // D12：熔断判定在触达上游之前；open 时零次 invoke（含备用）、upstreamReached 仍为 false
     // D11：仅同步 generate 对 429/5xx 有限重试；整轮耗尽计 1 次熔断失败
+    // D21：主 URL 在拿到成功 content 前失败且已配置备用 → 换备用 baseURL 再跑一轮（与 D11 正交）
+    const llmDefaults = getLlmDefaults();
     let response;
     try {
       response = await runWithUpstreamCircuit(() => {
         upstreamReached = true;
-        return invokeWithRetry(() => model.invoke([
-          new SystemMessage(promptMessages.system),
-          new HumanMessage(promptMessages.context),
-          new HumanMessage(promptMessages.user),
-        ]));
+        return invokeWithBaseUrlFailover(async (baseURL) => {
+          const upstreamModel = createLlmModelForBaseUrl(baseURL, guardContext, llmDefaults, 'generation') || model;
+          return invokeWithRetry(() => upstreamModel.invoke([
+            new SystemMessage(promptMessages.system),
+            new HumanMessage(promptMessages.context),
+            new HumanMessage(promptMessages.user),
+          ]));
+        });
       });
     } catch (error) {
       if (isCircuitOpenError(error)) {
@@ -933,7 +946,7 @@ app.post('/api/chat', authenticateToken, requirePermission('chat_ai'), aiGuard.m
       return res.end();
     }
 
-    // D12：chat 流式亦经进程内熔断；open 时零次 stream（成功/失败在流结束后再记账，因 stream 创建即 resolve）
+    // D12：chat 流式亦经进程内熔断；open 时零次 stream（含备用）
     const circuit = getUpstreamCircuit();
     try {
       circuit.assertClosed();
@@ -952,8 +965,10 @@ app.post('/api/chat', authenticateToken, requirePermission('chat_ai'), aiGuard.m
     }
 
     upstreamReached = true;
+    const llmDefaults = getLlmDefaults();
+    const sseIdleTimeoutMs = guardContext?.sseIdleTimeoutMs || aiGuard.config.sseIdleTimeoutMs || 20000;
     // B1：system → context(RAG) → 历史（若有）→ 当前 user；伪造 system role 已在归一化阶段丢弃。
-    const stream = await model.stream([
+    const upstreamMessages = [
       new SystemMessage(promptMessages.system),
       new HumanMessage(promptMessages.context),
       ...promptMessages.history.map((item) => (
@@ -962,35 +977,43 @@ app.post('/api/chat', authenticateToken, requirePermission('chat_ai'), aiGuard.m
           : new HumanMessage(item.content)
       )),
       new HumanMessage(promptMessages.user),
-    ], {
-      signal: abortController.signal,
-    });
+    ];
 
-    const sseIdleTimeoutMs = guardContext?.sseIdleTimeoutMs || aiGuard.config.sseIdleTimeoutMs || 20000;
-    const reader = typeof stream?.getReader === 'function'
-      ? stream.getReader()
-      : (stream?.[Symbol.asyncIterator] ? stream[Symbol.asyncIterator]() : stream);
-
-    // C51：流式 chunk 上的 usage 通常出现在含 finish_reason/usage 的末包（见 extractUpstreamUsage）
+    // D21：仅在尚未写出任何 SSE delta 时允许切备用；已推 delta 后失败走 error，禁止伪装续传
+    let firstDeltaSent = false;
     let upstreamUsage;
-    try {
-      while (true) {
-        const { done, value } = await readStreamChunkWithTimeout(reader, sseIdleTimeoutMs);
-        if (done) break;
-        const chunk = value;
-        const chunkUsage = extractUpstreamUsage(chunk);
-        if (chunkUsage) upstreamUsage = chunkUsage;
-        const delta = chunk?.content;
-        if (delta) {
-          completionText += delta;
-          sendSSE(res, { type: 'delta', text: delta });
+    await streamWithBaseUrlFailover(async (baseURL) => {
+      const upstreamModel = createLlmModelForBaseUrl(baseURL, guardContext, llmDefaults, 'chat') || model;
+      const stream = await upstreamModel.stream(upstreamMessages, {
+        signal: abortController.signal,
+      });
+
+      const reader = typeof stream?.getReader === 'function'
+        ? stream.getReader()
+        : (stream?.[Symbol.asyncIterator] ? stream[Symbol.asyncIterator]() : stream);
+
+      try {
+        while (true) {
+          const { done, value } = await readStreamChunkWithTimeout(reader, sseIdleTimeoutMs);
+          if (done) break;
+          const chunk = value;
+          const chunkUsage = extractUpstreamUsage(chunk);
+          if (chunkUsage) upstreamUsage = chunkUsage;
+          const delta = chunk?.content;
+          if (delta) {
+            firstDeltaSent = true;
+            completionText += delta;
+            sendSSE(res, { type: 'delta', text: delta });
+          }
+        }
+      } finally {
+        if (typeof reader?.releaseLock === 'function') {
+          try { reader.releaseLock(); } catch { /* releaseLock 失败可忽略 */ }
         }
       }
-    } finally {
-      if (typeof reader?.releaseLock === 'function') {
-        try { reader.releaseLock(); } catch { /* releaseLock 失败可忽略 */ }
-      }
-    }
+    }, {
+      getHasSentDelta: () => firstDeltaSent,
+    });
 
     getUpstreamCircuit().recordSuccess();
     finalizeGuard({
