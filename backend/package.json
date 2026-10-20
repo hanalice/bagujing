@@ -19,6 +19,7 @@
   "dependencies": {
     "@langchain/core": "^1.1.40",
     "@langchain/openai": "^1.4.4",
+    "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
     "express": "^5.2.1",

@@ -14,6 +14,7 @@
 - **同步生成有限重试 (D11 / P1-5)**：仅 `POST /api/problems/:id/answer/generate` 的同步 `invoke` 对上游 **429/5xx** 最多 **2** 次重试（合计至多 3 次调用），jitter 序列可注入/固定以便单测；`POST /api/chat` SSE **不重试**（§2.27 / §3.16）。**不做** chat 流式重试、改上游超时默认值。连续失败熔断见 **D12**（§2.28 / §3.17）；跨进程共享熔断态不在 D11 范围。
 - **进程内连续失败熔断 (D12 / P1-5)**：进程内计数连续上游失败，达到可注入阈值后打开一段可注入时间窗口，打开期间**零次**上游调用即拒答；不依赖 Redis；单测可驱动时钟/阈值（§2.28 / §3.17）。**不做**跨 worker 共享熔断状态。**residual**：cluster 下每进程一份，文档写明。
 - **主备 Base URL failover (D21 / P1-5)**：若配置了备用 Base URL（契约名 `OPENAI_BASE_URL_FALLBACK`，实现等价别名须在测码注释写明），则主 URL 在**向客户端发出首字节 / 首条 SSE `delta` 之前**失败时改用备用发起上游；已开始向客户端推 `delta` 后**不得**再切。未配置备用时行为与仅 `OPENAI_BASE_URL` 时一致（§2.29 / §3.18）。**不做**跨请求会话级 failover、对用户伪装成一条已中断流的续传。**residual**：无。
+- **密码哈希 bcryptjs 与懒迁移 (D51 / P2-2)**：新注册写入 `bcryptjs` 哈希（禁止再写无盐 `sha256`）；登录先 `bcrypt.compare`，失败再回退旧 `sha256` 十六进制比对；命中旧哈希则**仅对该用户** `UPDATE` 写回 bcrypt（懒迁移），无批量 SQL 扫表。后端契约见 §2.30 / §3.19。**不做** argon2、离线翻写全表、强制失效已有会话。**residual**：从未再登录的存量用户仍为旧哈希，直到其下次登录。
 - **前端多层级质量保障体系 (Frontend QA Strategy)**：
   - **端到端测试 (Frontend E2E - Playwright)**：覆盖核心用户链路（Main Path / Happy Path），利用 `page.route` 对大模型流式 SSE 接口进行轻量 Mock，保障真实路由鉴权、题目浏览及 AI 交互界面的稳定可用；**C42** 另锁解析面板三字段可见性与无整篇 `v-html`。
   - **状态机与单元测试 (Frontend UT/IT - Vitest)**：针对 Pinia Store（`user`、`settings`、`breadcrumb`）、题目解析归一化/渲染辅助及工具函数，快速验证状态迁移、本地持久化与边界容错；**B33** 另锁登录态 `chat` / `answer/generate` 的 HMAC 六头注入（§4.5 `UT-FE-SIG-*`）。
@@ -530,6 +531,39 @@ C22 合入后 problems 关键字召回主路径改为 FTS（失败回退 LIKE）
 | UT-FAILOVER-09 | generate：主 invoke 失败后备用成功 | 前置：已配置主/备；generate 路径 stub：`invoke` 按 `baseURL` 分支——primary 恒 reject `status: 503`（或网络错），backup resolve 合法三字段 JSON content；为降噪可将 D11 jitter 注为 `[0]` 且限制同 URL 重试，或注入「failover 包装在单次 attempt 外」使 primary 仅 1 次。 | 1. 最终 resolve 为备用 content；<br>2. 记录到的 `baseURL` 序列含 primary 失败与 backup 成功，且 backup 成功后无额外 primary；<br>3. 不得在未配置备用时走到本断言（对照 UT-FAILOVER-01）。 |
 | UT-FAILOVER-10 | 空白备用等同未配置 | 前置：`OPENAI_BASE_URL_FALLBACK='  '`（或 `'\t'`）；主失败。 | 1. 与 UT-FAILOVER-01 相同：备用创建/调用次数 === **0**；<br>2. 解析层不得把空白串当作合法 fallback URL 传给 `ChatOpenAI`；<br>3. 与 C61「空白专用变量视为未设置」同类判据。 |
 
+### 2.30 D51 新注册 bcryptjs 与登录懒迁移（P2-2）(`backend/src/tests/auth-password-hash.test.js`)
+
+对应 **D51 / P2-2**（由 D5 拆出；威胁面见 backlog `P2-2`：原 `hashPassword` 为无盐 `sha256`）。完成标准：
+
+**做**：新注册使用 **`bcryptjs`** 生成并持久化 `password_hash`；登录校验顺序为 **先 bcrypt → 失败再回退旧 sha256**；若明文命中旧 sha256 哈希，则对该用户行写回 bcrypt（懒迁移）。**无**批量 SQL 扫表翻写。
+
+**不做**：改用 argon2；离线/启动时 `UPDATE` 全表翻写；因懒迁移而强制失效已有 JWT/会话。
+
+**residual**：从未再登录的存量用户 `password_hash` 可仍为 64 位 sha256 十六进制，直到其下次成功登录触发迁移。
+
+**协议 / 时序**（下一阶段 `it()` 须对齐；导出函数名以实现为准，测码注释写明等价符号）：
+
+1. **旧哈希定义**：`legacySha256Hex(password) = crypto.createHash('sha256').update(password).digest('hex')`（与改造前 `server-express.js` 的 `hashPassword` 一致，长度 64、`/^[0-9a-f]{64}$/`）。
+2. **新哈希定义**：`bcryptjs.hash(password, saltRounds)`（或封装 `hashPassword`/`hashPasswordBcrypt`）；持久化串匹配 `/^\$2[aby]\$\d{2}\$/`；`bcryptjs.compare(password, stored)` 对正确明文为 `true`。盐轮次默认可用库默认（常见 10），本表不冻死具体 rounds，但**禁止**再调用无盐 sha256 作为注册写入路径。
+3. **登录校验序**：读出 `user.password_hash` →（若可辨认为 bcrypt 前缀或一律先试）`bcrypt.compare` → 若为 `false`/`reject` 再算 `legacySha256Hex(password)` 与库值全等 → 二者皆否 → 认证失败（与路由层 401 契约合取，见 §3.19）。
+4. **懒迁移写回**：仅当「bcrypt 未通过 **且** sha256 命中」时，对该 `user.id` 执行一次 `UPDATE users SET password_hash = ? … WHERE id = ?`（或 `updateUserPasswordHash(pool, id, newHash)` 等价），新值为 bcrypt 串；**禁止**无 `WHERE` 的全表 `UPDATE`，**禁止** `SELECT id FROM users` 后循环翻写未登录用户。
+5. **依赖面**：实现/测试可 `import`/`require('bcryptjs')`；不得引入 `argon2` / `bcrypt`（native）作为本项唯一哈希库（冻约库名为 **bcryptjs**）。
+
+**测法**：优先单测可注入的 `hashPassword` / `verifyPasswordAndMaybeMigrate`（记录 `bcrypt.compare` / `sha256` / `UPDATE` 调用序与参数）；隔离内存 SQLite 或 fake repo。路由闭环见 §3.19。`it()` 标题须包含下表 ID。
+
+| ID | 用例标题 | 场景描述 | 预期结果 |
+| :--- | :--- | :--- | :--- |
+| UT-AUTH-HASH-01 | 新注册哈希为 bcryptjs 形态且可 compare | 前置：调用注册用哈希函数（`hashPassword` 或等价）对明文 `'P@ss-D51-reg'` 生成 `stored`；再 `bcryptjs.compare('P@ss-D51-reg', stored)`。 | 1. `stored` 匹配 `/^\$2[aby]\$\d{2}\$/`；<br>2. `compare` === `true`；<br>3. `stored !== legacySha256Hex('P@ss-D51-reg')`，且长度 **≠** 64 或不符合纯十六进制旧形态。 |
+| UT-AUTH-HASH-02 | 注册路径禁止写入无盐 sha256 | 前置：spy/桩住底层：若存在 `crypto.createHash('sha256')` 用于密码、或旧 `hashPassword` 实现；调用「注册写入哈希」入口一次。 | 1. 密码落库/返回值**不是** `legacySha256Hex(明文)`；<br>2. 注册路径上用于密码的 sha256 `digest('hex')` 调用次数为 **0**（HMAC/bodyHash 等非密码用途不计入本断言）；<br>3. 证明「新注册使用 bcryptjs」。 |
+| UT-AUTH-HASH-03 | 登录：已是 bcrypt 时 compare 成功且不写库 | 前置：`stored = await bcryptjs.hash('ok-bcrypt', 10)`；注入 verify（含可选 migrate）；spy `UPDATE`/写回函数。 | 1. `verify('ok-bcrypt', stored)`（或等价）成功；<br>2. `bcrypt.compare` 被调用且为 `true`；<br>3. 懒迁移 `UPDATE`/写回次数精确为 **0**（已是 bcrypt 无需迁移）。 |
+| UT-AUTH-HASH-04 | 登录：旧 sha256 命中 → 校验成功并懒迁移写回 | 前置：`stored0 = legacySha256Hex('legacy-ok')`；spy 写回；调用 verify+migrate。 | 1. 校验成功；<br>2. 调用序：先 bcrypt 校验失败（或对非 `$2*` 串短路为失败），再 sha256 命中；<br>3. 恰好 **1** 次写回，新 `password_hash` 匹配 bcrypt 前缀，且 `bcrypt.compare('legacy-ok', newHash) === true`；<br>4. 写回定位到**该用户 id**（`WHERE id = ?` 绑定值正确），无第二用户被更新。 |
+| UT-AUTH-HASH-05 | 登录：明文错误 → bcrypt 与 sha256 皆失败、不写回 | 前置：库中为合法 bcrypt 或旧 sha256（各至少覆盖一种）；明文 `'wrong-pass'`；spy 写回。 | 1. 校验失败（返回 `false`/抛业务错，与实现约定一致）；<br>2. 写回次数 === **0**；<br>3. 不得因失败路径把库值改成空或新哈希。 |
+| UT-AUTH-HASH-06 | 校验序：必须先 bcrypt 再回退 sha256 | 前置：注入可计数的 `bcryptCompare` 与 `legacySha256Hex`；`stored` 为旧 sha256 且明文正确。 | 1. 时间序：`bcryptCompare` 的首次调用下标 **严格小于** `legacySha256Hex`（或 sha256 比对）的首次调用；<br>2. 二者均发生后校验成功并触发迁移（与 UT-AUTH-HASH-04 合取）；<br>3. 证明「先按 bcrypt 校验，失败再回退旧 sha256」。 |
+| UT-AUTH-HASH-07 | 不做：无批量 SQL 扫表翻写 | 前置：隔离库预置 ≥3 个存量用户，均为旧 sha256；仅对用户 A 调用一次成功登录/migrate；spy 全部 SQL 文本。 | 1. 出现的 `UPDATE … password_hash` **仅**针对用户 A 的 `id`；<br>2. **不**出现无 `WHERE` 的 `UPDATE users SET password_hash`；<br>3. 用户 B/C 的 `password_hash` 读回仍等于各自原 sha256（residual：未登录不迁移）。 |
+| UT-AUTH-HASH-08 | 不做：不引入 argon2 作为本项哈希库 | 前置：只读检查实现模块（`server-express.js` 及抽出的 password 辅助）的 import/require 列表；或断言 `package.json` dependencies。 | 1. 密码哈希路径依赖名为 **`bcryptjs`**；<br>2. **不**存在 `argon2` / `@node-rs/argon2` 作为 D51 密码哈希实现；<br>3. 本用例不得以「必须用 argon2」为 PASS。 |
+| UT-AUTH-HASH-09 | 不做：懒迁移不强制失效已有会话 | 前置：已签发 JWT（`jwt.sign` 含 `id`/`username`，`expiresIn` 未过期）；对应用户完成一次旧哈希 → bcrypt 懒迁移；随后用**同一** token 调用 `authenticateToken`（或 `jwt.verify`）。 | 1. 迁移后 token **仍**校验通过（payload `id` 不变）；<br>2. 迁移路径**零次** token 黑名单/版本号递增/`jti` 吊销（若项目无此机制则断言无新增 revoke 调用）；<br>3. 证明「不做：强制失效已有会话」。 |
+| UT-AUTH-HASH-10 | residual：未登录存量用户保持旧哈希 | 前置：用户 U1 `password_hash = legacySha256Hex('stay-old')`；测试期间**不**对其调用登录/migrate；可对另一用户 U2 做迁移。 | 1. 读回 U1.`password_hash` **全等**原 sha256 串；<br>2. `bcrypt.compare('stay-old', U1.hash)` 为 `false`（仍非 bcrypt）；<br>3. 与 backlog residual 字面一致：直到其下次登录才迁移。 |
+
 ---
 
 ## 3. 安全防护与集成测试用例 (Security & Integration)
@@ -552,10 +586,12 @@ C22 合入后 problems 关键字召回主路径改为 FTS（失败回退 LIKE）
 
 ### 3.2 业务接口与认证授权 (`backend/src/server-express.js`)
 
+通用鉴权门禁（Bearer / 角色）。密码存储与登录懒迁移见 **D51** §2.30 / §3.19，本表不重复断言哈希算法。`it()` 标题须包含下表 ID。
+
 | ID | 用例标题 | 场景描述 | 预期结果 |
 | :--- | :--- | :--- | :--- |
-| IT-AUTH-01 | 无 Token 访问保护接口 | 未携带 `Authorization: Bearer` 访问需要登录的 API。 | 返回 HTTP 401，提示认证缺失。 |
-| IT-AUTH-02 | 非 Admin 访问管理端点 | 普通用户 Token 访问 `/api/admin/*` 端点。 | 返回 HTTP 403，提示需要管理员权限。 |
+| IT-AUTH-01 | 无 Token 访问保护接口 | 前置：不设置 `Authorization` 头（亦无 Cookie 会话）；对需登录路由发请求，至少覆盖 `GET /api/user/profile`（或项目等价受保护资源）。 | 1. HTTP **401**；<br>2. JSON 含 `code === 401`，`message` 提示认证缺失/无效（与现网 `authenticateToken` 文案一致，如含 `token`/`Unauthorized` 语义）；<br>3. 响应体**不**含任何用户 `password_hash` 字段。 |
+| IT-AUTH-02 | 非 Admin 访问管理端点 | 前置：以普通用户（`role !== 'admin'`）合法 JWT 访问 `/api/admin/*`（如待审批用户列表）；Token 经登录签发且未过期。 | 1. HTTP **403**；<br>2. JSON `{ code: 403, message: 'Admin access required' }`（或与 `requireAdmin` 现网文案全等）；<br>3. 不返回管理数据数组。 |
 | IT-CHAT-01 | 流式问答客户端断开取消 | 客户端在 SSE 传输中途关闭连接 (`req.on('close')`)。 | 触发 `AbortController.abort()`，立即终止上游 LLM 生成。 |
 
 ### 3.3 `cached_answer` 配额与审计集成（A7 / P0-8）
@@ -735,6 +771,23 @@ Prompt 内容来自数据库，不能只依赖客户端 `AI_MAX_INPUT_CHARS` 防
 | IT-FAILOVER-06 | 对照：缓存早退不触发主备切换 | 前置：题已有非空 `answer`；body 无 `force`；主备均已配置；spy 主/备 `invoke`。 | 1. HTTP 200，`data.cached === true`；<br>2. 主与备 `invoke` 次数均为 **0**；<br>3. `finalize` `reason: 'cached_answer'`、`upstreamReached: false`（与 §2.10 / §3.3 合取）。 |
 | SEC-FAILOVER-01 | failover 不得绕过 Guard 或重复 finalize | 前置：`AI_REQUIRE_SIGNED_HEADERS=false`；合法权限；主失败备成功（chat 或 generate 任一闭环）；spy Guard `next` 与 `finalize`。 | 1. 单次 HTTP 请求仅 **一次** Guard 准入（`next` 一次）与 **一次** `finalize`；<br>2. 主→备切换只发生在 handler 内上游层，不得重新走限流/配额预扣导致双计；<br>3. 成功审计仍单行成功 reason（chat 既有成功 / `generated_answer`）。 |
 | SEC-FAILOVER-02 | 熔断 open 时不得借 failover 打备用 | 前置：按 §3.17 将熔断置为 `open`；主备 URL 均已配置；spy 主/备上游。 | 1. 主与备上游调用次数均为 **0**；<br>2. 响应为熔断短路（generate：`circuit_open` 等价；chat：既有 error 协议）；<br>3. 证明 D21 不推翻 D12：open 期间零次上游（含备用）。 |
+
+### 3.19 D51 注册/登录密码哈希与懒迁移集成（P2-2）(`backend/src/tests/auth-password-hash-integration.test.js`)
+
+对应 **D51 / P2-2** 完成标准在 **`POST /api/auth/register` → SQLite `users.password_hash` → `POST /api/auth/login` →（可选）写回 bcrypt → JWT** 链路上的闭环：须经 `app.handle`（或等价完整路由，含 `asyncHandler`）；隔离 SQLite fixture；可读回 `password_hash`；spy SQL 或 repo 写回。哈希算法与校验序单测见 §2.30。**不做**：argon2、启动批翻全表、迁移时吊销旧 JWT。**residual**：未再登录用户保持旧哈希。`it()` 标题须包含下表 ID。
+
+| ID | 用例标题 | 场景描述 | 预期结果 |
+| :--- | :--- | :--- | :--- |
+| IT-AUTH-HASH-01 | 注册写入 bcryptjs 而非 sha256 | 前置：隔离库；`POST /api/auth/register` JSON `{ "username": "d51_new", "password": "Reg-D51-Ok!" }`（用户名未占用）；成功后 `getUserByUsername` 读 `password_hash`。 | 1. HTTP **200**（或实现固定成功码），JSON `code === 0`，`message` 含注册成功/待审批语义（与现网一致，如 `Registration successful`）；<br>2. 库中 `password_hash` 匹配 `/^\$2[aby]\$\d{2}\$/`；<br>3. `password_hash !== legacySha256Hex('Reg-D51-Ok!')`；`bcryptjs.compare('Reg-D51-Ok!', password_hash) === true`。 |
+| IT-AUTH-HASH-02 | bcrypt 用户登录成功且不改写哈希 | 前置：用户已 `active`，`password_hash` 为 bcryptjs 对 `'Login-Bcrypt-Ok'` 的哈希；记录迁移前哈希串；`POST /api/auth/login` `{ "username", "password": "Login-Bcrypt-Ok" }`。 | 1. HTTP **200**，`code === 0`，`data.token` 为非空 JWT 字符串，`data.user.username` 正确；<br>2. 登录后读库 `password_hash` 与迁移前**全等**（无懒迁移写回）；<br>3. 响应 JSON **不**包含 `password` / `password_hash` 字段。 |
+| IT-AUTH-HASH-03 | 旧 sha256 用户登录成功并懒迁移 | 前置：插入 `active` 用户，`password_hash = legacySha256Hex('Legacy-Login-Ok')`；`POST /api/auth/login` 正确明文；spy `UPDATE` 或读迁移后哈希。 | 1. HTTP **200**，`code === 0`，返回可用 `data.token`；<br>2. 登录后 `password_hash` 变为 bcrypt 形态，且 `bcryptjs.compare('Legacy-Login-Ok', newHash) === true`；<br>3. 旧 sha256 串不再等于库值；同用户再次登录（仍用原明文）仍 **200** 且第二次登录后哈希保持 bcrypt（可与第一次迁移后全等或再次 hash 但均能 compare）。 |
+| IT-AUTH-HASH-04 | 错误密码 401 且不迁移 | 前置：bcrypt 用户与旧 sha256 用户各一（均 `active`）；分别 `POST /api/auth/login` 错误明文；记录双方迁移前哈希。 | 1. 两次均为 HTTP **401**，JSON `{ code: 401, message: 'Invalid username or password' }`（与现网文案全等）；<br>2. 双方 `password_hash` 与登录前**全等**；<br>3. 无 `data.token`。 |
+| IT-AUTH-HASH-05 | 懒迁移后旧 JWT 仍可用（不做失效会话） | 前置：用户为旧 sha256 且 `active`；先用任意有效方式持有迁移**前**签发的 JWT（可先临时把库改成 bcrypt 登录拿票再改回 sha256，或直接 `jwt.sign` 与线上同 `JWT_SECRET`/claims）；再以正确明文登录触发懒迁移；最后带 `Authorization: Bearer <旧 token>` 访问 `GET /api/user/profile`（须具备 `study`）。 | 1. 登录迁移成功（同 IT-AUTH-HASH-03）；<br>2. 旧 token 访问 profile 仍为 HTTP **200**（或该路由既有成功码），**不是**因迁移而被 401；<br>3. 证明「不做：强制失效已有会话」。 |
+| IT-AUTH-HASH-06 | residual：未登录的其它旧哈希用户不被扫表改写 | 前置：库中 U_stay / U_login 均为旧 sha256；仅对 U_login 成功登录一次；读回二者哈希。 | 1. U_login 已为 bcrypt；<br>2. U_stay 仍为原 sha256 全等串；<br>3. SQL spy：**不**存在针对「全部用户」的 password 批更新（无批量扫表）。 |
+| IT-AUTH-HASH-07 | 注册缺字段仍 400，且不落库半截用户 | 前置：分别 `POST /api/auth/register` body `{}`、`{ "username": "x" }`、`{ "password": "y" }`。 | 1. 均为 HTTP **400**，`code === 400`，`message` 含 `Username and password required`（与现网全等）；<br>2. 库中无对应残缺 username 行；<br>3. 本用例不要求改审批流。 |
+| SEC-AUTH-HASH-01 | 登录失败响应不得回显密码或哈希 | 前置：`POST /api/auth/login` 错误密码或未知用户名。 | 1. HTTP **401**；<br>2. 响应 body 字符串**不**包含请求明文密码、**不**包含库中 `password_hash`、**不**包含 `legacySha256Hex(明文)`；<br>3. `message` 对「用户不存在」与「密码错误」保持同一文案（现网均为 `Invalid username or password`），避免用户枚举差异（若实现已统一则断言两次 `message` 全等）。 |
+| SEC-AUTH-HASH-02 | 成功登录/注册响应不得泄露 password_hash | 前置：完成一次 IT-AUTH-HASH-01 注册响应，及一次 IT-AUTH-HASH-02/03 登录成功响应；序列化整段 JSON。 | 1. JSON 中无键 `password`、`password_hash`、`passwordHash`；<br>2. 任意字符串值不匹配 `/^\$2[aby]\$/` 且不等于某已知测试哈希；<br>3. 登录仅暴露契约内的 `data.token` 与 `data.user` 公开字段。 |
+| SEC-AUTH-HASH-03 | 不做离线全表翻写：进程启动不改写存量哈希 | 前置：隔离库预置 ≥2 个旧 sha256 用户；启动/加载应用（`initUserSchema` + 引入 `server-express` 或测试 bootstrap）后**不**调用 login；再读库。 | 1. 所有预置用户的 `password_hash` 与启动前**全等**；<br>2. 启动 SQL 日志无 `UPDATE users SET password_hash`；<br>3. 证明「不做：离线翻写全表」且「无批量 SQL 扫表」。 |
 
 ---
 

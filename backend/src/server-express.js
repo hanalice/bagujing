@@ -48,9 +48,10 @@ import {
   listPendingUsers,
   approveUser,
   updateUserPreferences,
+  updateUserPasswordHash,
   getPermissionsByRole
 } from './db/user-repo.js';
-import crypto from 'node:crypto';
+import { hashPassword, verifyPasswordAndMaybeMigrate } from './auth-password.js';
 import jwt from 'jsonwebtoken';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -159,10 +160,6 @@ const requireAdmin = (req, res, next) => {
   next();
 };
 
-const hashPassword = (password) => {
-  return crypto.createHash('sha256').update(password).digest('hex');
-};
-
 const requirePermission = (permission) => (req, res, next) => {
   if (!req.user?.permissions?.includes(permission)) {
     const requestId = res.getHeader('X-Request-Id') || '-';
@@ -181,7 +178,8 @@ app.post('/api/auth/register', asyncHandler(async (req, res) => {
     const existing = await getUserByUsername(pool, username);
     if (existing) return res.status(400).json({ code: 400, message: 'Username already exists' });
 
-    await registerUser(pool, { username, passwordHash: hashPassword(password) });
+    // D51：新注册写入 bcryptjs，禁止无盐 sha256
+    await registerUser(pool, { username, passwordHash: await hashPassword(password) });
     res.json({ code: 0, message: 'Registration successful. Waiting for admin approval.' });
   } catch (err) {
     res.status(500).json({ code: 500, message: err.message });
@@ -193,7 +191,16 @@ app.post('/api/auth/login', asyncHandler(async (req, res) => {
   const pool = await getSqlitePool();
 
   const user = await getUserByUsername(pool, username);
-  if (!user || user.password_hash !== hashPassword(password)) {
+  // D51：先 bcrypt 再回退旧 sha256；命中旧哈希则懒迁移写回
+  const passwordOk = user
+    ? await verifyPasswordAndMaybeMigrate({
+      password,
+      storedHash: user.password_hash,
+      userId: user.id,
+      updatePasswordHash: (id, newHash) => updateUserPasswordHash(pool, id, newHash),
+    })
+    : false;
+  if (!user || !passwordOk) {
     return res.status(401).json({ code: 401, message: 'Invalid username or password' });
   }
 

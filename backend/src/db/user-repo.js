@@ -99,6 +99,16 @@ export async function updateUserPreferences(pool, userId, preferencesJson) {
   });
 }
 
+/** D51：懒迁移时按用户 id 写回 bcrypt password_hash（禁止无 WHERE 全表更新）。 */
+export async function updateUserPasswordHash(pool, userId, passwordHash) {
+  return pool.withConnection(async (db) => {
+    return db.run(
+      `UPDATE users SET password_hash = ?, updated_at = datetime('now') WHERE id = ?`,
+      [passwordHash, userId]
+    );
+  });
+}
+
 export async function getPermissionsByRole(pool, roleId) {
   return pool.withConnection(async (db) => {
     return db.all(
