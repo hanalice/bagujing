@@ -13,6 +13,7 @@
 - **真实 usage 回写审计 (C51 / P1-6)**：`finalize` 若收到上游 `usage.prompt_tokens` **与** `usage.completion_tokens` 则写入审计并标 `token_source=upstream`；否则沿用 `estimateTokensByText` 并标 `token_source=estimate`（§2.26 / §3.15）。**不做**供应商账单对账报表与按用户月结。
 - **同步生成有限重试 (D11 / P1-5)**：仅 `POST /api/problems/:id/answer/generate` 的同步 `invoke` 对上游 **429/5xx** 最多 **2** 次重试（合计至多 3 次调用），jitter 序列可注入/固定以便单测；`POST /api/chat` SSE **不重试**（§2.27 / §3.16）。**不做** chat 流式重试、改上游超时默认值。连续失败熔断见 **D12**（§2.28 / §3.17）；跨进程共享熔断态不在 D11 范围。
 - **进程内连续失败熔断 (D12 / P1-5)**：进程内计数连续上游失败，达到可注入阈值后打开一段可注入时间窗口，打开期间**零次**上游调用即拒答；不依赖 Redis；单测可驱动时钟/阈值（§2.28 / §3.17）。**不做**跨 worker 共享熔断状态。**residual**：cluster 下每进程一份，文档写明。
+- **主备 Base URL failover (D21 / P1-5)**：若配置了备用 Base URL（契约名 `OPENAI_BASE_URL_FALLBACK`，实现等价别名须在测码注释写明），则主 URL 在**向客户端发出首字节 / 首条 SSE `delta` 之前**失败时改用备用发起上游；已开始向客户端推 `delta` 后**不得**再切。未配置备用时行为与仅 `OPENAI_BASE_URL` 时一致（§2.29 / §3.18）。**不做**跨请求会话级 failover、对用户伪装成一条已中断流的续传。**residual**：无。
 - **前端多层级质量保障体系 (Frontend QA Strategy)**：
   - **端到端测试 (Frontend E2E - Playwright)**：覆盖核心用户链路（Main Path / Happy Path），利用 `page.route` 对大模型流式 SSE 接口进行轻量 Mock，保障真实路由鉴权、题目浏览及 AI 交互界面的稳定可用；**C42** 另锁解析面板三字段可见性与无整篇 `v-html`。
   - **状态机与单元测试 (Frontend UT/IT - Vitest)**：针对 Pinia Store（`user`、`settings`、`breadcrumb`）、题目解析归一化/渲染辅助及工具函数，快速验证状态迁移、本地持久化与边界容错；**B33** 另锁登录态 `chat` / `answer/generate` 的 HMAC 六头注入（§4.5 `UT-FE-SIG-*`）。
@@ -29,8 +30,8 @@
 | :--- | :--- | :--- | :--- |
 | UT-LLM-01 | API Key: 从环境变量读取 | 环境变量中配置 `OPENAI_API_KEY`。 | `openAIApiKey` 等于环境变量中配置的值。 |
 | UT-LLM-02 | API Key: 缺失时默认回退 | 环境变量中未设置 `OPENAI_API_KEY`。 | `openAIApiKey` 默认为 `null`。 |
-| UT-LLM-03 | Base URL: 默认值 | 环境变量中未设置 `OPENAI_BASE_URL`。 | `configuration.baseURL` 默认为 `https://api.openai.com/v1`。 |
-| UT-LLM-04 | Base URL: 自定义配置 | 环境变量中配置自定义 `OPENAI_BASE_URL`。 | `configuration.baseURL` 等于配置的自定义 URL。 |
+| UT-LLM-03 | Base URL: 默认值 | 环境变量中未设置 `OPENAI_BASE_URL`（亦未设 `OPENAI_BASE_URL_FALLBACK`；备用切换见 §2.29 **D21**）。 | `configuration.baseURL` 默认为 `https://api.openai.com/v1`；本行不断言 failover。 |
+| UT-LLM-04 | Base URL: 自定义配置 | 环境变量中配置自定义 `OPENAI_BASE_URL`；未配置备用。 | `configuration.baseURL` 等于配置的自定义 URL；未配置 `OPENAI_BASE_URL_FALLBACK` 时不得自动改写为主备双 URL（双 URL / 首字节前切换属 **D21** UT-FAILOVER-*）。 |
 | UT-LLM-05 | Model Name: 默认模型 | 环境变量中未设置 `OPENAI_MODEL`。 | `modelName` 默认为 `gpt-4o-mini`。 |
 | UT-LLM-06 | Model Name: 自定义模型 | 环境变量中配置自定义 `OPENAI_MODEL`。 | `modelName` 等于指定的模型名称。 |
 | UT-LLM-07 | Temperature: 默认温度 | 检查默认采样温度配置。 | `temperature` 固定为 `0.2`。 |
@@ -495,6 +496,40 @@ C22 合入后 problems 关键字召回主路径改为 FTS（失败回退 LIKE）
 | UT-CIRCUIT-09 | 与 D11 解耦：整轮重试耗尽只计 1 次失败 | 前置：`failureThreshold = 2`；包装路径为 `circuit + invokeWithRetry`；stub `invoke` 每次 reject `status: 503`；jitter `[0,0]`；连续两轮业务调用均耗尽。 | 1. 第一轮：`invoke` 次数 === **3**（D11），结束后连续失败计数 === **1**，仍 `closed`；<br>2. 第二轮：再 3 次 `invoke` 后计数 === **2** 并 `open`；<br>3. 第三轮业务调用：`invoke` 次数 === **0**（熔断短路，不再进入重试）。 |
 | UT-CIRCUIT-10 | 未达阈值时行为与无熔断一致 | 前置：`failureThreshold = 5`；单次包装调用，stub 首次即成功；另测单次 `status: 400` 立即失败（D11 不重试）。 | 1. 成功路径：`invoke` === 1，之后 `closed`、计数 0；<br>2. 400 路径：`invoke` === 1，计数 +1 但仍 `closed`（未达阈值），错误仍带原 `status === 400`；<br>3. 不得在未 open 时伪造 `circuit_open`。 |
 
+### 2.29 D21 主备 Base URL failover（首字节前切备用）（P1-5）(`backend/src/tests/upstream-failover.test.js`)
+
+对应 **D21 / P1-5**（由 D2 拆出；HLD `P1-5` / 阶段 D 项 D2）。完成标准：
+
+**做**：若配置了备用 Base URL，则在主 URL **向客户端发出首字节之前**（chat：尚未 `write` 任何 `type:'delta'` 的 SSE 帧；generate：尚未成功拿到可返回客户端的上游正文）失败时，改用备用 Base URL **重新**发起上游调用。已经开始向客户端推 SSE `delta` 后**不得**再切换。未配置备用时行为与仅 `OPENAI_BASE_URL` 时一致（零次备用尝试）。
+
+**不做**：跨请求会话级 failover（上一请求切到备用**不得**使下一请求默认从备用起调）；对用户伪装成一条已中断流的续传（已推过 `delta` 后不得静默换 upstream 并继续写后续 `delta` 假装同一次生成）。
+
+**residual**：无。
+
+**协议 / 时序**（下一阶段 `it()` 须对齐；命名以实现为准，测码注释写明等价字段）：
+
+1. **配置契约**：主 URL = `OPENAI_BASE_URL`（缺省仍 `https://api.openai.com/v1`，与 §2.1 UT-LLM-03/04 一致）；备用 = `OPENAI_BASE_URL_FALLBACK`（未设、`''`、纯空白均视为**未配置**）。解析可落在 `buildLlmConfig` / `resolveUpstreamBaseUrls`（或 `llm.js` / `upstream-failover.js` 导出）。
+2. **「首字节前失败」判定（chat SSE）**：主上游在**第一次**向客户端 `write` `data: {"type":"delta",...}\n\n` **之前**失败（含：连接拒绝 `ECONNREFUSED`、DNS/`ENOTFOUND`、TLS 握手失败、HTTP 4xx/5xx 且响应体未开始、`stream()` 在产出首 chunk 前 throw、空闲超时尚未写出任何 `delta`）。此时若已配置备用：销毁/放弃主侧 reader，用备用 `baseURL` 再建一次上游；对客户端仍是**同一条**已建立的 SSE 连接（可先发 `context`，再发来自备用的 `delta`…`done`），**不得**另开第二条响应或 JSON 改协议。
+3. **「已推 delta 后不再切」**：一旦客户端已收到至少一条 `type:'delta'`，主上游随后失败 → 走既有错误路径（`type:'error'` / `finalize` error），**零次**对备用 Base URL 的新建 `stream`/`invoke`；禁止把备用产出的后续 token 接到已中断的半截回复后面。
+4. **generate 同步路径**：主 `invoke` 在返回可解析成功正文前失败（reject / 网络错 / 429·5xx 等），且已配置备用 → 允许用备用 `baseURL` **再** `invoke` 一次（与 D11 重试正交：failover 换的是 Base URL，不是同 URL 的 jitter 重试；测码可先固定 D11 jitter 为短序列或注入「主 URL 首次即非重试类失败」以避免与 UT-RETRY 缠绕）。主已成功返回 content 后不得再打备用。
+5. **调用序（有备用、首字节前失败）**：解析主/备 URL → 用**主** `baseURL` 建模型并调用 → 失败且尚未对客户端写 `delta`（chat）/尚未成功 content（generate）→ 用**备** `baseURL` 再建并调用 → 成功则按既有成功路径 `finalize` / 写 `delta`…`done` 或 JSON 200。
+6. **与 D11/D12**：本表不断言熔断阈值；failover 发生在允许触达上游的前提下。若熔断已 `open`，仍须零次上游（含备用）——见 §2.28，本项不推翻。
+
+**测法**：优先单测可注入的 `withBaseUrlFailover` / `createLlmModelForBaseUrl(baseURL)`（记录每次实际 `configuration.baseURL`）；用 fake transport 按调用序号 fail/ok；chat 路径探针 `res.write` 帧类型序。路由闭环见 §3.18。`it()` 标题须包含下表 ID。
+
+| ID | 用例标题 | 场景描述 | 预期结果 |
+| :--- | :--- | :--- | :--- |
+| UT-FAILOVER-01 | 未配置备用：主失败不切备、行为不变 | 前置：设置 `OPENAI_BASE_URL='http://primary.invalid/v1'`；删除或设 `OPENAI_BASE_URL_FALLBACK` 为 `''`/`'   '`；stub 主侧 `stream`/`invoke` 首次即 `ECONNREFUSED`（或等价网络错）。 | 1. 上游工厂/封装对备用 URL 的创建次数精确为 **0**；<br>2. 失败按既有路径上抛或 SSE `type:'error'`（与无 failover 时代一致）；<br>3. `buildLlmConfig`/`resolve` 的备用字段为 `null`/缺省，证明「未配置备用时行为不变」。 |
+| UT-FAILOVER-02 | 配置解析：主备 URL 同时可读 | 前置：`OPENAI_BASE_URL='http://primary.test/v1'`、`OPENAI_BASE_URL_FALLBACK='http://backup.test/v1'`、有效 `OPENAI_API_KEY`；调用配置解析（`buildLlmConfig` 或 `resolveUpstreamBaseUrls`）。 | 1. 主 `baseURL === 'http://primary.test/v1'`；<br>2. 备用 `=== 'http://backup.test/v1'`（trim 后）；<br>3. 二者不得被合并成同一个字符串，也不得因设置备用而改写主默认回退链。 |
+| UT-FAILOVER-03 | 主在首字节前失败：切备用且仅备成功一次 | 前置：已配置主/备；注入工厂记录每次 `baseURL`；stub：主 URL 第一次调用立即 reject（`ECONNREFUSED` 或 `status: 503` 且**无** chunk）；备用第一次调用 resolve 成功（generate：合法三字段 content；或 chat 封装返回可迭代的单 chunk）。 | 1. 调用序精确为：先 `baseURL=primary` 恰好 **1** 次失败，再 `baseURL=backup` 恰好 **1** 次成功；<br>2. 不得出现第三次上游创建；<br>3. 封装最终成功（generate resolve / chat 可产出内容）。 |
+| UT-FAILOVER-04 | 主首次即成功：零次备用调用 | 前置：主/备均已配置；stub 主第一次即成功；备用 stub 若被调则计数 +1。 | 1. 仅主 `baseURL` 调用 **1** 次；<br>2. 备用调用次数精确为 **0**；<br>3. 返回值来自主侧响应。 |
+| UT-FAILOVER-05 | chat：已写过 delta 后主失败不得切备 | 前置：已配置备用；chat 封装探针记录 `write`；stub 主流：先 yield 至少一个可映射为 SSE `delta` 的 chunk，再 throw；备用 stub 计数。 | 1. 客户端侧已至少一次 `type:'delta'`（或封装内部标记 `firstDeltaSent=true`）；<br>2. 失败后备用 `stream`/`create` 次数精确为 **0**；<br>3. 随后走 error 路径（抛错或产出 `type:'error'`），**不得**再追加来自备用的 `delta`。 |
+| UT-FAILOVER-06 | chat：首 delta 前失败则切备，对用户仍一条流 | 前置：已配置备用；主 `stream` 在**零** chunk 时 reject；备用 `stream` yield `chunk-A` 后结束；记录对外 SSE 帧序（或封装事件序）。 | 1. 主失败后出现备用调用，且备用 `baseURL` 正确；<br>2. 事件序允许 `context`（若有）→ 来自备用的 `delta`（含 `chunk-A`）→ `done`；全程**同一**响应通道；<br>3. **不得**在 failover 后再发第二条 HTTP 响应或改成 `application/json`。 |
+| UT-FAILOVER-07 | 不做：跨请求会话级 failover | 前置：已配置备用；请求 A：主失败、备用成功（同 UT-FAILOVER-03）；请求 B：**新**一次封装调用，主 stub 改为首次即成功，备用计数归零。 | 1. 请求 B 第一次上游 `baseURL` 仍为 **primary**（不得因请求 A 切过备而默认从 backup 起调）；<br>2. 请求 B 备用调用次数为 **0**；<br>3. 证明「不做：跨请求会话级 failover」。 |
+| UT-FAILOVER-08 | 不做：已中断流不得伪装续传 | 前置：已配置备用；主已向客户端写出 ≥1 条 `delta`（内容 `'HELLO'`）后失败；备用若被误调则 resolve 出 `'WORLD'`。 | 1. 备用调用次数 === **0**；<br>2. 客户端最终不得在同一回复里出现把 `'WORLD'` 接在 `'HELLO'` 后的「无缝续传」成功 `done`（应 error 结束或等价中断）；<br>3. 证明「不做：对用户伪装成一条已中断的流续传」。 |
+| UT-FAILOVER-09 | generate：主 invoke 失败后备用成功 | 前置：已配置主/备；generate 路径 stub：`invoke` 按 `baseURL` 分支——primary 恒 reject `status: 503`（或网络错），backup resolve 合法三字段 JSON content；为降噪可将 D11 jitter 注为 `[0]` 且限制同 URL 重试，或注入「failover 包装在单次 attempt 外」使 primary 仅 1 次。 | 1. 最终 resolve 为备用 content；<br>2. 记录到的 `baseURL` 序列含 primary 失败与 backup 成功，且 backup 成功后无额外 primary；<br>3. 不得在未配置备用时走到本断言（对照 UT-FAILOVER-01）。 |
+| UT-FAILOVER-10 | 空白备用等同未配置 | 前置：`OPENAI_BASE_URL_FALLBACK='  '`（或 `'\t'`）；主失败。 | 1. 与 UT-FAILOVER-01 相同：备用创建/调用次数 === **0**；<br>2. 解析层不得把空白串当作合法 fallback URL 传给 `ChatOpenAI`；<br>3. 与 C61「空白专用变量视为未设置」同类判据。 |
+
 ---
 
 ## 3. 安全防护与集成测试用例 (Security & Integration)
@@ -685,6 +720,21 @@ Prompt 内容来自数据库，不能只依赖客户端 `AI_MAX_INPUT_CHARS` 防
 | IT-CIRCUIT-05 | 成功生成清零计数，避免误打开 | 前置：`failureThreshold = 3`；先制造 2 次 generate 上游失败（仍 closed）；第三次 stub 成功并入库；第四次再 stub 503 耗尽一轮。 | 1. 第三次 HTTP 200 且写库 1 次后，连续失败计数 === **0**；<br>2. 第四次失败后计数 === **1**，仍允许后续请求进入 `invoke`（未 open）；<br>3. 证明成功打断连续失败串在路由层生效。 |
 | SEC-CIRCUIT-01 | 熔断短路不得绕过 Guard 准入 | 前置：`AI_REQUIRE_SIGNED_HEADERS=false`；熔断已 open；spy middleware `next` 与 `finalize`；合法 study 打 generate。 | 1. 仍须先经 Guard：`next` 被调用 **1** 次（或拒答发生在 handler 内熔断分支，但**不得**跳过鉴权/Guard 直接裸调 handler）；<br>2. 单次请求 `finalize` 至多 **1** 次；<br>3. 无上游 `invoke`；无因熔断而重复预扣配额（与 open + `upstreamReached: false` 回补语义一致，不得双计）。 |
 | SEC-CIRCUIT-02 | 不做跨 worker：本集成不要求 Redis 共享熔断 | 前置：不注入 Redis；同进程内按 IT-CIRCUIT-01 打开熔断后，仅断言本进程短路。 | 1. open 后本进程第三次请求 `invoke === 0`；<br>2. 测试**不**连接真实 Redis，**不**断言其它 worker 的熔断态；<br>3. 若误把「必须 SET Redis circuit key」写成 PASS 条件则本项设计错误（对齐 residual：每进程一份）。 |
+
+### 3.18 D21 主备 Base URL failover 路由集成（P1-5）(`backend/src/tests/upstream-failover-integration.test.js`)
+
+对应 **D21 / P1-5** 完成标准在 **鉴权 → Guard → `chat` / `answer/generate` handler → 主备 Base URL 选择 → 上游** 链路上的闭环：须经 `app.handle`（或 `invokeRoute` 等价完整中间件链）；环境注入 `OPENAI_BASE_URL`（主）与可选 `OPENAI_BASE_URL_FALLBACK`（备）；spy/stub 模型工厂或底层 HTTP，按实际 `configuration.baseURL`（或请求 URL 前缀）区分主/备调用次数与顺序；chat 路径探针 SSE `write` 帧（`context` / `delta` / `done` / `error`）。禁止只单测纯 failover 函数却不验证 handler 已挂上切换。**不做**：跨请求记住备用、已推 `delta` 后伪装续传。**residual**：无。`it()` 标题须包含下表 ID。
+
+| ID | 用例标题 | 场景描述 | 预期结果 |
+| :--- | :--- | :--- | :--- |
+| IT-FAILOVER-01 | chat：主在首 delta 前失败 → 备用流式成功 | 前置：合法 `chat_ai`；`OPENAI_BASE_URL='http://primary-failover.invalid/v1'`、`OPENAI_BASE_URL_FALLBACK='http://backup-failover.invalid/v1'`；stub：主 `stream` 在产出任何 chunk 前 reject（`ECONNREFUSED` 或 `status: 503`）；备 `stream` yield 至少 1 个文本 chunk 后结束；`POST /api/chat` body `{ "message": "failover-chat-ok" }`。 | 1. HTTP **200**，`Content-Type` 含 `text/event-stream`；<br>2. 上游调用序：主 baseURL **1** 次失败 → 备 baseURL **1** 次成功；无第三次；<br>3. SSE 帧含至少一条 `type:'delta'`（来自备用内容）与收尾 `type:'done'`（或等价结束）；**不得**在 failover 后改发 JSON 错误体替代整条流；<br>4. `finalize` 一次成功语义（`status: 'ok'` 或既有 chat 成功 reason），`upstreamReached !== false`。 |
+| IT-FAILOVER-02 | chat：已推 delta 后主失败 → 不切备、发 error | 前置：同鉴权与主备 URL；stub 主流：先 yield ≥1 chunk（handler 已写出 `delta`），再 throw；备 `stream` 计数器；`POST /api/chat`。 | 1. 响应中至少一条 `type:'delta'` 之后出现 `type:'error'`（或连接按既有中断路径结束）；<br>2. 备用 baseURL 的 `stream`/`createLlmModel` 次数精确为 **0**；<br>3. `finalize` 为 error（如 `aborted_or_timeout` / `server_error` 等价），不得把备用内容拼进已输出的半截回复。 |
+| IT-FAILOVER-03 | generate：主 invoke 失败 → 备用成功入库 | 前置：合法 `study`；题无缓存或 `{ "force": true }`；主备 URL 已设；stub：primary `invoke` reject（网络错或 `503`），backup `invoke` resolve 合法三字段 JSON；spy 写库。 | 1. HTTP **200**，`code === 0`，`data.cached === false`，三字段可读；<br>2. 调用序含 primary 失败与 backup 成功；写库恰好 **1** 次；<br>3. `finalize` 一次：`status: 'ok'`、`reason: 'generated_answer'`、`upstreamReached !== false`。 |
+| IT-FAILOVER-04 | 未配置备用：主失败行为与无 failover 一致 | 前置：仅设主 `OPENAI_BASE_URL`；删除/`''` 备用；chat 与 generate 各至少一条：主 stub 恒失败。 | 1. 两条路由均**零次**备用 URL 调用；<br>2. chat：SSE 已建头后出现 `type:'error'`（或既有失败结束），无成功 `done`；generate：HTTP 非成功（**500** 或实现固定码），`code !== 0`，写库 **0**；<br>3. 证明「未配置备用时行为不变」。 |
+| IT-FAILOVER-05 | 不做：第二请求仍从主 URL 起调 | 前置：主备已配置；先完成一次 IT-FAILOVER-01/03 式「主败备成」；再发**新**的同路由请求，此时将主 stub 改为首次成功、备计数归零。 | 1. 第二次请求的首次上游 `baseURL` 仍为 **primary**；<br>2. 第二次备用调用次数 === **0**；<br>3. 证明「不做：跨请求会话级 failover」。 |
+| IT-FAILOVER-06 | 对照：缓存早退不触发主备切换 | 前置：题已有非空 `answer`；body 无 `force`；主备均已配置；spy 主/备 `invoke`。 | 1. HTTP 200，`data.cached === true`；<br>2. 主与备 `invoke` 次数均为 **0**；<br>3. `finalize` `reason: 'cached_answer'`、`upstreamReached: false`（与 §2.10 / §3.3 合取）。 |
+| SEC-FAILOVER-01 | failover 不得绕过 Guard 或重复 finalize | 前置：`AI_REQUIRE_SIGNED_HEADERS=false`；合法权限；主失败备成功（chat 或 generate 任一闭环）；spy Guard `next` 与 `finalize`。 | 1. 单次 HTTP 请求仅 **一次** Guard 准入（`next` 一次）与 **一次** `finalize`；<br>2. 主→备切换只发生在 handler 内上游层，不得重新走限流/配额预扣导致双计；<br>3. 成功审计仍单行成功 reason（chat 既有成功 / `generated_answer`）。 |
+| SEC-FAILOVER-02 | 熔断 open 时不得借 failover 打备用 | 前置：按 §3.17 将熔断置为 `open`；主备 URL 均已配置；spy 主/备上游。 | 1. 主与备上游调用次数均为 **0**；<br>2. 响应为熔断短路（generate：`circuit_open` 等价；chat：既有 error 协议）；<br>3. 证明 D21 不推翻 D12：open 期间零次上游（含备用）。 |
 
 ---
 
