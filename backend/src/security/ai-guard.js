@@ -436,8 +436,12 @@ export function createAiGuard({ dbPool = null, redis = null, jwtSecret = null } 
       return res.status(401).json({ code: 401, message: 'Invalid signature' });
     }
 
-    // 4. Issue JWT
-    const token = jwt.sign({ clientId, op: 'ai_access', role: 'admin', permissions: ['chat_ai', 'study'] }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
+    // 4. Issue JWT（S1：仅 AI 调用声明，禁止 role=admin，与登录票权限面隔离）
+    const token = jwt.sign(
+      { clientId, op: 'ai_access', permissions: ['chat_ai', 'study'] },
+      JWT_SECRET,
+      { expiresIn: JWT_EXPIRES_IN }
+    );
     return res.json({ code: 0, data: { token, expiresIn: 3600 }, message: 'success' });
   };
 
