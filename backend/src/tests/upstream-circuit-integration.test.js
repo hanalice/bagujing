@@ -93,6 +93,15 @@ function jsonPayload(response) {
   return response.callOrder.find((entry) => entry.op === 'json')?.payload;
 }
 
+/**
+ * 等前序请求的审计 NDJSON 落盘后再删文件。
+ * appendAudit 走异步队列，未等齐就 unlink 时，迟到的 server_error 会写进下一次断言。
+ */
+async function discardSettledAudit(count) {
+  await readAuditLines(count);
+  try { fs.unlinkSync(TEST_AUDIT_PATH); } catch { /* 文件可能已被清空 */ }
+}
+
 describe('D12 / P1-5: generate 进程内熔断集成', () => {
   before(async () => {
     configureRouteTestEnv();
@@ -209,7 +218,7 @@ describe('D12 / P1-5: generate 进程内熔断集成', () => {
     assert.equal(getUpstreamCircuit().isOpen(), true);
 
     modelCalls.length = 0;
-    try { fs.unlinkSync(TEST_AUDIT_PATH); } catch { /* ignore */ }
+    await discardSettledAudit(2);
 
     const response = await invokeRoute(app, '/api/problems/42/answer/generate', { force: true });
     assert.equal(countGenerateInvokes(), 0);
@@ -296,7 +305,7 @@ describe('D12 / P1-5: generate 进程内熔断集成', () => {
     assert.equal(getUpstreamCircuit().isOpen(), true);
 
     modelCalls.length = 0;
-    try { fs.unlinkSync(TEST_AUDIT_PATH); } catch { /* ignore */ }
+    await discardSettledAudit(2);
 
     const response = await invokeRoute(app, '/api/problems/42/answer/generate', { force: true });
     assert.equal(response.statusCode, 503);
