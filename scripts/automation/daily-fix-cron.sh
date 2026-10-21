@@ -53,6 +53,9 @@ if ! ./scripts/automation/merge-remote-prs.sh; then
   exit 1
 fi
 
+# 独立脚本：远端 PR 处理完后，删掉已经合进 main 的本地日修/周扫描分支。
+./scripts/automation/prune-merged-branches.sh
+
 set +e
 ./scripts/automation/daily-fix.sh --yes --push
 code=$?
