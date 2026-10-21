@@ -8,6 +8,8 @@
 
 选任务前由 `scripts/automation/merge-remote-prs.sh` 单独处理远端 PR：`chore/weekly-scan-<日期>` 可合并则直接合入；`auto-fix/*` 与 `auto-feat/*` 仅当恰好一条且远端 `qa` 已通过时合入。合并不了则本次不新开任务。
 
+远端 PR 处理之后，由 `scripts/automation/prune-merged-branches.sh` 单独删除已合进 `origin/main` 的本地 `auto-fix/*`、`auto-feat/*`、`chore/weekly-scan-<日期>` 分支。未合并的留下。
+
 **分级**
 
 - `auto`：契约已冻、单测能锁死，可 `--yes` 无人值守。
