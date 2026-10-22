@@ -84,7 +84,7 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | D4  | feat | P1-2 | manual | todo | 非个性化解析的近似缓存（需先拆契约） |
 | D5  | fix | P2-2 | manual | split | 已拆为 D51 |
 | D51 | fix | P2-2 | auto | done | 新注册 bcryptjs；登录懒迁移旧哈希 |
-| S1  | fix | scan | auto | todo | 机调换票 JWT 与登录票权限面隔离 |
+| S1  | fix | scan | auto | done | 机调换票 JWT 与登录票权限面隔离 |
 | S2  | fix | scan | auto | todo | Guard 非 debug 路径去掉常开 console.log |
 | S3  | feat | scan | auto | todo | 助教前端回传最近 6 轮 messages（对齐 C31） |
 | S4  | feat | scan | assist | split | 已判定助教 Markdown；实现见 S6 |
@@ -295,3 +295,4 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | 2026-10-17 | D12 完成：进程内连续失败熔断 |
 | 2026-10-19 | D21 完成：主 URL 在发出首字节前失败则切备用 URL |
 | 2026-10-20 | D51 完成：新注册 bcryptjs；登录懒迁移旧哈希 |
+| 2026-10-21 | S1 完成：机调换票 JWT 与登录票权限面隔离 |

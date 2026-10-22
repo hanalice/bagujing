@@ -15,6 +15,7 @@
 - **进程内连续失败熔断 (D12 / P1-5)**：进程内计数连续上游失败，达到可注入阈值后打开一段可注入时间窗口，打开期间**零次**上游调用即拒答；不依赖 Redis；单测可驱动时钟/阈值（§2.28 / §3.17）。**不做**跨 worker 共享熔断状态。**residual**：cluster 下每进程一份，文档写明。
 - **主备 Base URL failover (D21 / P1-5)**：若配置了备用 Base URL（契约名 `OPENAI_BASE_URL_FALLBACK`，实现等价别名须在测码注释写明），则主 URL 在**向客户端发出首字节 / 首条 SSE `delta` 之前**失败时改用备用发起上游；已开始向客户端推 `delta` 后**不得**再切。未配置备用时行为与仅 `OPENAI_BASE_URL` 时一致（§2.29 / §3.18）。**不做**跨请求会话级 failover、对用户伪装成一条已中断流的续传。**residual**：无。
 - **密码哈希 bcryptjs 与懒迁移 (D51 / P2-2)**：新注册写入 `bcryptjs` 哈希（禁止再写无盐 `sha256`）；登录先 `bcrypt.compare`，失败再回退旧 `sha256` 十六进制比对；命中旧哈希则**仅对该用户** `UPDATE` 写回 bcrypt（懒迁移），无批量 SQL 扫表。后端契约见 §2.30 / §3.19。**不做** argon2、离线翻写全表、强制失效已有会话。**residual**：从未再登录的存量用户仍为旧哈希，直到其下次登录。
+- **机调换票 JWT 与登录票权限面隔离 (S1)**：`POST /api/auth/token`（`aiGuard.exchangeToken`）签发的短时票与 `POST /api/auth/login` 用户票权限面隔离；换票 JWT **不得**通过 `requireAdmin`；claims 仅保留 AI 调用所需声明（`op=ai_access`、AI 路由权限名等）。单测解码 payload；集成覆盖管理面 403（§2.31 / §3.20）。**不做**：改登录签发路径；改 `AI_REQUIRE_SIGNED_HEADERS` 默认值；改 Nginx / 部署。**residual**：客户端凭证轮换与前端是否继续走换票另条。
 - **前端多层级质量保障体系 (Frontend QA Strategy)**：
   - **端到端测试 (Frontend E2E - Playwright)**：覆盖核心用户链路（Main Path / Happy Path），利用 `page.route` 对大模型流式 SSE 接口进行轻量 Mock，保障真实路由鉴权、题目浏览及 AI 交互界面的稳定可用；**C42** 另锁解析面板三字段可见性与无整篇 `v-html`。
   - **状态机与单元测试 (Frontend UT/IT - Vitest)**：针对 Pinia Store（`user`、`settings`、`breadcrumb`）、题目解析归一化/渲染辅助及工具函数，快速验证状态迁移、本地持久化与边界容错；**B33** 另锁登录态 `chat` / `answer/generate` 的 HMAC 六头注入（§4.5 `UT-FE-SIG-*`）。
@@ -564,6 +565,39 @@ C22 合入后 problems 关键字召回主路径改为 FTS（失败回退 LIKE）
 | UT-AUTH-HASH-09 | 不做：懒迁移不强制失效已有会话 | 前置：已签发 JWT（`jwt.sign` 含 `id`/`username`，`expiresIn` 未过期）；对应用户完成一次旧哈希 → bcrypt 懒迁移；随后用**同一** token 调用 `authenticateToken`（或 `jwt.verify`）。 | 1. 迁移后 token **仍**校验通过（payload `id` 不变）；<br>2. 迁移路径**零次** token 黑名单/版本号递增/`jti` 吊销（若项目无此机制则断言无新增 revoke 调用）；<br>3. 证明「不做：强制失效已有会话」。 |
 | UT-AUTH-HASH-10 | residual：未登录存量用户保持旧哈希 | 前置：用户 U1 `password_hash = legacySha256Hex('stay-old')`；测试期间**不**对其调用登录/migrate；可对另一用户 U2 做迁移。 | 1. 读回 U1.`password_hash` **全等**原 sha256 串；<br>2. `bcrypt.compare('stay-old', U1.hash)` 为 `false`（仍非 bcrypt）；<br>3. 与 backlog residual 字面一致：直到其下次登录才迁移。 |
 
+### 2.31 S1 机调换票 JWT 与登录票权限面隔离（`backend/src/tests/ai-guard-token-exchange.test.js` → `ai-guard.js` `exchangeToken` / `server-express.js` `requireAdmin`）
+
+对应 **S1**（`docs/backlog.md` §S1）：修复回归点为旧式换票签发 `jwt.sign({ clientId, op: 'ai_access', role: 'admin', permissions: ['chat_ai', 'study'] }, …)`——机调票误带 `role: 'admin'`，经 `authenticateToken` 写入 `req.user` 后即可通过 `requireAdmin`（`req.user?.role === 'admin'`），与登录管理员票权限面混同。
+
+**做**：`POST /api/auth/token` 签发的 JWT 与登录用户票权限面隔离；该票**不得**通过管理面鉴权（`requireAdmin`）；claims **仅**保留 AI 调用所需声明（至少含 `op: 'ai_access'` 与 AI 路由权限名，如 `chat_ai`；可含 `clientId` / `study` 等 AI 路径既需声明）。单测对签发串 `jwt.verify` / `jwt.decode` 断言 payload。
+
+**不做**：改 `POST /api/auth/login` 的签发 claims / `expiresIn: '7d'` 路径；改 `AI_REQUIRE_SIGNED_HEADERS` 代码默认值（仍为 `false`）；改 Nginx / 部署开关。
+
+**residual**：客户端凭证轮换、前端是否继续走换票，另条；本表不断言轮换或前端停用换票。
+
+**协议 / 时序**（下一阶段 `it()` 须对齐；实现落在 `createAiGuard(...).exchangeToken`，路由挂载 `app.post('/api/auth/token', …)`）：
+
+1. **换票请求**（合法前置）：白名单 `Origin`（如 `http://localhost`）；`AI_CLIENT_CREDENTIALS` 含 `web:<secret>`（或测试注入 credentials Map）；JSON body `{ clientId, ts, nonce, signature, bodyHash }` 齐全。
+2. **验签基串**（与现网一致，本项**不**改算法）：`bodyForHash = JSON.stringify({ clientId, ts, nonce })`；`bodyHash = sha256Hex(bodyForHash)`；`signatureBase = \`${ts}.${nonce}.POST.${req.path}.${bodyHash}\``（Express `req.path` 为 `/api/auth/token`）；`signature = hmacHex(secret, signatureBase)`。时钟在 `AI_MAX_CLOCK_SKEW_MS` 内；nonce 未重放。
+3. **签发响应**：HTTP **200**，JSON `{ code: 0, data: { token, expiresIn: 3600 }, message: 'success' }`（`expiresIn` 数值以现网为准；JWT `expiresIn` 实现为 `'1h'`）。
+4. **换票 payload 允许集（S1 冻约）**：解码后须含 `op === 'ai_access'`、`clientId`（与请求一致）、`permissions` 为数组且包含 AI 路由所需名（至少 `chat_ai`；若 generate 路径仍依赖则可含 `study`）。**禁止**出现 `role === 'admin'`；**禁止**携带登录票身份字段 `id` / `username`（与登录签发对照）。`permissions` **不得**含管理面专用提升语义（若项目无独立 admin permission 名，则以 `role !== 'admin'` + `requireAdmin` 拒答为准）。
+5. **管理面门禁**：`requireAdmin` 判定保持 `req.user?.role !== 'admin' → 403` 且文案 `Admin access required`；换票 JWT 经 `authenticateToken` 后调用该中间件必须拒答（见 §3.20）。
+6. **登录对照（不做改动）**：`POST /api/auth/login` 成功签发仍含 `id` / `username` / `role`（库中角色名）/ `permissions`（角色权限列表）/ `clientId: 'web'`，`expiresIn: '7d'`；本项测试不得要求改写该 payload 形状。
+
+**测法**：优先直接调用 `exchangeToken`（mock `req`/`res`，合法签名 body）或经 `app.handle` 打 `POST /api/auth/token`；对 `data.token` 用与签发相同的 `JWT_SECRET`（`AI_JWT_SECRET` 或测试注入）`jwt.verify` 后断言 claims。`requireAdmin` 可用抽离中间件单测或集成 §3.20。`it()` 标题须包含下表 ID。
+
+| ID | 用例标题 | 场景描述 | 预期结果 |
+| :--- | :--- | :--- | :--- |
+| UT-TOKEN-ISO-01 | 合法换票签发成功且返回 JWT 串 | 前置：白名单 Origin；credentials 含 `web:change_me`；构造合法 `ts`/`nonce`/`bodyHash`/`signature`（算法见本节协议）；调用 `exchangeToken` 或 `POST /api/auth/token` body `{ clientId:'web', ts, nonce, signature, bodyHash }`。 | 1. HTTP **200**（或 `res.json` 被调用一次）；<br>2. JSON `code === 0`，`message === 'success'`；<br>3. `data.token` 为非空字符串且可被 `jwt.verify(token, JWT_SECRET)` 成功解码；`data.expiresIn === 3600`（或与现网常量全等）。 |
+| UT-TOKEN-ISO-02 | 换票 payload：`op=ai_access` 且含 AI 权限名 | 前置：同 UT-TOKEN-ISO-01 成功拿票；`payload = jwt.verify(token, JWT_SECRET)`（或 decode 后验签）。 | 1. `payload.op === 'ai_access'`；<br>2. `payload.clientId === 'web'`；<br>3. `Array.isArray(payload.permissions)` 且 `permissions` **包含** `'chat_ai'`（若实现仍签发 `'study'` 则允许，但不得缺失 AI 路由所需名）；<br>4. 证明「claims 保留 AI 调用所需声明」。 |
+| UT-TOKEN-ISO-03 | 换票 payload：禁止 `role=admin`（回归点） | 前置：同 UT-TOKEN-ISO-01；解码 `payload`。 | 1. `payload.role !== 'admin'`（允许 `role` 缺省、`undefined`、或非 admin 专用值如 `ai_client`/`guest`，以实现为准）；<br>2. **不得**再出现旧式 `{ …, role: 'admin', … }`；<br>3. 将 `payload` 交给与现网同逻辑的 `requireAdmin` 探针（`req.user = payload`）时**不**调用 `next()`，并走 403 分支（与 UT-TOKEN-ISO-04 合取）。 |
+| UT-TOKEN-ISO-04 | 换票 payload 代入 `requireAdmin` → 拒绝 | 前置：UT-TOKEN-ISO-01 的 `payload`；构造 `req = { user: payload }`；调用 `requireAdmin(req, res, next)`（从 `server-express.js` 导出或测试内复刻同条件 `req.user?.role !== 'admin'`，测码注释写明等价）。 | 1. `next` 调用次数为 **0**；<br>2. HTTP **403**，JSON `{ code: 403, message: 'Admin access required' }`（与现网文案全等）；<br>3. 证明机调票「不得通过管理面鉴权」。 |
+| UT-TOKEN-ISO-05 | 换票票与登录票 claims 形状隔离 | 前置：A) 换票 JWT payload（UT-TOKEN-ISO-01）；B) 对照：以测试 `jwt.sign` 模拟登录票形状 `{ id: 1, username: 'u', role: 'user', permissions: ['study'], clientId: 'web' }`（或真实 login 路径，见不做边界）。 | 1. 换票 payload **无** `id`、**无** `username` 键（或值为 `undefined`）；<br>2. 登录对照票**有** `id` 与 `username`；<br>3. 换票 `op === 'ai_access'`，登录对照票**无** `op` 或 `op !== 'ai_access'`（以现网 login 签发为准：当前无 `op` 字段）。 |
+| UT-TOKEN-ISO-06 | 换票 permissions 不得含管理提升语义 | 前置：解码换票 `payload.permissions`。 | 1. `permissions` 每一项均为字符串；<br>2. 集合为 AI 路由所需权限的子集/等价（冻约核心含 `chat_ai`；允许附带 `study`）；<br>3. **不**包含字面 `'admin'` 作为 permission 名；不得靠 permissions 绕过 `requireAdmin`（`requireAdmin` 只看 `role`，本行锁 permissions 面不过宽）。 |
+| UT-TOKEN-ISO-07 | 不做：登录签发路径 claims 保持不变 | 前置：只读或调用登录签发逻辑（`POST /api/auth/login` 成功路径的 `jwt.sign` 参数，或对 active 用户跑一次 login）；**不**修改 login 代码。 | 1. 登录 JWT payload 仍含 `id`、`username`、`role`、`permissions`、`clientId`；<br>2. 登录票**可以**在 `role === 'admin'` 时通过 `requireAdmin`（管理员真源仍是登录路径）；<br>3. 本用例 FAIL 条件**不包括**「必须改 login claims」；证明 S1 **不做**改用户登录签发路径。 |
+| UT-TOKEN-ISO-08 | 不做：不要求改签名开关默认值 | 前置：只读 `ai-guard` 中 `requireSignedHeaders` 默认解析；换票用例运行时**不**强制把 `AI_REQUIRE_SIGNED_HEADERS` 设为代码默认 `true`。 | 1. 代码默认仍回退 `'false'`（与 §2.19 / SEC-GUARD-09 一致）；<br>2. 本表 PASS 不依赖「默认强制验签」；<br>3. 证明 S1 **不做**改 `AI_REQUIRE_SIGNED_HEADERS` 默认值。 |
+| UT-TOKEN-ISO-09 | residual：不要求客户端凭证轮换 / 前端停换票 | 前置：只读审查本小节断言与 backlog residual。 | 1. 本表**不**断言凭证轮换 API、密钥世代或前端删除 `fetchAiSessionToken`；<br>2. 允许前端在无用户 Bearer 时仍调用 `/api/auth/token`（与 B33 / S7 分界）；<br>3. residual 项另条，本用例不得以「必须轮换/必须停换票」为 FAIL。 |
+
 ---
 
 ## 3. 安全防护与集成测试用例 (Security & Integration)
@@ -788,6 +822,28 @@ Prompt 内容来自数据库，不能只依赖客户端 `AI_MAX_INPUT_CHARS` 防
 | SEC-AUTH-HASH-01 | 登录失败响应不得回显密码或哈希 | 前置：`POST /api/auth/login` 错误密码或未知用户名。 | 1. HTTP **401**；<br>2. 响应 body 字符串**不**包含请求明文密码、**不**包含库中 `password_hash`、**不**包含 `legacySha256Hex(明文)`；<br>3. `message` 对「用户不存在」与「密码错误」保持同一文案（现网均为 `Invalid username or password`），避免用户枚举差异（若实现已统一则断言两次 `message` 全等）。 |
 | SEC-AUTH-HASH-02 | 成功登录/注册响应不得泄露 password_hash | 前置：完成一次 IT-AUTH-HASH-01 注册响应，及一次 IT-AUTH-HASH-02/03 登录成功响应；序列化整段 JSON。 | 1. JSON 中无键 `password`、`password_hash`、`passwordHash`；<br>2. 任意字符串值不匹配 `/^\$2[aby]\$/` 且不等于某已知测试哈希；<br>3. 登录仅暴露契约内的 `data.token` 与 `data.user` 公开字段。 |
 | SEC-AUTH-HASH-03 | 不做离线全表翻写：进程启动不改写存量哈希 | 前置：隔离库预置 ≥2 个旧 sha256 用户；启动/加载应用（`initUserSchema` + 引入 `server-express` 或测试 bootstrap）后**不**调用 login；再读库。 | 1. 所有预置用户的 `password_hash` 与启动前**全等**；<br>2. 启动 SQL 日志无 `UPDATE users SET password_hash`；<br>3. 证明「不做：离线翻写全表」且「无批量 SQL 扫表」。 |
+
+### 3.20 S1 换票 JWT 权限面隔离与管理面拒答集成（`backend/src/tests/ai-guard-token-exchange-integration.test.js`）
+
+对应 **S1** 完成标准在 **`POST /api/auth/token` → JWT → `authenticateToken` → `requireAdmin` → `/api/admin/*`** 链路上的闭环：须经 `app.handle`（或等价完整路由）；换票验签用合法机调凭证；管理面至少覆盖 `GET /api/admin/pending-users`，建议再覆盖一条 `GET /api/admin/audit-logs` 或 `POST /api/admin/approve-user`。单测 payload 见 §2.31。**不做**：改登录签发；改签名开关默认；改 Nginx。**residual**：凭证轮换 / 前端是否停换票另条。`it()` 标题须包含下表 ID。
+
+**时序**：
+
+1. 构造合法换票 body（§2.31 协议）→ `POST /api/auth/token`（带白名单 `Origin`）→ 取得 `data.token`。
+2. 带 `Authorization: Bearer <换票 token>` 访问管理路由（**不**先走登录）。
+3. 对照：同一进程用**真实管理员登录票**（`role === 'admin'`）访问同一管理路由应仍可 200（证明门禁未误伤登录管理员；且登录路径未被 S1 改坏）。
+
+| ID | 用例标题 | 场景描述 | 预期结果 |
+| :--- | :--- | :--- | :--- |
+| IT-TOKEN-ISO-01 | 合法换票经路由返回可解码 JWT | 前置：credentials 含测试 `clientId`；白名单 Origin；`POST /api/auth/token` 合法签名 body（§2.31）。 | 1. HTTP **200**，`code === 0`，`data.token` 非空；<br>2. `jwt.verify(data.token, JWT_SECRET)` 成功；<br>3. `payload.op === 'ai_access'` 且 `payload.role !== 'admin'`（与 UT-TOKEN-ISO-02/03 合取）。 |
+| IT-TOKEN-ISO-02 | 换票 JWT 访问 pending-users → 403 | 前置：IT-TOKEN-ISO-01 的 token；`GET /api/admin/pending-users`，头 `Authorization: Bearer <换票 token>`（无其它会话 Cookie）。 | 1. HTTP **403**；<br>2. JSON `{ code: 403, message: 'Admin access required' }`（与 `requireAdmin` 现网文案全等）；<br>3. 响应**不**含待审批用户数组（无 `data` 列表或 `data` 非用户列表）；证明机调票不得通过管理面。 |
+| IT-TOKEN-ISO-03 | 换票 JWT 访问 audit-logs → 403 | 前置：同换票 token；`GET /api/admin/audit-logs?limit=5`。 | 1. HTTP **403**，`message === 'Admin access required'`；<br>2. **不**返回审计行数组；<br>3. 与 IT-TOKEN-ISO-02 合取：至少两条 `requireAdmin` 路由均拒答。 |
+| IT-TOKEN-ISO-04 | 换票 JWT 调用 approve-user → 403 且不改库 | 前置：隔离库存在 `status='pending'` 用户 P；换票 token；`POST /api/admin/approve-user` body `{ "userId": P.id }`。 | 1. HTTP **403**，`Admin access required`；<br>2. 读回 P.`status` 仍为 `'pending'`（零次批准写库）；<br>3. 证明换票票不能做管理写操作。 |
+| IT-TOKEN-ISO-05 | 对照：管理员登录票仍可访问管理面 | 前置：库中 `role_name === 'admin'` 且 `active` 的用户；`POST /api/auth/login` 得登录 JWT；`GET /api/admin/pending-users` 带该 Bearer。 | 1. HTTP **200**，`code === 0`，`data` 为数组（可为空）；<br>2. 登录 payload `role === 'admin'`；<br>3. 证明 S1 **只**收紧换票票，**不**破坏登录管理员路径（不做改登录签发）。 |
+| IT-TOKEN-ISO-06 | 对照：普通用户登录票管理面仍 403 | 前置：`role !== 'admin'` 的登录 JWT；`GET /api/admin/pending-users`。 | 1. HTTP **403**，`Admin access required`；<br>2. 与 IT-AUTH-02 语义一致；<br>3. 证明门禁仍区分「登录非 admin」与「换票票」，二者皆不得进管理面。 |
+| SEC-TOKEN-ISO-01 | 机调票不能提权为 admin（安全回归） | 前置：攻击者仅持有合法客户端凭证，完成一次换票；**不**持有任何用户密码；用换票 JWT 依次打 `GET /api/admin/pending-users`、`GET /api/admin/audit-logs`、`POST /api/admin/approve-user`。 | 1. 三条均为 HTTP **403** / `Admin access required`；<br>2. `jwt.verify` 后 `role !== 'admin'` 且无登录身份 `id`/`username`；<br>3. 回归：旧实现 `role:'admin'` 会导致本条 FAIL（期望隔离后 PASS）。 |
+| SEC-TOKEN-ISO-02 | 换票响应与审计不得泄露 JWT_SECRET / client secret | 前置：一次成功换票与一次故意坏签名换票（`signature` 篡改）。 | 1. 成功/失败响应 JSON 字符串**不**包含 `AI_JWT_SECRET`、credentials 明文 secret、完整 `signatureBase` 调试泄露（若有）；<br>2. 成功体仅契约字段 `code`/`data.token`/`data.expiresIn`/`message`；<br>3. 失败体为既有 401 文案（如 `Invalid signature`），无 stack / secret。 |
+| SEC-TOKEN-ISO-03 | 不做 / residual 边界：不测凭证轮换与部署开关 | 前置：只读本小节与 backlog S1 不做/residual。 | 1. 不要求实现密钥轮换或前端删除换票；<br>2. 不要求改 `AI_REQUIRE_SIGNED_HEADERS` 默认或 Nginx；<br>3. 与 §2.31 UT-TOKEN-ISO-08/09 分界一致。 |
 
 ---
 
