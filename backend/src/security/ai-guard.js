@@ -5,7 +5,10 @@ import jwt from 'jsonwebtoken';
 import Redis from 'ioredis';
 import { updateMissionTokens } from '../db/maf-repo.js';
 
-console.log('AI_GUARD_MODULE_LOADED_VERSION_001');
+// S2：模块加载标记仅在 AI_GUARD_DEBUG=true 时经 debug 通道输出，禁止常开 console.log
+if (String(process.env.AI_GUARD_DEBUG ?? '').toLowerCase() === 'true') {
+  console.debug('[ai-guard-debug] AI_GUARD_MODULE_LOADED_VERSION_001');
+}
 
 const JWT_EXPIRES_IN = '1h';
 
@@ -372,8 +375,10 @@ export function createAiGuard({ dbPool = null, redis = null, jwtSecret = null } 
             payload.ipHash ?? null,
             payload.userAgent ?? null
           ]);
-          // console.log('[ai-guard] SQL audit recorded:', payload.requestId);
-          console.log('[ai-guard] SQL audit success for requestId:', payload.requestId);
+          // S2：SQL 审计成功不再常开 console.log；需要时仅走 debug
+          if (config.debug) {
+            console.debug('[ai-guard-debug] SQL audit success for requestId:', payload.requestId);
+          }
         } catch (err) {
           console.error('[ai-guard] SQL audit failed:', err.message);
         }
@@ -420,11 +425,13 @@ export function createAiGuard({ dbPool = null, redis = null, jwtSecret = null } 
     const actualBodyHash = sha256Hex(bodyForHash);
 
     if (!safeEqualText(actualBodyHash, bodyHash)) {
-      console.log('[ai-guard] Body hash mismatch:', {
-        actual: actualBodyHash,
-        provided: bodyHash,
-        constructedBody: bodyForHash
-      });
+      // S2：换票验签失败细节仅 debug；禁止向 console.log/info 倾倒哈希对照
+      if (config.debug) {
+        console.debug('[ai-guard-debug] Body hash mismatch', {
+          actual: actualBodyHash,
+          provided: bodyHash,
+        });
+      }
       return res.status(401).json({ code: 401, message: 'Body hash mismatch' });
     }
 
@@ -432,7 +439,10 @@ export function createAiGuard({ dbPool = null, redis = null, jwtSecret = null } 
     const expectedSignature = hmacHex(secret, signatureBase);
 
     if (!safeEqualText(expectedSignature, signature)) {
-      console.log('[ai-guard] Invalid signature. Expected base:', signatureBase);
+      // S2：禁止常开输出 Expected base / signatureBase
+      if (config.debug) {
+        console.debug('[ai-guard-debug] Invalid signature (exchange)');
+      }
       return res.status(401).json({ code: 401, message: 'Invalid signature' });
     }
 
