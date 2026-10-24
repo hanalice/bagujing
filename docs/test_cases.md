@@ -16,6 +16,7 @@
 - **主备 Base URL failover (D21 / P1-5)**：若配置了备用 Base URL（契约名 `OPENAI_BASE_URL_FALLBACK`，实现等价别名须在测码注释写明），则主 URL 在**向客户端发出首字节 / 首条 SSE `delta` 之前**失败时改用备用发起上游；已开始向客户端推 `delta` 后**不得**再切。未配置备用时行为与仅 `OPENAI_BASE_URL` 时一致（§2.29 / §3.18）。**不做**跨请求会话级 failover、对用户伪装成一条已中断流的续传。**residual**：无。
 - **密码哈希 bcryptjs 与懒迁移 (D51 / P2-2)**：新注册写入 `bcryptjs` 哈希（禁止再写无盐 `sha256`）；登录先 `bcrypt.compare`，失败再回退旧 `sha256` 十六进制比对；命中旧哈希则**仅对该用户** `UPDATE` 写回 bcrypt（懒迁移），无批量 SQL 扫表。后端契约见 §2.30 / §3.19。**不做** argon2、离线翻写全表、强制失效已有会话。**residual**：从未再登录的存量用户仍为旧哈希，直到其下次登录。
 - **机调换票 JWT 与登录票权限面隔离 (S1)**：`POST /api/auth/token`（`aiGuard.exchangeToken`）签发的短时票与 `POST /api/auth/login` 用户票权限面隔离；换票 JWT **不得**通过 `requireAdmin`；claims 仅保留 AI 调用所需声明（`op=ai_access`、AI 路由权限名等）。单测解码 payload；集成覆盖管理面 403（§2.31 / §3.20）。**不做**：改登录签发路径；改 `AI_REQUIRE_SIGNED_HEADERS` 默认值；改 Nginx / 部署。**residual**：客户端凭证轮换与前端是否继续走换票另条。
+- **Guard 非 debug 路径去掉常开 console.log (S2)**：`backend/src/security/ai-guard.js` 在未开 `AI_GUARD_DEBUG` 时，禁止模块加载标记、SQL 审计成功、换票验签失败等常开 `console.log` / `console.info`；需要时仅走既有 debug 开关（`console.debug` + `[ai-guard-debug]` 属 **A6** / §2.9）。单测 stub `console.log`/`info` 断言上述前缀/文案零出现（§2.32）。**不做**：改审计落库逻辑；扩展新日志平台。**residual**：A6 已覆盖 `[ai-guard-debug]` 前缀通道，本项只收常开噪音。
 - **前端多层级质量保障体系 (Frontend QA Strategy)**：
   - **端到端测试 (Frontend E2E - Playwright)**：覆盖核心用户链路（Main Path / Happy Path），利用 `page.route` 对大模型流式 SSE 接口进行轻量 Mock，保障真实路由鉴权、题目浏览及 AI 交互界面的稳定可用；**C42** 另锁解析面板三字段可见性与无整篇 `v-html`。
   - **状态机与单元测试 (Frontend UT/IT - Vitest)**：针对 Pinia Store（`user`、`settings`、`breadcrumb`）、题目解析归一化/渲染辅助及工具函数，快速验证状态迁移、本地持久化与边界容错；**B33** 另锁登录态 `chat` / `answer/generate` 的 HMAC 六头注入（§4.5 `UT-FE-SIG-*`）。
@@ -105,13 +106,15 @@
 
 ### 2.9 Guard 调试日志降级 (`backend/src/tests/ai-guard-debug.test.js`)
 
-对应 **A6 / P2-3**：`backend/src/security/ai-guard.js` 中间件内带前缀 `[ai-guard-debug]` 的调试输出（当前为无条件 `console.log`，含 `requestId` / `route` / `clientId` / `hasUser` / `forceSig`）在生产默认路径下不得进入标准日志，避免 token/header 身份噪音刷屏。完成标准：生产关闭该调试行，或降为仅 debug 级别；**默认**（未显式开启调试）捕获 `console.log` / `console.debug` / `console.info` 时，零条消息包含子串 `[ai-guard-debug]`。测试通过 stub `console.*` + 直接调用 `createAiGuard(...).middleware`（参考 `ai-guard-cache.test.js` 的 `mockHttp`），命中 AI 路由（如 `POST /api/chat`），`AI_REQUIRE_SIGNED_HEADERS=false` 且 `req.user.clientId` 已设以便 `next()`。`it()` 标题须包含下表 ID。
+对应 **A6 / P2-3**：`backend/src/security/ai-guard.js` 中间件内带前缀 `[ai-guard-debug]` 的调试输出（字段含 `requestId` / `route` / `clientId` / `hasUser` / `forceSig`）仅在 `AI_GUARD_DEBUG=true` 时经 `console.debug` 输出；**默认**（未设或 `false`）捕获 `console.log` / `console.debug` / `console.info` 时，零条消息包含子串 `[ai-guard-debug]`。测试通过 stub `console.*` + 直接调用 `createAiGuard(...).middleware`（参考 `ai-guard-cache.test.js` 的 `mockHttp`），命中 AI 路由（如 `POST /api/chat`），`AI_REQUIRE_SIGNED_HEADERS=false` 且 `req.user.clientId` 已设以便 `next()`。`it()` 标题须包含下表 ID。
+
+**与 S2 分界**：本表只锁 `[ai-guard-debug]` 前缀通道；模块加载标记、SQL 审计成功、换票验签失败等**常开** `console.log` 噪音属 **S2**（§2.32），不得用本表 PASS/FAIL 替代。
 
 | ID | 用例标题 | 场景描述 | 预期结果 |
 | :--- | :--- | :--- | :--- |
-| UT-GUARD-DEBUG-01 | 生产默认：无 `[ai-guard-debug]` 输出 | 前置：`NODE_ENV=production`；未设置任何显式开启 Guard 调试的开关（若实现使用 `AI_GUARD_DEBUG` 等，则保持未设或 `false`）；stub `console.log`/`console.debug`/`console.info`；`createAiGuard` 后对 `POST /api/chat` 走一次 middleware（合法 `clientId`，可 `next()`）。 | 1. middleware 调用 `next()`（不因关日志而拒请求）；<br>2. 上述三个 console 方法的全部参数拼接串中，**零次**出现子串 `[ai-guard-debug]`；<br>3. 请求仍可正常进入后续 handler（本用例不断言业务响应体）。 |
-| UT-GUARD-DEBUG-02 | 显式开启调试：允许一条 `[ai-guard-debug]` | 前置：按实现约定开启调试（例如 `AI_GUARD_DEBUG=true`，或文档约定的非生产 + debug 级别）；同样 stub console；对 `POST /api/chat` 走 middleware，请求头带 `x-request-id: req-debug-1`。 | 1. `console.log` 或 `console.debug`（不得用默认生产 info 通道刷屏）**至少一次**参数含 `[ai-guard-debug]`；<br>2. 该条须同时能观察到 `route` 与 chat 路由标识（如 `chat` / `/api/chat` 的 routeKey）以及 `requestId`/`req-debug-1` 相关字段；<br>3. middleware 仍 `next()`，行为与关日志时一致。 |
-| UT-GUARD-DEBUG-03 | 调试开启时正文不含签名/Token 原文 | 前置：调试已开启（同 UT-GUARD-DEBUG-02）；`req.header` 可返回非空的 `x-client-token`、`x-signature`、`authorization`（或 `Authorization`）伪造敏感值（如 `secret-token-value`、`sig-leak-probe`、`Bearer leak-jwt`）；走 `POST /api/chat` middleware。 | 1. 所有含 `[ai-guard-debug]` 的 console 调用参数拼接后，**均不包含**上述敏感原文子串（`secret-token-value` / `sig-leak-probe` / `leak-jwt` / 完整 `Bearer ...`）；<br>2. 允许出现布尔或枚举型元数据（如 `hasUser`、`forceSig`），但禁止把签名头或 client token 原文写入日志。 |
+| UT-GUARD-DEBUG-01 | 生产默认：无 `[ai-guard-debug]` 输出 | 前置：`NODE_ENV=production`；`AI_GUARD_DEBUG` 未设或 `false`；stub `console.log`/`console.debug`/`console.info`；`createAiGuard` 后对 `POST /api/chat` 走一次 middleware（合法 `clientId`，可 `next()`）。 | 1. middleware 调用 `next()`（不因关日志而拒请求）；<br>2. 上述三个 console 方法的全部参数拼接串中，**零次**出现子串 `[ai-guard-debug]`；<br>3. 请求仍可正常进入后续 handler（本用例不断言业务响应体）。 |
+| UT-GUARD-DEBUG-02 | 显式开启调试：允许一条 `[ai-guard-debug]` | 前置：`AI_GUARD_DEBUG=true`；同样 stub console；对 `POST /api/chat` 走 middleware，请求头带 `x-request-id: req-debug-1`。 | 1. **`console.debug`**（不得用默认生产 `console.log`/`info` 通道刷屏）**至少一次**参数含 `[ai-guard-debug]`；<br>2. 该条须同时能观察到 `route` 与 chat 路由标识（如 `chat` / `/api/chat` 的 routeKey）以及 `requestId`/`req-debug-1` 相关字段；<br>3. middleware 仍 `next()`，行为与关日志时一致。 |
+| UT-GUARD-DEBUG-03 | 调试开启时正文不含签名/Token 原文 | 前置：`AI_GUARD_DEBUG=true`（同 UT-GUARD-DEBUG-02）；`req.header` 可返回非空的 `x-client-token`、`x-signature`、`authorization`（或 `Authorization`）伪造敏感值（如 `secret-token-value`、`sig-leak-probe`、`Bearer leak-jwt`）；走 `POST /api/chat` middleware。 | 1. 所有含 `[ai-guard-debug]` 的 console 调用参数拼接后，**均不包含**上述敏感原文子串（`secret-token-value` / `sig-leak-probe` / `leak-jwt` / 完整 `Bearer ...`）；<br>2. 允许出现布尔或枚举型元数据（如 `hasUser`、`forceSig`），但禁止把签名头或 client token 原文写入日志。 |
 
 ### 2.10 `cached_answer` 命中不计配额 (`backend/src/tests/ai-guard-quota.test.js` / handler 契约)
 
@@ -597,6 +600,43 @@ C22 合入后 problems 关键字召回主路径改为 FTS（失败回退 LIKE）
 | UT-TOKEN-ISO-07 | 不做：登录签发路径 claims 保持不变 | 前置：只读或调用登录签发逻辑（`POST /api/auth/login` 成功路径的 `jwt.sign` 参数，或对 active 用户跑一次 login）；**不**修改 login 代码。 | 1. 登录 JWT payload 仍含 `id`、`username`、`role`、`permissions`、`clientId`；<br>2. 登录票**可以**在 `role === 'admin'` 时通过 `requireAdmin`（管理员真源仍是登录路径）；<br>3. 本用例 FAIL 条件**不包括**「必须改 login claims」；证明 S1 **不做**改用户登录签发路径。 |
 | UT-TOKEN-ISO-08 | 不做：不要求改签名开关默认值 | 前置：只读 `ai-guard` 中 `requireSignedHeaders` 默认解析；换票用例运行时**不**强制把 `AI_REQUIRE_SIGNED_HEADERS` 设为代码默认 `true`。 | 1. 代码默认仍回退 `'false'`（与 §2.19 / SEC-GUARD-09 一致）；<br>2. 本表 PASS 不依赖「默认强制验签」；<br>3. 证明 S1 **不做**改 `AI_REQUIRE_SIGNED_HEADERS` 默认值。 |
 | UT-TOKEN-ISO-09 | residual：不要求客户端凭证轮换 / 前端停换票 | 前置：只读审查本小节断言与 backlog residual。 | 1. 本表**不**断言凭证轮换 API、密钥世代或前端删除 `fetchAiSessionToken`；<br>2. 允许前端在无用户 Bearer 时仍调用 `/api/auth/token`（与 B33 / S7 分界）；<br>3. residual 项另条，本用例不得以「必须轮换/必须停换票」为 FAIL。 |
+
+### 2.32 S2 Guard 非 debug 路径去掉常开 `console.log`（`backend/src/tests/ai-guard-noise.test.js` → `ai-guard.js`）
+
+对应 **S2**（`docs/backlog.md` §S2）：清除 `backend/src/security/ai-guard.js` 在**非** `AI_GUARD_DEBUG` 路径上的常开 `console.log` 噪音。回归点为现状无条件输出，例如：
+
+- 模块顶层：`console.log('AI_GUARD_MODULE_LOADED_VERSION_001')`
+- SQL 审计成功：`console.log('[ai-guard] SQL audit success for requestId:', …)`
+- 换票验签失败：`console.log('[ai-guard] Body hash mismatch:', {…})`、`console.log('[ai-guard] Invalid signature. Expected base:', signatureBase)`
+
+**做**：上述路径在默认环境（`AI_GUARD_DEBUG` 未设或非 `'true'`）下**不得**再走 `console.log` / `console.info`；若实现保留诊断信息，仅允许在 `AI_GUARD_DEBUG=true` 时经既有 debug 通道输出（优先 `console.debug`，可带 `[ai-guard-debug]` 或等价受控前缀）。单测 stub `console.log`/`console.info`（建议同时 stub `console.debug` 以便对照），断言默认环境下目标前缀/文案零出现。
+
+**不做**：改 `appendAudit` 的 NDJSON / SQL `INSERT` 落库逻辑、字段或异步语义；引入新的日志平台 / 聚合服务 / 第三方 sink。
+
+**residual**：**A6**（§2.9 `UT-GUARD-DEBUG-*`）已覆盖中间件 `[ai-guard-debug]` 前缀通道；本表只收常开噪音，不得把 A6 的 PASS 判据并入本表，也不得因本表而要求删除或改写 A6 契约。
+
+**协议 / 时序**（下一阶段 `it()` 须对齐）：
+
+1. **默认环境定义**：删除或显式设 `AI_GUARD_DEBUG` 为非 `'true'`（大小写不敏感；`'false'` / 空 / 未设均属默认）；`NODE_ENV` 可为 `production` 或测试默认，但**不得**靠 `NODE_ENV` 单独放行常开 `console.log`。
+2. **stub 范围**：至少记录 `console.log` 与 `console.info` 的全部调用参数（`util.format` 或 `String` 拼接后比对）；本表默认路径 FAIL 条件是这些通道出现下列任一子串：`AI_GUARD_MODULE_LOADED_VERSION_001`、`[ai-guard] SQL audit success`、`[ai-guard] Body hash mismatch`、`[ai-guard] Invalid signature. Expected base`。
+3. **模块加载探针**：在 stub 已安装后，清除 `require.cache` 中 `ai-guard.js` 条目并重新 `import`/`require`（或等价动态加载），使顶层副作用再次执行；断言加载本身不抛错。
+4. **SQL 审计成功探针**：向 `createAiGuard({ dbPool })` 注入可成功 `run(INSERT…)` 的 fake pool；触发一次会调用 `appendAudit` 的路径（如 middleware 拒答/`finalize`/`reject` 写出审计）；等待 SQL 异步回调 settle 后再读 stub。
+5. **换票验签失败探针**：白名单 `Origin`；credentials 含 `web:change_me`；调用 `exchangeToken`：A) `bodyHash` 与 `sha256Hex(JSON.stringify({ clientId, ts, nonce }))` 不一致 → HTTP **401**，`message === 'Body hash mismatch'`；B) `bodyHash` 正确但 `signature` 篡改 → HTTP **401**，`message === 'Invalid signature'`。业务拒答契约不变；仅禁止对 `console.log`/`info` 倾倒 `actual`/`provided`/`constructedBody`/`signatureBase`。
+6. **debug 开启对照（可选但推荐）**：`AI_GUARD_DEBUG=true` 时，允许上述诊断改走 `console.debug`（或带受控前缀）；**仍禁止**在 `console.log`/`info` 常开刷屏。响应 JSON 不得泄露 `JWT_SECRET` / client secret / 完整 `signatureBase`（与 §3.20 `SEC-TOKEN-ISO-02` 合取）。
+7. **错误通道**：`console.error` 用于审计写失败等（如 `[ai-guard] SQL audit failed`、`append audit failed`）**不在**本项删除范围；本表不得以「error 通道也必须静默」为 FAIL。
+
+**测法**：优先 `backend/src/tests/ai-guard-noise.test.js`（可复用 `ai-guard-debug.test.js` / `ai-guard-cache.test.js` 的 env 隔离与 `mockHttp`）；直接调用 `createAiGuard(...).exchangeToken` / `appendAudit` 触发路径，禁止连真实 Redis/外网。`it()` 标题须包含下表 ID。
+
+| ID | 用例标题 | 场景描述 | 预期结果 |
+| :--- | :--- | :--- | :--- |
+| UT-GUARD-NOISE-01 | 默认：模块加载无 `AI_GUARD_MODULE_LOADED_*` 常开日志 | 前置：`AI_GUARD_DEBUG` 未设或 `false`；先 stub `console.log`/`info`；清 `require.cache` 后重新加载 `backend/src/security/ai-guard.js`。 | 1. 模块加载成功（可导出 `createAiGuard`）；<br>2. `console.log`/`info` 全部参数拼接串中**零次**出现 `AI_GUARD_MODULE_LOADED_VERSION_001`（及同前缀 `AI_GUARD_MODULE_LOADED_`）；<br>3. 证明模块加载标记不再常开刷屏。 |
+| UT-GUARD-NOISE-02 | 默认：SQL 审计成功不打 `console.log`/`info` | 前置：默认 `AI_GUARD_DEBUG`；注入 `dbPool.withConnection` 使 `INSERT INTO ai_audit_logs` 成功；stub `console.log`/`info`；触发一次成功 `appendAudit`（如 `finalize`/`reject` 写出含 `requestId: 'noise-sql-1'` 的审计）。 | 1. SQL `run`/`INSERT` **恰好**发生（或 fake 记录到一次成功写入），证明落库未被关掉；<br>2. `console.log`/`info` 拼接串**零次**含 `[ai-guard] SQL audit success` 与 `noise-sql-1` 作为该成功日志载荷；<br>3. 等待异步审计 microtask/Promise 完成后再断言（避免假阴性）。 |
+| UT-GUARD-NOISE-03 | 默认：换票 bodyHash 不匹配 → 401 且无常开日志 | 前置：默认 `AI_GUARD_DEBUG`；白名单 Origin；credentials `web:change_me`；合法 `ts`/`nonce`，但 `bodyHash` 故意错误（如 64 个 `0`）；stub `console.log`/`info`；调用 `exchangeToken`。 | 1. HTTP **401**，JSON `{ code: 401, message: 'Body hash mismatch' }`（业务契约不变）；<br>2. `console.log`/`info` **零次**含 `[ai-guard] Body hash mismatch`，亦不得倾倒 `actual`/`provided`/`constructedBody` 哈希对照对象；<br>3. **不**签发 `data.token`。 |
+| UT-GUARD-NOISE-04 | 默认：换票坏签名 → 401 且无 `Expected base` 常开日志 | 前置：默认 `AI_GUARD_DEBUG`；Origin/凭证合法；`bodyHash` 与 `{ clientId, ts, nonce }` 一致，但 `signature` 为不匹配固定串（如 `deadbeef`）；stub `console.log`/`info`；调用 `exchangeToken`。 | 1. HTTP **401**，JSON `{ code: 401, message: 'Invalid signature' }`；<br>2. `console.log`/`info` **零次**含 `[ai-guard] Invalid signature. Expected base` 或完整 `signatureBase`（形如 `${ts}.${nonce}.POST./api/auth/token.${bodyHash}`）；<br>3. **不**签发 token；与 UT-GUARD-NOISE-03 合取覆盖「换票验签失败」两条常开日志。 |
+| UT-GUARD-NOISE-05 | `AI_GUARD_DEBUG=true`：诊断仅走 debug 通道 | 前置：`AI_GUARD_DEBUG=true`；stub `console.log`/`info`/`debug`；分别触发 UT-GUARD-NOISE-01～04 同类动作（重载模块、SQL 成功审计、换票 bodyHash/签名失败）中至少 **SQL 成功**与 **换票坏签名** 两条。 | 1. `console.log`/`info` 仍**零次**出现 § 协议第 2 点所列常开噪音子串（不得借 debug 开关把噪音放回 info 通道）；<br>2. 若实现保留诊断，则仅出现在 `console.debug`（可含 `[ai-guard-debug]` 或受控前缀）；<br>3. 换票失败 HTTP 仍为 **401** 且文案与 UT-GUARD-NOISE-03/04 一致。 |
+| UT-GUARD-NOISE-06 | 不做：审计落库逻辑保持可写入 | 前置：默认 `AI_GUARD_DEBUG`；独立 `AI_AUDIT_FILE_PATH`；可选注入成功 `dbPool`；middleware 准入后 `finalize` 或 `reject` 写一条审计。 | 1. NDJSON 文件新增一行合法 JSON，含本次 `requestId`/`reason`（或 SQL 表多一行）；<br>2. 本用例 **不**要求新增日志平台字段或改 INSERT 列集；<br>3. 证明 S2 **不做**改审计落库逻辑——只静默成功路径的 `console.log`。 |
+| UT-GUARD-NOISE-07 | 不做：不要求扩展新日志平台 | 前置：只读本小节断言与 backlog S2 **不做**列表；扫描本表预期结果关键字。 | 1. PASS 判据仅约束 stub `console.*` 与既有 NDJSON/SQL 审计；<br>2. **不得**以「必须接入 ELK/Loki/OpenTelemetry」等为 FAIL；<br>3. 与「不做：扩展新的日志平台」字面一致。 |
+| UT-GUARD-NOISE-08 | residual：不替代 A6 的 `[ai-guard-debug]` 契约 | 前置：只读对照 §2.9 与 backlog S2 residual；可选跑一条 middleware 探针但不把 A6 ID 写入本文件名断言。 | 1. 本表**不**断言「默认必须出现 / 不得出现 `[ai-guard-debug]`」以外的 A6 细节（那是 UT-GUARD-DEBUG-01/02）；<br>2. 本表 PASS **不**依赖删除 `config.debug` / `AI_GUARD_DEBUG` 开关；<br>3. 证明 residual：A6 管前缀通道，S2 只管常开噪音。 |
 
 ---
 
