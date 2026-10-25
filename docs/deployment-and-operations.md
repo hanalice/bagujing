@@ -81,7 +81,8 @@ cp frontend/.env.example frontend/.env.production
 | `OPENAI_CHAT_MODEL` | 否 | 回退 `OPENAI_MODEL` | 仅 `/api/chat` 的上游模型；空白则回退 |
 | `OPENAI_GENERATION_MODEL` | 否 | 回退 `OPENAI_MODEL` | 仅 `answer/generate` 触达上游时的模型；空白则回退 |
 | `OPENAI_MODEL` | 否 | `deepseek-chat` | chat 与解析的共用回退，不能覆盖已设置的路由专用变量 |
-| `AI_CLIENT_CREDENTIALS` | **是** | `web:strong_secret_token` | 客户端签名通信凭据，需与前端保持一致 |
+| `AI_REQUIRE_SIGNED_HEADERS` | **是** | `true` | 生产强制 HMAC。PM2 的 `env` 与 `env_production` 已写入 `true`（B32）。代码未设该变量时仍回退 `false`，不要改 `ai-guard.js` 的 `?? 'false'` |
+| `AI_CLIENT_CREDENTIALS` | **是** | `web:strong_secret_token` | 客户端签名通信凭据，需与前端 `VITE_AI_CLIENT_SECRET` 保持一致 |
 | `AI_ALLOWED_ORIGINS` | 否 | `https://your-domain.com:*` | 允许访问 AI 接口的前端 Origin 白名单 |
 | `JWT_SECRET` | 否 | 随机强字符串 | 用户身份认证 Token 密钥（生产强烈建议修改） |
 | `ENABLE_SQLITE` | 否 | `true` | 是否启用 SQLite 本地数据库 |
