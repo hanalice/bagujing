@@ -125,7 +125,7 @@
 1. **换票 JWT（匿名 / 无用户 Bearer）**：`fetchAiSessionToken` / `ensureAiSessionToken` 对 `POST /api/auth/token` 换取短时 AI 会话票；签名基串用于换票本身，不是业务 chat/generate 的六头注入。
 2. **HMAC 六头（B33 受保护路径）**：`buildAiAuthHeaders` 产出 `X-Client-Id` / `X-Client-Token` / `X-Ts` / `X-Nonce` / `X-Body-Sha256` / `X-Signature`；仅当 `isAiProtectedPath` 判定为 `POST /api/chat` 或 `POST /api/problems/:id/answer/generate` 时，由 `request.ts` 注入。算法：`bodyHash = sha256Hex(bodyText)`，基串 `` `${ts}.${nonce}.${METHOD}.${PATH}.${bodyHash}` ``，`HMAC-SHA256` → `X-Signature`。
 
-> 说明：AI 路由仍优先校验 `Authorization: Bearer <token>`（登录票或换票票）。仅当 `AI_REQUIRE_SIGNED_HEADERS=true`（验签开关打开）时，Guard 才对已登录请求强制 HMAC，形成「身份 + 签名」双重验证；默认关闭时，有会话可无 HMAC 头进入后续限流/业务（具体 200/SSE 仍依赖 Key/权限）。生产是否打开开关属 **B32**，本白皮书不改代码默认值。
+> 说明：AI 路由仍优先校验 `Authorization: Bearer <token>`（登录票或换票票）。仅当 `AI_REQUIRE_SIGNED_HEADERS=true`（验签开关打开）时，Guard 才对已登录请求强制 HMAC，形成「身份 + 签名」双重验证；代码未设置该变量时仍回退 `false`，有会话可无 HMAC 头进入后续限流/业务（具体 200/SSE 仍依赖 Key/权限）。生产 PM2（`ecosystem.config.example.cjs` 的 `env` 与 `env_production`）将该变量设为 `true`（**B32**），本白皮书不改代码默认值。
 
 ### 5.4 回答缓存（精确哈希 vs SQLite，二选一）
 

@@ -34,13 +34,17 @@ module.exports = {
             out_file: "../logs/backend-out.log",
             error_file: "../logs/backend-error.log",
 
+            // B32：生产进程强制验签。不改 ai-guard.js 的 ?? 'false'。
+            // dotenv 默认不覆盖已有变量，因此这里的 true 优先于 .env 里的缺省。
             env: {
                 NODE_ENV: "development",
                 DOTENV_CONFIG_PATH: ".env",
+                AI_REQUIRE_SIGNED_HEADERS: "true",
             },
             env_production: {
                 NODE_ENV: "production",
                 DOTENV_CONFIG_PATH: ".env.production",
+                AI_REQUIRE_SIGNED_HEADERS: "true",
             }
         }
     ]

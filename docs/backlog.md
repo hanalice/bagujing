@@ -56,7 +56,7 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | B22 | feat | P0-7 | auto | done | 助教 system 不再要求仅 HTML 输出 |
 | B3  | fix | P0-5 | manual | split | 已拆为 B31 / B33；生产开签名仍为 B32 |
 | B31 | fix | P0-5 | auto | done | 签名开关打开时，有会话也验签 |
-| B32 | fix | P0-5 | manual | todo | 生产打开签名开关（运维，禁止改代码默认值） |
+| B32 | fix | P0-5 | manual | done | 生产打开签名开关（运维，禁止改代码默认值） |
 | B33 | fix | P0-5 | auto | done | 登录态的 chat 与 generate 补齐 HMAC 签名头 |
 | B4  | fix | P2-1 | auto | done | CORS `allowedHeaders` 补 `Authorization` |
 | B5  | feat | P1-7 | manual | split | 已拆为 B51 / B52 |
@@ -301,3 +301,4 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | 2026-10-25 | S6 完成：助教助手气泡 Markdown + DOMPurify，用户气泡纯文本 |
 | 2026-10-25 | S7 完成：换票 fetch URL 与签名 path 对齐为 `/api/auth/token` |
 | 2026-10-25 | S8 完成：对齐 security-ai-guard.md 与签名默认/会话验签/前端 env 名 |
+| 2026-10-25 | B32 完成：生产 PM2 将 AI_REQUIRE_SIGNED_HEADERS 设为 true，代码默认仍为 false |
