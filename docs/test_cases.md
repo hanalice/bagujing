@@ -20,9 +20,10 @@
 - **机调换票 JWT 与登录票权限面隔离 (S1)**：`POST /api/auth/token`（`aiGuard.exchangeToken`）签发的短时票与 `POST /api/auth/login` 用户票权限面隔离；换票 JWT **不得**通过 `requireAdmin`；claims 仅保留 AI 调用所需声明（`op=ai_access`、AI 路由权限名等）。单测解码 payload；集成覆盖管理面 403（§2.31 / §3.20）。**不做**：改登录签发路径；改 `AI_REQUIRE_SIGNED_HEADERS` 默认值；改 Nginx / 部署。**residual**：客户端凭证轮换与前端是否继续走换票另条。
 - **Guard 非 debug 路径去掉常开 console.log (S2)**：`backend/src/security/ai-guard.js` 在未开 `AI_GUARD_DEBUG` 时，禁止模块加载标记、SQL 审计成功、换票验签失败等常开 `console.log` / `console.info`；需要时仅走既有 debug 开关（`console.debug` + `[ai-guard-debug]` 属 **A6** / §2.9）。单测 stub `console.log`/`info` 断言上述前缀/文案零出现（§2.32）。**不做**：改审计落库逻辑；扩展新日志平台。**residual**：A6 已覆盖 `[ai-guard-debug]` 前缀通道，本项只收常开噪音。
 - **换票 fetch URL 与签名 path 对齐 (S7)**：`frontend/src/utils/ai-auth.ts` 的 `fetchAiSessionToken`：实际 `fetch` 的 URL pathname 与 HMAC 签名基串中的 path **均为** `/api/auth/token`（与后端 `POST /api/auth/token` 的 Express `req.path` 一致）；`getApiBase()` 在 `VITE_API_BASE_URL` 未设置时回退与 axios 相同（`/api`），避免拼出裸 `/auth/token`。Vitest 锁发出 URL 与签名 path（§4.8 `UT-FE-TOKEN-URL-*`）。**不做**：改换票 JWT claims / 权限面（S1）；改 AI 路由六头注入（B33）；改后端换票验签算法或路由挂载点。**residual**：机调票权限隔离仍见 S1；登录态/受保护路径 HMAC 六头仍见 B33。
+- **对齐 security-ai-guard 与签名默认/会话验签/前端 env 名 (S8)**：只改公开文档 `docs/security-ai-guard.md`，与当前代码对齐：验签开关 `AI_REQUIRE_SIGNED_HEADERS` 代码默认 `false`；为 `true` 时有登录会话也验签（**B31**）；前端密钥环境变量名为 `VITE_AI_CLIENT_SECRET`；限流/并发有 Redis 已落地（**B51/B52**），配额仍进程内/SQL 未完成；§5.3 不得写成 HMAC 已全面注入。静态读文档锁约见 §2.33 `UT-DOC-GUARD-*`。**不做**：改任何代码或默认值；打开生产签名开关（**B32**）；改 B33/S1/S2 实现范围。**residual**：WAF、自动封禁、成本告警、审计报表仍属未来项；公开文档不写利用步骤。
 - **前端多层级质量保障体系 (Frontend QA Strategy)**：
   - **端到端测试 (Frontend E2E - Playwright)**：覆盖核心用户链路（Main Path / Happy Path），利用 `page.route` 对大模型流式 SSE 接口进行轻量 Mock，保障真实路由鉴权、题目浏览及 AI 交互界面的稳定可用；**C42** 另锁解析面板三字段可见性与无整篇 `v-html`；**S6** 另锁助教助手气泡安全 Markdown（§4.1 `E2E-MAIN-04` / `E2E-CHAT-MD-*`）。
-  - **状态机与单元测试 (Frontend UT/IT - Vitest)**：针对 Pinia Store（`user`、`settings`、`breadcrumb`）、题目解析归一化/渲染辅助及工具函数，快速验证状态迁移、本地持久化与边界容错；**B33** 另锁登录态 `chat` / `answer/generate` 的 HMAC 六头注入（§4.5 `UT-FE-SIG-*`）；**S3** 另锁助教 `POST /api/chat` 请求体 `messages[]` 尾窗与截断（§4.6 `UT-FE-CHAT-HIST-*`）；**S6** 另锁助手气泡 Markdown→DOMPurify 与用户气泡纯文本（§4.7 `UT-FE-CHAT-MD-*`）；**S7** 另锁换票 `fetch` URL 与签名 path 均为 `/api/auth/token`（§4.8 `UT-FE-TOKEN-URL-*`）。
+  - **状态机与单元测试 (Frontend UT/IT - Vitest)**：针对 Pinia Store（`user`、`settings`、`breadcrumb`）、题目解析归一化/渲染辅助及工具函数，快速验证状态迁移、本地持久化与边界容错；**B33** 另锁登录态 `chat` / `answer/generate` 的 HMAC 六头注入（§4.5 `UT-FE-SIG-*`）；**S3** 另锁助教 `POST /api/chat` 请求体 `messages[]` 尾窗与截断（§4.6 `UT-FE-CHAT-HIST-*`）；**S6** 另锁助手气泡 Markdown→DOMPurify 与用户气泡纯文本（§4.7 `UT-FE-CHAT-MD-*`）；**S7** 另锁换票 `fetch` URL 与签名 path 均为 `/api/auth/token`（§4.8 `UT-FE-TOKEN-URL-*`）。**S8** 只锁公开文档 env 名 `VITE_AI_CLIENT_SECRET`（§2.33），本层不新增前端测码。
   - **静态类型与代码质量 (Static Check - vue-tsc & ESLint)**：基于 `vue-tsc` 严格类型推断与 ESLint 规范，在编译期杜绝类型断言失误与样式违规。
 - **登录态 AI 请求 HMAC 头 (B33 / P0-5)**：`AI_REQUIRE_SIGNED_HEADERS=true` 时，已登录用户的 `POST /api/chat` 与 `POST /api/problems/:id/answer/generate` 也须带齐与 `ai-guard.js` 一致的六头；后端有会话也验签见 **B31**（§2.19 / §3.1），生产开开关见 **B32**。
 
@@ -641,13 +642,47 @@ C22 合入后 problems 关键字召回主路径改为 FTS（失败回退 LIKE）
 | UT-GUARD-NOISE-07 | 不做：不要求扩展新日志平台 | 前置：只读本小节断言与 backlog S2 **不做**列表；扫描本表预期结果关键字。 | 1. PASS 判据仅约束 stub `console.*` 与既有 NDJSON/SQL 审计；<br>2. **不得**以「必须接入 ELK/Loki/OpenTelemetry」等为 FAIL；<br>3. 与「不做：扩展新的日志平台」字面一致。 |
 | UT-GUARD-NOISE-08 | residual：不替代 A6 的 `[ai-guard-debug]` 契约 | 前置：只读对照 §2.9 与 backlog S2 residual；可选跑一条 middleware 探针但不把 A6 ID 写入本文件名断言。 | 1. 本表**不**断言「默认必须出现 / 不得出现 `[ai-guard-debug]`」以外的 A6 细节（那是 UT-GUARD-DEBUG-01/02）；<br>2. 本表 PASS **不**依赖删除 `config.debug` / `AI_GUARD_DEBUG` 开关；<br>3. 证明 residual：A6 管前缀通道，S2 只管常开噪音。 |
 
+### 2.33 S8 对齐 `security-ai-guard.md` 与签名默认 / 会话验签 / 前端 env 名（`backend/src/tests/security-ai-guard-doc.test.js` → 只读 `docs/security-ai-guard.md`）
+
+对应 **S8**（`docs/backlog.md` §S8；由 S5 split）。回归点：公开白皮书仍写「仅无登录会话的机调才验签」、原则层无条件「默认拒绝」、§5.3「对受保护路径自动注入签名头」+「身份 + 签名双重验证」、运维节错误前端变量 `VITE_AI_CLIENT_TOKEN`、清单把 Redis 限流/并发与配额捆成未完成「完全态」。这些与代码不一致：`requireSignedHeaders = String(process.env.AI_REQUIRE_SIGNED_HEADERS ?? 'false').toLowerCase() === 'true'`（`backend/src/security/ai-guard.js`）；`forceSignatureCheck = config.requireSignedHeaders`（**与 `req.user` 无关**，**B31**）；前端密钥读 `import.meta.env.VITE_AI_CLIENT_SECRET`（`frontend/src/utils/ai-auth.ts`）；有 Redis 时限流/并发已走 INCR（**B51/B52**）；配额仍进程内 Map / SQLite `dbPool`，未迁 Redis。
+
+**做**（只改文档，下一阶段 `it()` 对 Markdown **全文**做子串/小节断言；禁止改 `ai-guard.js` / 前端 / 默认 env）：
+
+1. 写明验签由 **`AI_REQUIRE_SIGNED_HEADERS`** 控制；**代码默认 `false`**（未设置或非 `'true'` 不强制 HMAC）；为 **`true`** 时**有登录会话也验签**（对齐 **B31** / §2.19 `UT-GUARD-SIG-02`：缺头 HTTP **401**，JSON `{ code: 401, message: 'Missing AI auth headers' }`，审计 `reason === 'missing_headers'`）。
+2. 「默认拒绝 / fail closed」「双重验证」等表述必须**限定为开关打开后**的行为，不得暗示仓库默认已强制签名。
+3. 前端环境变量名与代码一致：**`VITE_AI_CLIENT_SECRET`**（可并列 `VITE_AI_CLIENT_ID`）；**去掉**错误名 **`VITE_AI_CLIENT_TOKEN`**。
+4. 清单：限流/并发在**有 Redis** 时已落地（点名 **B51/B52** 或写「已完成 / 有 Redis 时 INCR」）；**配额**仍进程内 / SQL 的部分**保留未完成**（不得把配额标成 Redis 已完成）。
+5. **§5.3**：如实写现状——匿名/无用户 Bearer 路径仍以 **`/api/auth/token` 换票 JWT**（`fetchAiSessionToken` / `ensureAiSessionToken`）为主；**`buildAiAuthHeaders` 产出 HMAC 六头**仅用于 **B33** 受保护路径（`POST /api/chat`、`POST /api/problems/:id/answer/generate`，由 `isAiProtectedPath` 判定）；**不得**写成「前端所有请求 / 全部 AI 路径已全面注入 HMAC」。
+
+**不做**：改任何代码或 `?? 'false'` 默认值；打开生产签名开关（**B32**）；改 **B33 / S1 / S2** 的实现范围或本文件对应运行时表。
+
+**residual**：清单中 WAF、自动封禁、成本告警、审计报表等未勾选项仍属未来项，本项不拆 auto。公开文档**不写**可复现的伪造签名 / 重放构造步骤（命令 + payload）。浏览器包仍可见 `VITE_AI_CLIENT_SECRET` 属 **B33 residual**，本表不要求密钥下沉。
+
+**测法**：`node:test`；建议文件 `backend/src/tests/security-ai-guard-doc.test.js`。`fs.readFileSync` 仓库根 `docs/security-ai-guard.md`（UTF-8）；按 ATX 标题切出 `## 5.` / `### 5.1` / `### 5.3` / `## 7.` / `## 8.` / 文末清单。对照只读：`ai-guard.js` 中 `AI_REQUIRE_SIGNED_HEADERS ?? 'false'`；`ai-auth.ts` 中 `VITE_AI_CLIENT_SECRET` 且**无** `VITE_AI_CLIENT_TOKEN` 赋值。禁止连 Redis / 发 HTTP / 调用 `createAiGuard().middleware` 作为本表 PASS（运行时验签已由 §2.19 / §3.1 覆盖）。`it()` 标题须包含下表 ID。
+
+| ID | 用例标题 | 场景描述 | 预期结果 |
+| :--- | :--- | :--- | :--- |
+| UT-DOC-GUARD-01 | 白皮书存在且含验签开关名与默认 false | 前置：读取 `docs/security-ai-guard.md` 全文；同时只读 `backend/src/security/ai-guard.js` 中 `requireSignedHeaders` 赋值行。 | 1. 文档出现精确子串 `AI_REQUIRE_SIGNED_HEADERS`；<br>2. 同一段落或相邻句写明代码默认 **`false`** / 未设置不强制验签（须能匹配 `默认` + `false`，或 `?? 'false'` 字面）；<br>3. 代码行仍为 `String(process.env.AI_REQUIRE_SIGNED_HEADERS ?? 'false').toLowerCase() === 'true'`（本行只对照，**不得**要求改代码）。 |
+| UT-DOC-GUARD-02 | 开关 true 时写明有登录会话也验签（B31） | 前置：同 UT-DOC-GUARD-01；检索含 `AI_REQUIRE_SIGNED_HEADERS` 与「会话 / 登录 / JWT / `req.user`」的句子。 | 1. 文档明确：开关为 `true` 时**有登录会话也必须验签**（不得只写「机调验签」而漏会话）；<br>2. 须点名 **B31** 或写等价「`forceSignatureCheck` 与是否有 `req.user` 无关」；<br>3. 可交叉引用缺头 → HTTP **401** + `Missing AI auth headers`（与 UT-GUARD-SIG-02 一致），但本表不发真实请求。 |
+| UT-DOC-GUARD-03 | 禁止「仅无会话才验签」过时措辞 | 前置：全文大小写不敏感扫描；重点 §5.1「解析与校验签名头」句。 | 1. **零次**出现「仅无会话」「仅无登录会话」「无登录会话的机调」才验签 / 才校验签名头；<br>2. §5.1 **不得**再把验签职责写成只服务「无登录会话的机调」（旧句「解析与校验签名头（无登录会话的机调）」必须改掉或加上开关限定）；<br>3. 允许保留「机调换票 / `exchangeToken`」作为**另一条**路径说明，但不得用它否定 B31。 |
+| UT-DOC-GUARD-04 | 「默认拒绝 / fail closed」限定为开关打开后 | 前置：定位设计原则中「默认拒绝」/`fail closed` 句，以及 §8 验收第 1 条「未携带签名头…会被拒绝（401）」。 | 1. 上述句子必须出现限定语：`AI_REQUIRE_SIGNED_HEADERS=true` / 「开关打开后」/「强制验签开启时」之一；<br>2. **FAIL**：原则或 §8 在无开关限定时写「签名缺失均直接拒绝」并暗示仓库默认已强制 HMAC；<br>3. 与 §2.19 UT-GUARD-SIG-01 / SEC-GUARD-08 一致：未设开关时有会话无签名头仍可 `next()`，文档不得与之相反。 |
+| UT-DOC-GUARD-05 | 「双重验证」限定为开关打开后 | 前置：定位 §5.3 及全文「双重验证」「身份 + 签名」句。 | 1. 若保留「身份 + 签名」表述，必须写明仅当 `AI_REQUIRE_SIGNED_HEADERS=true`（或「验签开关打开」）时 Guard 才对已登录请求强制 HMAC；<br>2. **不得**写「AI 路由优先校验 Bearer，并结合 ai-guard 实现双重验证」且无开关限定（旧 §5.3 blockquote）；<br>3. 默认关闭时文档应承认：有会话可无 HMAC 头进入后续限流/业务（具体 200/SSE 仍依赖 Key/权限）。 |
+| UT-DOC-GUARD-06 | 前端 env 名为 `VITE_AI_CLIENT_SECRET` | 前置：读取文档运维/配置节；只读 `frontend/src/utils/ai-auth.ts` 源码字符串。 | 1. 文档出现精确子串 `VITE_AI_CLIENT_SECRET`（作为前端客户端密钥变量）；<br>2. 全文**零次**出现 `VITE_AI_CLIENT_TOKEN`（旧错误名）；<br>3. `ai-auth.ts` 仍从 `import.meta.env.VITE_AI_CLIENT_SECRET` 取值，且源码**无** `VITE_AI_CLIENT_TOKEN` 标识符（对照代码，不改代码）。 |
+| UT-DOC-GUARD-07 | 清单：有 Redis 时限流/并发已完成（B51/B52） | 前置：切出文末 checklist（`- [x]` / `- [ ]` 行）；对照 §2.20 / §2.21。 | 1. 限流与并发在「有 Redis / 注入 redis 客户端」条件下标为**已完成**或注明已落地（可拆成两条，或改写原「从内存计数迁移到 Redis 限流与配额（完全态）」）；<br>2. 须能看到 **B51**/**B52** 或「INCR + TTL / `rl:` / `cc:`」类已实现说明；<br>3. **不得**仍用一条未勾选「完全态」把已落地的 Redis 限流+并发整段标成未做。 |
+| UT-DOC-GUARD-08 | 清单：配额仍进程内/SQL，未标 Redis 完成 | 前置：同 UT-DOC-GUARD-07；检索「配额 / quota / Token 上限」。 | 1. 配额迁移 Redis（或「配额完全态」）保持**未完成**（`- [ ]` 或正文「仍进程内 / SQLite / `dbPool`」）；<br>2. **不得**把日/月 Token 配额写成已走 Redis INCR；<br>3. 与 B51/B52 **分界**：限流键 `rl:*`、并发键 `cc:` 已完成；配额不在这两项完成语义内。 |
+| UT-DOC-GUARD-09 | §5.3：换票 JWT 与 HMAC 六头（B33）分写，禁止「全面注入」 | 前置：切出 `### 5.3` 至下一同级/上级标题；对照 `frontend/src/utils/ai-auth.ts` 的 `buildAiAuthHeaders` / `ensureAiSessionToken` 与 `request.ts` 的 `isAiProtectedPath`。 | 1. §5.3 **点名** `buildAiAuthHeaders`（HMAC 六头：`X-Client-Id` / `X-Client-Token` / `X-Ts` / `X-Nonce` / `X-Body-Sha256` / `X-Signature`）且限定受保护路径 `POST /api/chat` 与 `POST /api/problems/:id/answer/generate`，并指向 **B33**；<br>2. 另写无用户 Bearer 时以 `POST /api/auth/token` 换票 JWT（`fetchAiSessionToken` / `ensureAiSessionToken`）为主，**不得**把换票说成 `buildAiAuthHeaders` 的唯一职责，也不得把 HMAC 说成所有前端请求的默认行为；<br>3. **零次**出现无范围限定的「对受保护路径自动注入签名头」且暗示已全面覆盖所有路由（旧实现方式第 4 点必须加上路径/开关/B33 范围）。 |
+| UT-DOC-GUARD-10 | residual：WAF / 封禁 / 告警 / 报表仍未完成 | 前置：只读文末清单与 backlog S8 residual。 | 1. 下列能力仍为未勾选或正文标明未来项：**WAF**、**自动封禁**、**成本告警**、**审计**可视化/报表（子串匹配即可）；<br>2. 本表 PASS **不**要求拆出新的 auto 队列项或实现这些能力；<br>3. 不得因本项把上述四项改成 `[x]`。 |
+| UT-DOC-GUARD-11 | residual：公开文档不写利用步骤 | 前置：扫描 `docs/security-ai-guard.md` 代码块与有序列表；**禁止**在测码或文档中补充可复现攻击配方。 | 1. 文档**不得**给出可直接复制的伪造 HMAC / 重放构造步骤（例如完整 `openssl`/`node -e` 命令 + 六头 payload + 目标 URL 的可打通组合）；<br>2. 允许保留算法名 `HMAC-SHA256`、基串模板 `` `${ts}.${nonce}.${METHOD}.${PATH}.${bodyHash}` ``、头名列表（与白皮书设计说明一致）；<br>3. 本行 FAIL 条件不包括「未教如何绕过验签」——缺利用步骤是 PASS。 |
+| UT-DOC-GUARD-12 | 不做：本表不要求改代码默认或打开 B32 | 前置：只读本小节断言与 backlog S8 **不做**；对照 `ai-guard.js` 默认解析式。 | 1. PASS **不**要求把 `?? 'false'` 改成 `true`，也不要求改 `backend/.env` / Nginx / 部署开关；<br>2. **不**要求改 B33 六头注入、S1 换票 claims、S2 日志通道；<br>3. 与 SEC-GUARD-09 / UT-GUARD-SIG-01 分界：运行时默认已由那些 ID 锁，本表只锁文档与之同向。 |
+| UT-DOC-GUARD-13 | 配置基线节列出验签开关 | 前置：切出 `## 7.`（当前配置基线）至下一 `##`。 | 1. §7 列表出现 `AI_REQUIRE_SIGNED_HEADERS`（与 `AI_GUARD_ENABLED` 并列或紧邻鉴权项）；<br>2. 该条注明默认 `false` 或「未设则不强制验签」；<br>3. **不得**只列 `AI_GUARD_ENABLED` 却让读者以为 HMAC 默认开启。 |
+
 ---
 
 ## 3. 安全防护与集成测试用例 (Security & Integration)
 
 ### 3.1 AI 防护网关安全防御 (`backend/scripts/qa-verify.js`)
 
-对应 **B31 / P0-5** 与既有 HMAC 防御：进程以 `AI_REQUIRE_SIGNED_HEADERS=true` 启动时，请求经 `authenticateToken`（或等价）设置 `req.user` 后进入 Guard，**仍须**完整六元组验签。仅持有合法 `Authorization: Bearer <jwt>` / Cookie 会话、缺少 HMAC 头时，必须在 Guard 层 401 拒绝，**不得**进入 SSE/`answer/generate` 业务 handler，也不得触发上游 LLM。reason 以审计实值为准：缺头 `missing_headers`、坏签 `invalid_signature`、body 不一致 `body_hash_mismatch`、时钟 `invalid_timestamp`、重放 `replay_blocked`、Origin `origin_blocked`（历史别名 `missing_signature` 仅文档对照，断言以实值为准）。**B32 residual**：本表不要求、也不允许把代码/`?? 'false'` 默认改成 `true`。`it()` / 场景标题须包含下表 ID。
+对应 **B31 / P0-5** 与既有 HMAC 防御：进程以 `AI_REQUIRE_SIGNED_HEADERS=true` 启动时，请求经 `authenticateToken`（或等价）设置 `req.user` 后进入 Guard，**仍须**完整六元组验签。仅持有合法 `Authorization: Bearer <jwt>` / Cookie 会话、缺少 HMAC 头时，必须在 Guard 层 401 拒绝，**不得**进入 SSE/`answer/generate` 业务 handler，也不得触发上游 LLM。reason 以审计实值为准：缺头 `missing_headers`、坏签 `invalid_signature`、body 不一致 `body_hash_mismatch`、时钟 `invalid_timestamp`、重放 `replay_blocked`、Origin `origin_blocked`（历史别名 `missing_signature` 仅文档对照，断言以实值为准）。**B32 residual**：本表不要求、也不允许把代码/`?? 'false'` 默认改成 `true`。公开白皮书措辞与默认/会话验签/前端 env 名对齐属 **S8**（§2.33），本表不读、不改 `docs/security-ai-guard.md`。`it()` / 场景标题须包含下表 ID。
 
 | ID | 用例标题 | 场景描述 | 预期结果 |
 | :--- | :--- | :--- | :--- |
@@ -972,7 +1007,7 @@ Prompt 内容来自数据库，不能只依赖客户端 `AI_MAX_INPUT_CHARS` 防
 
 **不做**：改 `AI_REQUIRE_SIGNED_HEADERS` 代码默认值（仍为 `false`，属 **B32**）；改后端验签规则（**B31**）；改 `/api/auth/token` 换票协议或其 JWT claims（**S1**）；把客户端密钥挪到别的存储或做轮换。
 
-**residual**：浏览器包仍可见 `VITE_AI_CLIENT_SECRET`（本项不解决可提取）；生产是否打开开关仍是 **B32**；`docs/security-ai-guard.md` 措辞属 **S5**。
+**residual**：浏览器包仍可见 `VITE_AI_CLIENT_SECRET`（本项不解决可提取）；生产是否打开开关仍是 **B32**；`docs/security-ai-guard.md` 过时措辞（「仅无会话才验签」、错误 env 名 `VITE_AI_CLIENT_TOKEN` 等）属 **S8**（§2.33 `UT-DOC-GUARD-*`），本表不改那份文档。
 
 **协议对照**（与 §2.19 / `ai-guard.js` 一致）：`bodyHash = sha256Hex(bodyText)`；`signatureBase = \`${ts}.${nonce}.${METHOD}.${path}.${bodyHash}\``；`X-Signature = hmacHex(secret, signatureBase)`。测试用同一 secret 重算必须与发出的头逐字相等。
 
