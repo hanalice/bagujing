@@ -7,7 +7,8 @@
 - **后端单元测试 (Backend UT)**：采用 Node.js 原生 `node:test` + `node:assert/strict`，聚焦核心领域逻辑（大模型适配器、配置解析器、参数优先级合并与防御性容错）。
 - **AI 安全防护网关测试 (Security & E2E)**：基于专用自动化套件 `backend/scripts/qa-verify.js`，端到端验证 HMAC 请求签名、时钟防漂移、Nonce 防重放、Origin 跨域白名单及 429 速率限制。
 - **数据库与数据完整性 (Data Integrity)**：验证 SQLite 数据库中初始题库数据、客户端授权表 `ai_clients` 及审计日志 `ai_audit_logs` 的持久化与一致性；**C22** 另覆盖 FTS5 虚表启动重建与查询失败回退 LIKE（§2.23 / §3.12）。
-- **多轮对话窗口 (C31 / P1-1)**：`POST /api/chat` 接收 `messages[]`（`role` + `content`），只取最近 **N=6**（写死）并按条截断到 `AI_MAX_INPUT_CHARS`；当前 `problemId` 题面仍走固定槽；B1 三槽顺序不变（§2.24 / §3.13）。前端是否回传历史属 **S3**，本层不测。
+- **多轮对话窗口 (C31 / P1-1)**：`POST /api/chat` 接收 `messages[]`（`role` + `content`），只取最近 **N=6**（写死）并按条截断到 `AI_MAX_INPUT_CHARS`；当前 `problemId` 题面仍走固定槽；B1 三槽顺序不变（§2.24 / §3.13）。前端回传历史属 **S3**（§4.6 `UT-FE-CHAT-HIST-*` / `E2E-CHAT-HIST-*`），本层不测 `AiAssistant.vue`。
+- **助教前端回传最近 6 轮 (S3)**：`AiAssistant.vue` 调用 `POST /api/chat` 时 body 附带 `messages[]`（每项 `role` + `content`），只回传最近 **N=6**（与 C31 一致）；每条 `content` 按前端已有输入上限截断；**仍**发送当前 `message` 与 `context`（§4.6）。**不做**：改后端裁剪（C31）；改气泡渲染（S6）；滚动摘要。**residual**：后端未识别 `messages` 时行为与现在一致。
 - **解析结构化输出 (C41 / P1-4)**：`POST /api/problems/:id/answer/generate` 在真实生成路径解析模型返回为 JSON `{ summary, keyPoints, nextStep }`（`keyPoints` 为字符串数组）；校验失败 HTTP **502** 且**不**把脏 HTML/原文写入 `details.answer`；后端契约见 §2.25 / §3.14。
 - **解析三字段前端渲染 (C42 / P1-4)**：题目详情「参考答案」面板按冻约字段 `summary` / `keyPoints` / `nextStep` 渲染，**禁止**对整篇模型 HTML/`answer` 字符串使用 `v-html`；旧库 HTML `answer` 走安全降级展示；其它字段 DOMPurify 保持不动（§4.1 `E2E-ANSWER-*` / §4.3 `UT-FE-ANSWER-*`）。
 - **真实 usage 回写审计 (C51 / P1-6)**：`finalize` 若收到上游 `usage.prompt_tokens` **与** `usage.completion_tokens` 则写入审计并标 `token_source=upstream`；否则沿用 `estimateTokensByText` 并标 `token_source=estimate`（§2.26 / §3.15）。**不做**供应商账单对账报表与按用户月结。
@@ -19,7 +20,7 @@
 - **Guard 非 debug 路径去掉常开 console.log (S2)**：`backend/src/security/ai-guard.js` 在未开 `AI_GUARD_DEBUG` 时，禁止模块加载标记、SQL 审计成功、换票验签失败等常开 `console.log` / `console.info`；需要时仅走既有 debug 开关（`console.debug` + `[ai-guard-debug]` 属 **A6** / §2.9）。单测 stub `console.log`/`info` 断言上述前缀/文案零出现（§2.32）。**不做**：改审计落库逻辑；扩展新日志平台。**residual**：A6 已覆盖 `[ai-guard-debug]` 前缀通道，本项只收常开噪音。
 - **前端多层级质量保障体系 (Frontend QA Strategy)**：
   - **端到端测试 (Frontend E2E - Playwright)**：覆盖核心用户链路（Main Path / Happy Path），利用 `page.route` 对大模型流式 SSE 接口进行轻量 Mock，保障真实路由鉴权、题目浏览及 AI 交互界面的稳定可用；**C42** 另锁解析面板三字段可见性与无整篇 `v-html`。
-  - **状态机与单元测试 (Frontend UT/IT - Vitest)**：针对 Pinia Store（`user`、`settings`、`breadcrumb`）、题目解析归一化/渲染辅助及工具函数，快速验证状态迁移、本地持久化与边界容错；**B33** 另锁登录态 `chat` / `answer/generate` 的 HMAC 六头注入（§4.5 `UT-FE-SIG-*`）。
+  - **状态机与单元测试 (Frontend UT/IT - Vitest)**：针对 Pinia Store（`user`、`settings`、`breadcrumb`）、题目解析归一化/渲染辅助及工具函数，快速验证状态迁移、本地持久化与边界容错；**B33** 另锁登录态 `chat` / `answer/generate` 的 HMAC 六头注入（§4.5 `UT-FE-SIG-*`）；**S3** 另锁助教 `POST /api/chat` 请求体 `messages[]` 尾窗与截断（§4.6 `UT-FE-CHAT-HIST-*`）。
   - **静态类型与代码质量 (Static Check - vue-tsc & ESLint)**：基于 `vue-tsc` 严格类型推断与 ESLint 规范，在编译期杜绝类型断言失误与样式违规。
 - **登录态 AI 请求 HMAC 头 (B33 / P0-5)**：`AI_REQUIRE_SIGNED_HEADERS=true` 时，已登录用户的 `POST /api/chat` 与 `POST /api/problems/:id/answer/generate` 也须带齐与 `ai-guard.js` 一致的六头；后端有会话也验签见 **B31**（§2.19 / §3.1），生产开开关见 **B32**。
 
@@ -366,9 +367,9 @@ C22 合入后 problems 关键字召回主路径改为 FTS（失败回退 LIKE）
 
 **做**：`POST /api/chat` 接收 `messages[]`（每项至少 `role` + `content`）；服务端**只取最近 N=6**（写死常量，禁止读环境变量改 N）；每条 `content` 截断到 `AI_MAX_INPUT_CHARS`（与 Guard `maxInputChars` / `sanitizeUserText` 上限一致，默认 1200）；当前请求的 `context.problemId` 题面（RAG 置顶 / 用户问题固定槽）不因历史轮次漂移；发往上游时仍遵守 B1：**system → context(RAG) → … → 当前 user**，用户攻击句只出现在 user 角色内容中。
 
-**不做**：滚动摘要（不得合成 `summary` / 压缩历史气泡）；改前端是否回传历史（属 **S3**）；改气泡渲染（属 **S6**）。
+**不做**：滚动摘要（不得合成 `summary` / 压缩历史气泡）；改前端是否回传历史（属 **S3**，前端契约见 §4.6）；改气泡渲染（属 **S6**）。
 
-**residual**：无 `messages`、空数组、或只含与当前 `message` 等价的最后一句时，上游仍为 B1 三槽（与 C31 合入前一致）。本表测**纯函数/组装器**（窗口裁剪 + 槽位拼装入参），经路由的 SSE 集成见 §3.13。`it()` 标题须包含下表 ID。
+**residual**：无 `messages`、空数组、或只含与当前 `message` 等价的最后一句时，上游仍为 B1 三槽（与 C31 合入前一致）。本表测**纯函数/组装器**（窗口裁剪 + 槽位拼装入参），经路由的 SSE 集成见 §3.13；前端请求快照属 S3，本表禁止断言 `AiAssistant.vue`。`it()` 标题须包含下表 ID。
 
 | ID | 用例标题 | 场景描述 | 预期结果 |
 | :--- | :--- | :--- | :--- |
@@ -766,7 +767,7 @@ Prompt 内容来自数据库，不能只依赖客户端 `AI_MAX_INPUT_CHARS` 防
 
 ### 3.13 C31 多轮 messages 与 chat SSE / B1 分槽集成 (`backend/src/tests/chat-history-integration.test.js`)
 
-对应 **C31 / P1-1** 完成标准：经 `app.handle` 或真实 `/api/chat` handler 走鉴权 → Guard → RAG → 窗口裁剪 → `buildPromptMessages` / 上游 `stream`；stub 捕获发往模型的 messages 数组并产出短 `delta`。须同时锁 SSE 协议与 B1 槽序：**messages[0]=system**，**messages[1]=context(RAG)**，历史（若有）不得插到 system 之前或与 RAG 拼进同一条，**最后一条当前 user** 含本次 `message`；`context.problemId` 题面仍在固定槽。前端回传属 S3，本表可用手工构造的 `messages[]` body，禁止断言 `AiAssistant.vue`。`it()` 标题须包含下表 ID。
+对应 **C31 / P1-1** 完成标准：经 `app.handle` 或真实 `/api/chat` handler 走鉴权 → Guard → RAG → 窗口裁剪 → `buildPromptMessages` / 上游 `stream`；stub 捕获发往模型的 messages 数组并产出短 `delta`。须同时锁 SSE 协议与 B1 槽序：**messages[0]=system**，**messages[1]=context(RAG)**，历史（若有）不得插到 system 之前或与 RAG 拼进同一条，**最后一条当前 user** 含本次 `message`；`context.problemId` 题面仍在固定槽。前端回传属 **S3**（§4.6），本表可用手工构造的 `messages[]` body，禁止断言 `AiAssistant.vue`。`it()` 标题须包含下表 ID。
 
 | ID | 用例标题 | 场景描述 | 预期结果 |
 | :--- | :--- | :--- | :--- |
@@ -899,6 +900,7 @@ Prompt 内容来自数据库，不能只依赖客户端 `AI_MAX_INPUT_CHARS` 防
 | `E2E-MAIN-04` | AI 面试助手流式交互主流程 | 导航至 `/assistant` 并在输入框发送提问 | 利用 Playwright `page.route` 拦截 `/api/chat/stream`，模拟返回 `text/event-stream` 分块数据 | 1. 触发发送后输入框禁用且按钮显示加载状态<br>2. 界面接收流式 Chunk 呈打字机增量渲染<br>3. 完成传输后渲染为安全 Markdown（经 DOMPurify 过滤，无 XSS 隐患） |
 | `E2E-MAIN-05` | 个人设置与模型偏好持久化 | 进入 `/settings` 修改大模型供应商与参数并保存 | 操作 LocalStorage 结合表单提交 | 页面提示保存成功，刷新浏览器后配置项维持更新后的自定义状态 |
 | `E2E-CHAT-01` | chat 早退 type:error 时界面展示原因 | 已登录进入 `/assistant`；用户发送任意非空提问（A5 完成标准：前端能展示原因） | `page.route` 拦截 `POST /api/chat`：status 200，`Content-Type: text/event-stream`，body **仅** `data: {"type":"error","message":"OPENAI_API_KEY is required"}\n\n` 后结束（模拟缺 Key 早退） | 1. 页面错误提示区（`errorText` / 可见错误条）文案等于 `OPENAI_API_KEY is required`；<br>2. 该文案不作为助手正常回复气泡内容；<br>3. 流式加载态结束，可再次发送。 |
+| `E2E-CHAT-HIST-01` | 多轮发送时请求体携带尾窗 messages（S3） | 已登录进入 `/assistant`；先完成至少 1 轮「用户提问 → 助手 delta 结束」；再发送第 2 轮追问（可区分文案，如 `追问-E2E-S3`） | `page.route` 拦截全部 `POST /api/chat`：对每次请求解析 JSON body 并记录；响应均为合法 SSE（`context` → 短 `delta` → `done`） | 1. 第 2 次（及之后）请求 body 同时含非空字符串 `message`（含 `追问-E2E-S3`）、对象 `context`、数组 `messages`；<br>2. `messages.length <= 6`；每项仅依赖 `role`∈{`user`,`assistant`} 与字符串 `content`（允许实现带 `id` 等多余键，但不得缺 `role`/`content`）；<br>3. `messages` 中可见上一轮用户提问与助手回复标记（先旧后新）；本用例**不断言** Markdown/`v-html`（属 S6）。 |
 | `E2E-MODEL-LAYER-01` | 助手页面使用 chat 模型且正常渲染流 | 前置：E2E 后端以 `OPENAI_CHAT_MODEL='chat-e2e-test'`、`OPENAI_GENERATION_MODEL='generation-e2e-test'` 启动；已登录进入 `/assistant`，输入非空问题。 | 通过本地 OpenAI 兼容 stub 记录上游请求并返回 `context`、一个 `delta`、`done`；断言上游 `model === 'chat-e2e-test'` 且 HTTP 200；页面按顺序显示用户问题与助手回复，加载态结束，不出现生成模型名。 |
 | `E2E-MODEL-LAYER-02` | 题目强制重新解析使用 generation 模型 | 前置：题目详情无缓存答案或页面触发“强制重新生成”；后端以两个 E2E 模型变量启动，已登录用户具备 `study`；上游 stub 返回合法三字段 JSON（**C41**）。三字段 DOM 结构由 **C42** `E2E-ANSWER-*` 锁，本用例只锁选模与请求体。 | 1. 浏览器发出的 `POST /api/problems/:id/answer/generate` body 精确包含 `force: true`；<br>2. 本地上游收到 `model === 'generation-e2e-test'` 且仅调用 1 次；HTTP 200、`code === 0`，载荷含 `summary`/`keyPoints`/`nextStep`（及可选序列化 `answer`）；<br>3. 加载态结束；未调用 `chat-e2e-test`。 |
 | `E2E-ANSWER-01` | 三字段解析面板结构化渲染（C42） | 前置：已登录；进入题目详情；「参考答案」Tab 可见。 | `page.route` 拦截 `GET /api/problems/:id` 与（若触发）`POST .../answer/generate`：成功体为 `code === 0`，`data` 含 `summary: "结论E2E"`、`keyPoints: ["K1","K2"]`、`nextStep: "下一步E2E"`（generate 亦可另带 `answer` 为同构 JSON 字符串、`cached: false`）。 | 1. 答案面板可见纯文本/列表节点分别展示 `结论E2E`、`K1`、`K2`、`下一步E2E`（可用 `getByText` / role=listitem 断言）；<br>2. 面板内**不**存在把整段 `data.answer` HTML/JSON 一次性塞进 `innerHTML` 的单一容器（禁止答案区根节点 `innerHTML` 等于整篇模型 HTML）；<br>3. 加载态结束后无未捕获控制台 error。 |
@@ -915,7 +917,7 @@ Prompt 内容来自数据库，不能只依赖客户端 `AI_MAX_INPUT_CHARS` 防
 | `UT-FE-USER-03` | `src/stores/user.ts` | 登出 Action 与状态清理 | 调用 `logout()` 后清空 `user`、`token`，同时从 `localStorage` 中移除所有认证项。 |
 | `UT-FE-SET-01` | `src/stores/settings.ts` | AI 配置参数校验与更新 | 传入合规自定义配置（如 `temperature: 0.7`）时成功更新并持久化；空值时回退默认配置。 |
 | `UT-FE-CRUMB-01` | `src/stores/breadcrumb.ts` | 路由嵌套层级面包屑计算 | 触发路由跳转时根据 `route.matched` 准确生成面包屑导航标题与跳转链接数组。 |
-| `UT-FE-MODEL-LAYER-01` | `frontend/src/views/AiAssistant.vue` | chat 请求不暴露模型选择参数 | stub `fetch`，在助手输入非空问题并发送；检查 `POST /api/chat` 的 JSON body 仅含 `message` 与 `context`，不含 `model`、`modelName` 或任何由用户输入拼接的模型字段。 | 请求方法为 `POST`、`Content-Type` 为 `application/json`、`Accept` 为 `text/event-stream`；前端不允许通过请求体覆盖后端 `OPENAI_CHAT_MODEL`，并继续按 `context`/`delta`/`done` 处理响应。 |
+| `UT-FE-MODEL-LAYER-01` | `frontend/src/views/AiAssistant.vue` | chat 请求不暴露模型选择参数 | stub `fetch`，在助手输入非空问题并发送；检查 `POST /api/chat` 的 JSON body 含 `message`、`context`，以及 **S3** 要求的 `messages`（数组，可为 `[]`）；**不含** `model`、`modelName` 或任何由用户输入拼接的模型字段。 | 1. 请求方法为 `POST`、`Content-Type` 为 `application/json`、`Accept` 为 `text/event-stream`；<br>2. body 可解析 JSON，键集合为 `message`/`context`/`messages`（允许实现另带无害元数据键，但**禁止** `model`/`modelName`）；<br>3. 前端不允许通过请求体覆盖后端 `OPENAI_CHAT_MODEL`，并继续按 `context`/`delta`/`done` 处理响应；`messages` 形状细节由 §4.6 锁。 |
 | `UT-FE-MODEL-LAYER-02` | `frontend/src/api/problemItem.ts` | 解析请求只传递 force 布尔值 | 分别调用 `generateProblemAnswer('42', { force: false })` 与 `generateProblemAnswer('42', { force: true })`，stub `post` 或网络请求捕获 body。 | 两次请求均为 `POST /problems/42/answer/generate`；body 分别为 `{ "force": false }` 与 `{ "force": true }`，不含 `model`/`modelName`；前端只表达是否绕过缓存，具体 generation 模型由后端环境变量选择。 |
 
 ### 4.3 C42 解析三字段前端渲染（P1-4）(`frontend/src/views/ProblemItem.vue` / 归一化辅助 / `frontend/src/api/problemItem.ts`)
@@ -983,3 +985,41 @@ Prompt 内容来自数据库，不能只依赖客户端 `AI_MAX_INPUT_CHARS` 防
 | `UT-FE-SIG-08` | 密钥缺失：明确失败且不发空签名 | 前置：`VITE_AI_CLIENT_SECRET` 未设或 `''`；`localStorage.token = 'user-jwt'`；对 `getHeaders('POST', '/api/chat', { message: 'nosecret' })` 与（若可）AiAssistant 发送各测一次。 | 1. 调用以抛错结束（错误信息含 `VITE_AI_CLIENT_SECRET` 或等价「密钥缺失」语义），**或**在发网络前中止；<br>2. **不得**返回/发出 `X-Signature: ''` / `X-Client-Token: ''` 的「空签名放行」头集合；<br>3. stub `fetch` 时受保护 AI 路径的成功发出次数为 0。 |
 | `UT-FE-SIG-09` | `VITE_AI_CLIENT_ID` 显式值写入 X-Client-Id | 前置：设置 `VITE_AI_CLIENT_ID = 'web-custom'`、`VITE_AI_CLIENT_SECRET = 'change_me'`；已登录；`getHeaders('POST', '/api/chat', { message: 'id' })`。 | 1. `X-Client-Id` === `web-custom`（不是硬编码死 `web`）；<br>2. `X-Client-Token` === `change_me`；<br>3. 其余四头非空且 UT-FE-SIG-04 重算可通过。 |
 | `UT-FE-SIG-10` | B33 边界：不要求改后端默认开关 / 换票协议 | 前置：只读审查本小节测试断言与 B33 **不做**列表；可选：确认用例未要求 `AI_REQUIRE_SIGNED_HEADERS` 默认 `true`，未断言修改 `/api/auth/token` body/claims。 | 1. 本表 PASS 判据仅约束前端六头注入、path 归一化、Bearer 保留与缺密钥失败；<br>2. **不得**以「代码默认必须 true」或「必须改 token 换票 JWT」为 FAIL 条件（后者属 B32 / S1）；<br>3. 与 §2.19 UT-GUARD-SIG-01 / SEC-GUARD-08/09 的 residual 分界一致。 |
+
+### 4.6 助教前端回传最近 6 轮 messages（S3）（`frontend/src/views/AiAssistant.vue` / 可选导出的历史窗纯函数）
+
+对应 **S3**（`docs/backlog.md` §S3；对齐已完成的 **C31**）。后端窗口裁剪与 SSE 分槽已由 §2.24 / §3.13 覆盖；本项只锁**前端**：调用 `POST /api/chat` 时把本地对话历史以 `messages[]` 回传，使 C31 契约在浏览器路径上真正生效。
+
+**做**：
+
+1. `AiAssistant.vue`（或其提取的 `streamChat` / 组包辅助）在 `POST /api/chat` 的 JSON body 中附带 `messages`：数组；每项至少含 `role`（`'user' | 'assistant'`）与 `content`（字符串）。
+2. 只回传最近 **N=6**（写死与 C31 一致；禁止用 Vite env 改 N）；顺序为时间正序尾窗（先旧后新）。
+3. 每条 `content` 按**前端已有输入上限**截断（与当前顶层 `message` 所用上限同一常量/函数；建议与 Guard 默认 `AI_MAX_INPUT_CHARS=1200` 对齐，或导出 `CHAT_INPUT_MAX_CHARS`；测码注入较小上限以便观测）。
+4. **仍**发送当前 `message`（本次用户输入，trim 后非空）与 `context`（含解析出的 `categoryId` / `problemId`，可缺省字段为 `undefined`/`null`，但键 `context` 必须存在）。
+5. 请求方法/`Content-Type`/`Accept` 与现网一致：`POST`、`application/json`、`text/event-stream`；HMAC 六头仍走既有 `getHeaders`（B33），本表不重复验签算法。
+
+**不做**：改后端 `normalizeChatHistory` / `AI_MAX_INPUT_CHARS` 裁剪规则（属 **C31**）；改助手/用户气泡渲染形态（Markdown + DOMPurify 属 **S6**，本表禁止以 `innerHTML`/`v-html`/加粗节点判 PASS）；滚动摘要（不得把多轮压成一条 `summary` 再回传）。
+
+**residual**：后端忽略未知字段或未识别 `messages` 时，只要仍处理 `message`+`context`，行为与 S3 合入前单轮路径一致；首轮尚无用户历史时允许 `messages: []`（或仅含欢迎语助手条，但长度仍 `<= 6`）。宜用请求快照 / stub `fetch` 锁字段，不依赖真实上游模型。
+
+**组包时序**（实现与测码须一致，避免把「正在生成的空助手气泡」或「刚 append 的当前 user」重复污染历史窗）：
+
+1. 用户触发发送 → 本地 UI 可先 append 当前 user / 占位 assistant（现网行为）。
+2. 构造 body 时：`message` = 本次用户原文（trim）；`messages` = 发送**之前**已完成的对话气泡尾窗（`role` 仅 `user`/`assistant`，`content` 非空），**不含**本次占位空 `assistant`，且**不得**用 `messages` 末条替代顶层 `message`。
+3. `JSON.stringify(payload)` → `getHeaders('POST', '/api/chat', payload)` → `fetch('/api/chat', { body })`（`X-Body-Sha256` 仍哈希发出串，与 UT-FE-SIG-03/05 合取）。
+
+**测法**：Vitest；建议 `frontend/src/views/AiAssistant.chat-history.spec.ts`（或同目录等价名）挂载/`expose` 调用 `send`，stub 全局 `fetch` 捕获 `RequestInit.body`；若抽出纯函数 `buildChatHistoryPayload(messages, currentText, context, { window: 6, maxChars })` 亦可单测该函数再补 1 条组件集成。`it()` 标题须包含下表 ID。
+
+| ID | 用例标题 | 场景描述 | 预期结果 |
+| :--- | :--- | :--- | :--- |
+| `UT-FE-CHAT-HIST-01` | 首次发送：body 含 message/context/messages | 前置：挂载 `AiAssistant`（可无 `context` props）；stub `fetch` 返回可读空 SSE 流（或立即结束的 body）；用户发送非空文案 `首问-S3`。 | 1. `fetch` URL pathname 为 `/api/chat`，method `POST`；<br>2. `JSON.parse(body)` 含：`message === '首问-S3'`（trim 后）、`context` 为对象、`messages` 为数组；<br>3. `messages.length <= 6`；`Array.isArray(messages) === true`（允许 `[]`）。 |
+| `UT-FE-CHAT-HIST-02` | 多轮后回传先旧后新的历史窗 | 前置：本地已有交替气泡（可直接改组件 `messages` ref，或连续 stub 成功流后真实 `send` 两轮）：标记 `U1`（user）、`A1`（assistant）、`U2`、`A2`；再 `send('U3-追问')`。 | 1. 本次 body.`message` === `U3-追问`；<br>2. body.`messages` 按序含 `U1`→`A1`→`U2`→`A2`（或实现约定「不含欢迎语」时至少含已完成的用户/助手轮，但相对序仍先旧后新）；<br>3. **不含** content 为空串的占位 assistant；不得把 `U3-追问` **只**放进 `messages` 而顶层 `message` 缺失/为空。 |
+| `UT-FE-CHAT-HIST-03` | 超过 6 条时前端只回传尾窗 6 条 | 前置：构造本地历史 ≥8 条已完成 `user`/`assistant`，content 标记 `H1`…`H8`（H8 最新）；触发一次新发送 `message='追问'`。 | 1. body.`messages.length === 6`；<br>2. 六条 content 标记为 `H3`…`H8`（丢掉最旧 `H1`/`H2`）；相对序与本地尾部一致；<br>3. 源码/导出常量断言窗口为字面量 `6`（或 `CHAT_HISTORY_WINDOW === 6`）；读取 `import.meta.env` 改 N **不得**改变截取条数（与 C31「写死 N」对齐）。 |
+| `UT-FE-CHAT-HIST-04` | 每条 content 按前端输入上限截断 | 前置：注入/mock 前端输入上限为可观测值（如 `32`）；历史某条 `content` 长度 80+ 且尾部 sentinel `FE-TAIL`；当前 `message` 短于上限。 | 1. body.`messages` 中对应条 `content.length <= 32` 且**不含** `FE-TAIL`；<br>2. 当前 `message` 完整保留（未超上限时）；<br>3. 不得因单条超长抛未捕获异常或省略整个 `messages` 字段。 |
+| `UT-FE-CHAT-HIST-05` | 仍发送 context.problemId / categoryId | 前置：挂载时 props `context={{ problemId: 42, categoryId: 'cat-9' }}`，或路由可解析出同等值；发送任意短消息。 | 1. body.`context.problemId == 42`（数字或可 `Number()` 等价）；<br>2. body.`context.categoryId` 等于 `'cat-9'` 或实现归一化后的等价；<br>3. 即使 `messages` 非空，`context` 键仍存在（证明 S3 **不做**用历史替代题面绑定）。 |
+| `UT-FE-CHAT-HIST-06` | role 契约：仅 user/assistant，不回传 system | 前置：本地历史若被污染塞入 `role:'system'`（测码直接写 ref），或仅有合法 user/assistant；触发发送。 | 1. body.`messages` 每一项 `role` ∈ {`user`,`assistant`}；<br>2. **零条** `role === 'system'` / `'tool'`；<br>3. 每项 `typeof content === 'string'`。 |
+| `UT-FE-CHAT-HIST-07` | 不做滚动摘要：messages 条数为尾窗而非 1 条摘要 | 前置：本地恰好 6 条短历史，全部可区分标记；发送新消息。 | 1. body.`messages.length` 为 6（或实现排除欢迎语后的可解释尾窗长度），**不是**把 6 条压成 1 条；<br>2. 无 `role:'summary'`，无 content 前缀「对话摘要」的合成条；<br>3. 各标记仍作为独立元素出现（可被 `find` 到）。 |
+| `UT-FE-CHAT-HIST-08` | 不做：不断言气泡 Markdown / v-html（边界） | 前置：只读审查本小节断言；助手回复含 `**粗**` 与 `<script>` 字面量的 stub delta。 | 1. PASS 判据**仅**约束请求 body 的 `messages`/`message`/`context`；<br>2. **不得**以「必须出现 `<strong>` / 必须 DOMPurify」为本表 FAIL 条件（属 **S6**）；<br>3. 用户气泡仍可为文本插值（现网 `{{ m.content }}`），本项不要求改模板。 |
+| `UT-FE-CHAT-HIST-09` | residual：空历史时与单轮字段兼容 | 前置：重置对话后仅有默认欢迎助手条（或清空至等价初始态）；发送 `message='单轮'`。 | 1. body 仍含 `message === '单轮'` 与 `context` 对象；<br>2. `messages` 为 `[]`，**或**长度 ≤1 且仅含欢迎助手且 `content` 为默认欢迎文案；<br>3. 证明后端即使忽略 `messages`，仍能靠 `message`+`context` 走 C31 residual 三槽路径。 |
+| `UT-FE-CHAT-HIST-10` | 与 B33 合取：带 messages 时 Body 哈希仍对发出串 | 前置：`VITE_AI_CLIENT_SECRET` 已配置；stub `fetch`；发送使 `messages.length >= 1` 的请求；读取发出头 `X-Body-Sha256` 与 body 字符串。 | 1. `X-Body-Sha256 === sha256Hex(实际 bodyText)`，`bodyText` 为含 `messages` 的那份 JSON 字符串；<br>2. 对「去掉 messages 再 stringify」的另一份 hash **不等于**该头；<br>3. 证明 S3 扩字段后签名仍锁真实发出串（衔接 UT-FE-SIG-05）。 |
+| `UT-FE-CHAT-HIST-11` | 边界：不改后端裁剪、不要求滚动摘要 API | 前置：只读本小节与 backlog S3 **不做** / **residual**。 | 1. 本表**不**断言 `backend/src/chat-history.js` 行为或改 `AI_MAX_INPUT_CHARS`；<br>2. **不**要求新增「摘要」接口或字段；<br>3. 与 §2.24 / §3.13 分界：后端窗口仍由 C31 测，本表只锁前端回传。 |
