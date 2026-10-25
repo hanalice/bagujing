@@ -92,6 +92,9 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | S6  | feat | scan | auto | done | 助教助手气泡 Markdown + DOMPurify，用户气泡纯文本 |
 | S7  | fix | scan | auto | done | 换票 fetch URL 与签名 path 对齐为 `/api/auth/token` |
 | S8  | fix | scan | auto | done | 对齐 security-ai-guard.md 与签名默认/会话验签/前端 env 名 |
+| S9  | fix | scan | auto | todo | 登录态审计 user_identifier 取会话用户主键，忽略客户端 x-user-id 覆盖 |
+| S10 | feat | scan | auto | todo | cached_answer 命中且库内为三字段 JSON 时响应顶层带回 summary/keyPoints/nextStep |
+| S11 | fix | scan | auto | todo | 对齐 security-ai-guard.md：去掉未实现的用户/角色配额表述 |
 | E1  | feat | gate | assist | todo | CI/安全/质量基线（契约未冻，禁止周扫描拆成 auto）：依赖漏洞每月出报告、不挡合并；口令与密钥硬编码单独拦截提交；新增代码覆盖率 ≥80%，前后端历史各 ≥60%；文档与实现一致要能拦住；提交说明按公约覆盖全部 type |
 
 
@@ -251,6 +254,24 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 - **不做**：改任何代码或默认值；打开生产签名开关（B32）；改 B33/S1/S2 的实现范围。
 - **residual**：WAF、自动封禁、成本告警、审计报表等未勾选项仍属未来项，本项不拆 auto。公开文档不写利用步骤。
 
+### S9
+
+- **做**：`backend/src/security/ai-guard.js` 写入审计的 `userIdentifier`：当 `req.user` 存在且有稳定主键（如 `id`）时，取该主键的字符串形式；此时**忽略**请求头 `x-user-id`，不得被客户端覆盖。无登录会话时：若 `x-user-id` 非空则用其（可按现有输入上限截断），否则保持现有 IP 哈希短前缀回退。单测 `it()` 标题含用例 ID：登录态审计/上下文中的 identifier 等于用户主键；同请求带伪造 `x-user-id` 仍不得覆盖；匿名路径行为与现网回退一致。可同步 `docs/test_cases.md`。
+- **不做**：按用户维度扣减日配额；改审计表列名或 NDJSON 字段名；回填历史审计行；改签名/换票/限流。
+- **residual**：匿名调用仍可能只有 IP 哈希；配额计数仍是全局 + `ai_clients` / 进程内，见 S11 文档对齐。用户级配额若要做须另开条目（含 schema）。
+
+### S10
+
+- **做**：`POST /api/problems/:id/answer/generate` 在 `cached_answer` 早退（未触达上游）时：若库内 `answer` 能被现有结构化解析（与 C41 同构的 `parseGeneratedAnswerJson` 或等价）解析为三字段，则响应 `data` 同时返回 `summary`、`keyPoints`、`nextStep`、`answer`、`cached: true`（与未缓存成功路径顶层字段对齐）；解析失败则保持现状，只返回 `answer` + `cached: true`（旧 HTML）。不调模型。单测：结构化 JSON 缓存命中含三字段且 `cached===true`；旧 HTML 缓存命中无三字段、模型调用次数为 0。
+- **不做**：改 `force` 重生成路径；批量改写库内旧 HTML；改前端 `normalizeStructuredAnswer` 优先级；改配额 `upstreamReached: false` 语义（A7）。
+- **residual**：存量整篇 HTML 缓存仍无顶层三字段，前端继续走 legacy 纯文本。近似/语义缓存见 D4。
+
+### S11
+
+- **做**：只改 `docs/security-ai-guard.md`（及锁文档的只读单测，风格对齐 S8）：①§4.5 / §7 删除或改写「角色级 / 用户级配额」「`users` 与 `roles` 表实时下发（User > Role > Global Env）」等与代码不符的表述；如实写现状——限额来自全局 env 与 `ai_clients`（及进程内计数 / 有 db 时按审计汇总），**没有**按登录用户或角色行覆盖 Token 上限。②文末清单「多租户/多角色隔离策略（用户级配额、角色继承）」不得再标为已完成配额能力；改为未完成，或改成只描述已有的角色**权限**继承并与配额脱钩。③配额迁 Redis / 完全态、WAF、自动封禁、成本告警、审计报表仍保持未完成。公开文档不写利用步骤。
+- **不做**：改 `ai-guard.js` 或任何运行时代码；实现用户/角色配额（另条）；打开或改签名默认值。
+- **residual**：真要做用户/角色日限额需 schema 与产品口径，不塞进本文档对齐项。
+
 ### E1
 
 登记用，契约未冻。禁止周扫描把本项改成 `auto` 或拆子项；由人拆。
@@ -302,3 +323,4 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | 2026-10-25 | S7 完成：换票 fetch URL 与签名 path 对齐为 `/api/auth/token` |
 | 2026-10-25 | S8 完成：对齐 security-ai-guard.md 与签名默认/会话验签/前端 env 名 |
 | 2026-10-25 | B32 完成：生产 PM2 将 AI_REQUIRE_SIGNED_HEADERS 设为 true，代码默认仍为 false |
+| 2026-10-25 | 周扫描：新增 auto S9（登录态审计身份）、S10（cached_answer 三字段响应）、S11（白皮书配额措辞对齐）；无逾期待决；待决表仍空；D3/D4/E1 未拆 |
