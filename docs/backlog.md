@@ -95,6 +95,9 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | S9  | fix | scan | auto | todo | 登录态审计 user_identifier 取会话用户主键，忽略客户端 x-user-id 覆盖 |
 | S10 | feat | scan | auto | todo | cached_answer 命中且库内为三字段 JSON 时响应顶层带回 summary/keyPoints/nextStep |
 | S11 | fix | scan | auto | todo | 对齐 security-ai-guard.md：去掉未实现的用户/角色配额表述 |
+| S12 | fix | scan | auto | todo | 配额预扣 estimatePromptTokens 计入 messages 历史窗（对齐 C31） |
+| S13 | fix | scan | auto | todo | 解析三字段入库前剥离 HTML 标签（接 C41 后 B21 空窗） |
+| S14 | fix | scan | auto | todo | 审计 pagePath/pageTitle/匿名 x-user-id 按输入上限截断 |
 | E1  | feat | gate | assist | todo | CI/安全/质量基线（契约未冻，禁止周扫描拆成 auto）：依赖漏洞每月出报告、不挡合并；口令与密钥硬编码单独拦截提交；新增代码覆盖率 ≥80%，前后端历史各 ≥60%；文档与实现一致要能拦住；提交说明按公约覆盖全部 type |
 
 
@@ -268,9 +271,27 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 
 ### S11
 
-- **做**：只改 `docs/security-ai-guard.md`（及锁文档的只读单测，风格对齐 S8）：①§4.5 / §7 删除或改写「角色级 / 用户级配额」「`users` 与 `roles` 表实时下发（User > Role > Global Env）」等与代码不符的表述；如实写现状——限额来自全局 env 与 `ai_clients`（及进程内计数 / 有 db 时按审计汇总），**没有**按登录用户或角色行覆盖 Token 上限。②文末清单「多租户/多角色隔离策略（用户级配额、角色继承）」不得再标为已完成配额能力；改为未完成，或改成只描述已有的角色**权限**继承并与配额脱钩。③配额迁 Redis / 完全态、WAF、自动封禁、成本告警、审计报表仍保持未完成。公开文档不写利用步骤。
+- **做**：只改 `docs/security-ai-guard.md`（及锁文档的只读单测，风格对齐 S8）：①§1 背景段删除或改写「按角色继承、按用户覆盖的精细化成本控制」等暗示已落地的目标句，改为与代码一致的现状（或明确标为未实现目标）。②§4.5 / §7 删除或改写「角色级 / 用户级配额」「`users` 与 `roles` 表实时下发（User > Role > Global Env）」及「从客户端到具体用户的精细化管控」等与代码不符的表述；如实写现状——限额来自全局 env 与 `ai_clients`（及进程内计数 / 有 db 时按审计汇总），**没有**按登录用户或角色行覆盖 Token 上限。③文末清单「多租户/多角色隔离策略（用户级配额、角色继承）」不得再标为已完成配额能力；改为未完成，或改成只描述已有的角色**权限**继承并与配额脱钩。④配额迁 Redis / 完全态、WAF、自动封禁、成本告警、审计报表仍保持未完成。公开文档不写利用步骤。
 - **不做**：改 `ai-guard.js` 或任何运行时代码；实现用户/角色配额（另条）；打开或改签名默认值。
 - **residual**：真要做用户/角色日限额需 schema 与产品口径，不塞进本文档对齐项。
+
+### S12
+
+- **做**：`backend/src/security/ai-guard.js` 的 `estimatePromptTokens`：当 `body.message` 非空时，仍须把 `body.messages` 中与 C31 同构可计入的历史计入估算——只取 `role` 为 `user`/`assistant` 且 `content` 为字符串的项，按条截断到 `AI_MAX_INPUT_CHARS`，最多最近 **6** 条；估算基数 = 各历史 `content` 长度之和 + 当前 `message` 长度，再按现有 `/4` 向上取整。无 `messages` 或空数组时行为与现网一致（仅按 `message`）。单测 `it()` 标题含用例 ID：同 `message` 对比有/无满窗 history，后者准入用的 prompt 估算更大；非法 `role` 不计入。可同步 `docs/test_cases.md`。
+- **不做**：改 C31/S3 的窗口 N 或前端回传；改 finalize 的 usage/估算结算（C51）；改 `conservativeCompletionTokens`；实现按用户配额。
+- **residual**：仍为字符粗估、非 tokenizer；RAG/system 槽未计入预扣（与现网一致）。
+
+### S13
+
+- **做**：`POST /api/problems/:id/answer/generate` 在 C41 校验通过后、`upsertProblemAnswerById` 之前，对三字段字符串（`summary`、`nextStep`、`keyPoints` 各元素）剥离 HTML 标签外壳（可复用/抽取现有 `sanitizeHtml` 的去标签能力，或等价「只留文本」）；剥完后若 `summary`/`nextStep` 变为空则走与 C41 相同的校验失败路径（HTTP 502、不入库）。单测：合法 JSON 但字段含标签时，库内与成功响应三字段无标签外壳；纯文本三字段内容不变。可同步 `docs/test_cases.md`。
+- **不做**：改 C41 字段名或成功响应键；批量翻写库内旧 HTML；改前端 C42 渲染；改助教 chat 路径。
+- **residual**：旧 HTML 缓存展示仍靠 C42；助教 Markdown 消毒见 S6。
+
+### S14
+
+- **做**：`ai-guard.js` 写入 `req.aiGuard` / 审计的 `pagePath`、`pageTitle`，以及**无登录会话**时采用的 `x-user-id` 字符串，均按 `AI_MAX_INPUT_CHARS` 截断后再存；超长**不**因此拒绝请求。单测 `it()` 标题含用例 ID：超长头截断后长度 ≤ 上限；短头不变。可同步 `docs/test_cases.md`。
+- **不做**：改签名/限流/换票；把超长头改成 4xx；按用户配额；改审计表 schema。
+- **residual**：登录态 `userIdentifier` 取会话主键见 S9，不受本项匿名 `x-user-id` 截断影响。
 
 ### E1
 
@@ -324,3 +345,4 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | 2026-10-25 | S8 完成：对齐 security-ai-guard.md 与签名默认/会话验签/前端 env 名 |
 | 2026-10-25 | B32 完成：生产 PM2 将 AI_REQUIRE_SIGNED_HEADERS 设为 true，代码默认仍为 false |
 | 2026-10-25 | 周扫描：新增 auto S9（登录态审计身份）、S10（cached_answer 三字段响应）、S11（白皮书配额措辞对齐）；无逾期待决；待决表仍空；D3/D4/E1 未拆 |
+| 2026-10-25 | 周扫描续扫：新增 auto S12（预扣计入 messages 历史）、S13（三字段入库剥标签）、S14（审计头截断）；收紧 S11 含 §1；无逾期待决；待决仍空；D3/D4/E1 未拆 |
