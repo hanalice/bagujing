@@ -3,6 +3,7 @@ import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { captureAiEvent, captureUiError } from '@/monitoring'
 import { getHeaders } from '@/utils/request'
+import { buildChatHistoryPayload, DEFAULT_ASSISTANT_MESSAGE } from '@/utils/chat-history'
 
 type ChatRole = 'user' | 'assistant' | 'system'
 
@@ -73,8 +74,7 @@ const isStreaming = ref(false)
 const errorText = ref<string | null>(null)
 const snippets = ref<unknown[] | null>(null)
 
-const defaultAssistantMessage =
-  '你好，我是题库AI小助手。你可以直接问，我会带上打开题目的上下文。'
+const defaultAssistantMessage = DEFAULT_ASSISTANT_MESSAGE
 
 const messages = ref<ChatMessage[]>([{ id: createId(), role: 'assistant', content: defaultAssistantMessage }])
 
@@ -157,7 +157,7 @@ watch(
 )
 
 async function* streamChat(
-  payload: { message: string; context: AssistantContext },
+  payload: { message: string; context: AssistantContext; messages: { role: 'user' | 'assistant'; content: string }[] },
   signal: AbortSignal
 ) {
   const bodyText = JSON.stringify(payload)
@@ -259,7 +259,16 @@ const sendText = async (text: string) => {
   errorText.value = null
   snippets.value = null
 
-  appendMessage('user', text.trim())
+  const trimmed = text.trim()
+  const { categoryId, problemId } = resolveContext()
+  // 历史窗取发送前已完成的气泡，避免把本次 user / 空助手占位算进去
+  const payload = buildChatHistoryPayload(
+    messages.value,
+    trimmed,
+    { categoryId, problemId }
+  )
+
+  appendMessage('user', trimmed)
   appendMessage('assistant', '')
   await scrollToBottom()
 
@@ -270,10 +279,8 @@ const sendText = async (text: string) => {
     route: route.fullPath,
   })
 
-  const { categoryId, problemId } = resolveContext()
-
   try {
-    for await (const evt of streamChat({ message: text.trim(), context: { categoryId, problemId } }, abortController.signal)) {
+    for await (const evt of streamChat(payload, abortController.signal)) {
       firstDeltaAt = handleStreamEvent(evt, startedAt, firstDeltaAt)
       await scrollToBottom()
     }
@@ -320,6 +327,7 @@ defineExpose({
   send,
   abortStream,
   resetConversation,
+  messages,
 })
 </script>
 

@@ -189,7 +189,8 @@ describe('D12 / P1-5: generate 进程内熔断集成', () => {
     fakeNow = openUntil;
     nextGenerateStatus = () => 200;
     modelCalls.length = 0;
-    try { fs.unlinkSync(TEST_AUDIT_PATH); } catch { /* ignore */ }
+    // 两次失败各写一行 server_error；等队列落盘再删，避免迟到行混进本次成功审计
+    await discardSettledAudit(2);
 
     const response = await invokeRoute(app, '/api/problems/42/answer/generate', { force: true });
     assert.equal(response.statusCode, 200);
