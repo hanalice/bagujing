@@ -90,7 +90,7 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | S4  | feat | scan | assist | split | 已判定助教 Markdown；实现见 S6 |
 | S5  | fix | scan | assist | split | 已拆为 S8 |
 | S6  | feat | scan | auto | done | 助教助手气泡 Markdown + DOMPurify，用户气泡纯文本 |
-| S7  | fix | scan | auto | todo | 换票 fetch URL 与签名 path 对齐为 `/api/auth/token` |
+| S7  | fix | scan | auto | done | 换票 fetch URL 与签名 path 对齐为 `/api/auth/token` |
 | S8  | fix | scan | auto | todo | 对齐 security-ai-guard.md 与签名默认/会话验签/前端 env 名 |
 | E1  | feat | gate | assist | todo | CI/安全/质量基线（契约未冻，禁止周扫描拆成 auto）：依赖漏洞每月出报告、不挡合并；口令与密钥硬编码单独拦截提交；新增代码覆盖率 ≥80%，前后端历史各 ≥60%；文档与实现一致要能拦住；提交说明按公约覆盖全部 type |
 
@@ -299,3 +299,4 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | 2026-10-22 | S2 完成：Guard 非 debug 路径去掉常开 console.log |
 | 2026-10-25 | S3 完成：助教前端回传最近 6 轮 messages（对齐 C31） |
 | 2026-10-25 | S6 完成：助教助手气泡 Markdown + DOMPurify，用户气泡纯文本 |
+| 2026-10-25 | S7 完成：换票 fetch URL 与签名 path 对齐为 `/api/auth/token` |

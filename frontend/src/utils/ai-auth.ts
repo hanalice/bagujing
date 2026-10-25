@@ -64,17 +64,22 @@ export const isAiProtectedPath = (apiPath: string): boolean => {
 let currentSessionToken: string | null = null;
 let sessionExpiresAt: number = 0;
 
+/**
+ * 与 axios `baseURL: VITE_API_BASE_URL || '/api'` 对齐；未设/空串时回退 `/api`，避免换票打到裸 `/auth/token`。
+ */
 const getApiBase = () => {
-  // In Vite, usually /api is proxied. Adjust if necessary.
-  return import.meta.env.VITE_API_BASE_URL ?? '';
+  return import.meta.env.VITE_API_BASE_URL || '/api';
 };
 
 /**
  * 向 /api/auth/token 换取匿名 AI 会话票（仅无用户 Bearer 时使用）。
+ * URL 拼法对齐 axios：base(`/api`) + 相对 `/auth/token` → pathname `/api/auth/token`；
+ * HMAC 签名 path 用 normalizeAiPath，与 Express `req.path` 一致，禁止双重 `/api/api`。
  */
 export const fetchAiSessionToken = async (id: string, secret: string): Promise<string> => {
   const ts = String(Date.now());
   const nonce = safeRandomUUID();
+  // 相对 axios baseURL 的路径；最终 fetch pathname 与签名 path 均为 `/api/auth/token`
   const apiPath = '/auth/token';
   const normalizedPath = normalizeAiPath(apiPath);
   const body = JSON.stringify({ clientId: id, ts, nonce });
