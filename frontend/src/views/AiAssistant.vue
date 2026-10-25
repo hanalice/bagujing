@@ -4,6 +4,7 @@ import { useRoute } from 'vue-router'
 import { captureAiEvent, captureUiError } from '@/monitoring'
 import { getHeaders } from '@/utils/request'
 import { buildChatHistoryPayload, DEFAULT_ASSISTANT_MESSAGE } from '@/utils/chat-history'
+import { renderAssistantMarkdown } from '@/utils/assistant-markdown'
 
 type ChatRole = 'user' | 'assistant' | 'system'
 
@@ -80,6 +81,15 @@ const messages = ref<ChatMessage[]>([{ id: createId(), role: 'assistant', conten
 
 const canSendText = (text: string) => !isStreaming.value && text.trim().length > 0
 const canSend = computed(() => canSendText(input.value))
+
+/**
+ * 助手气泡：对已累积全文做 Markdown→DOMPurify；空内容流式中显示省略号。
+ * 用户/system 气泡不走此路径。
+ */
+const assistantBubbleHtml = (content: string): string => {
+  if (!content) return isStreaming.value ? '…' : ''
+  return renderAssistantMarkdown(content)
+}
 
 const appendMessage = (role: ChatRole, content: string) => {
   messages.value.push({ id: createId(), role, content })
@@ -346,16 +356,16 @@ defineExpose({
         :class="m.role === 'user' ? 'text-right' : 'text-left'"
       >
         <div
+          v-if="m.role === 'assistant'"
+          class="inline-block max-w-[90%] rounded-lg px-3 py-2 bg-gray-50 text-gray-800 border border-gray-100"
+          v-html="assistantBubbleHtml(m.content)"
+        />
+        <div
+          v-else
           class="inline-block max-w-[90%] rounded-lg px-3 py-2 whitespace-pre-wrap"
-          :class="
-            m.role === 'user'
-              ? 'bg-blue-600 text-white'
-              : m.role === 'assistant'
-                ? 'bg-gray-50 text-gray-800 border border-gray-100'
-                : 'bg-yellow-50 text-yellow-900'
-          "
+          :class="m.role === 'user' ? 'bg-blue-600 text-white' : 'bg-yellow-50 text-yellow-900'"
         >
-          {{ m.content || (m.role === 'assistant' && isStreaming ? '…' : '') }}
+          {{ m.content }}
         </div>
       </div>
     </div>
