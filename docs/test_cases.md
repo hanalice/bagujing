@@ -21,6 +21,7 @@
 - **Guard 非 debug 路径去掉常开 console.log (S2)**：`backend/src/security/ai-guard.js` 在未开 `AI_GUARD_DEBUG` 时，禁止模块加载标记、SQL 审计成功、换票验签失败等常开 `console.log` / `console.info`；需要时仅走既有 debug 开关（`console.debug` + `[ai-guard-debug]` 属 **A6** / §2.9）。单测 stub `console.log`/`info` 断言上述前缀/文案零出现（§2.32）。**不做**：改审计落库逻辑；扩展新日志平台。**residual**：A6 已覆盖 `[ai-guard-debug]` 前缀通道，本项只收常开噪音。
 - **换票 fetch URL 与签名 path 对齐 (S7)**：`frontend/src/utils/ai-auth.ts` 的 `fetchAiSessionToken`：实际 `fetch` 的 URL pathname 与 HMAC 签名基串中的 path **均为** `/api/auth/token`（与后端 `POST /api/auth/token` 的 Express `req.path` 一致）；`getApiBase()` 在 `VITE_API_BASE_URL` 未设置时回退与 axios 相同（`/api`），避免拼出裸 `/auth/token`。Vitest 锁发出 URL 与签名 path（§4.8 `UT-FE-TOKEN-URL-*`）。**不做**：改换票 JWT claims / 权限面（S1）；改 AI 路由六头注入（B33）；改后端换票验签算法或路由挂载点。**residual**：机调票权限隔离仍见 S1；登录态/受保护路径 HMAC 六头仍见 B33。
 - **对齐 security-ai-guard 与签名默认/会话验签/前端 env 名 (S8)**：只改公开文档 `docs/security-ai-guard.md`，与当前代码对齐：验签开关 `AI_REQUIRE_SIGNED_HEADERS` 代码默认 `false`；为 `true` 时有登录会话也验签（**B31**）；前端密钥环境变量名为 `VITE_AI_CLIENT_SECRET`；限流/并发有 Redis 已落地（**B51/B52**），配额仍进程内/SQL 未完成；§5.3 不得写成 HMAC 已全面注入。静态读文档锁约见 §2.33 `UT-DOC-GUARD-*`。**不做**：改任何代码或默认值；打开生产签名开关（**B32**）；改 B33/S1/S2 实现范围。**residual**：WAF、自动封禁、成本告警、审计报表仍属未来项；公开文档不写利用步骤。
+- **登录态审计 userIdentifier 取会话主键 (S9)**：`backend/src/security/ai-guard.js` 写入审计/上下文的 `userIdentifier`：当 `req.user` 存在且有稳定主键（如 `id`）时取 `String(id)`，**忽略**客户端 `x-user-id` 覆盖；无登录会话时非空 `x-user-id` 可用（可按现有输入上限截断），否则 IP 哈希短前缀回退（现网 `sha256Hex(ip).slice(0, 16)`）。单测锁上下文与审计行一致（§2.34 `UT-AUDIT-UID-*`）；安全回归见 §3.21 `SEC-AUDIT-UID-*`。**不做**：按用户日配额；改审计表列名/NDJSON 字段名；回填历史行；改签名/换票/限流。**residual**：匿名仍可能只有 IP 哈希；配额仍全局 + `ai_clients` / 进程内（见 **S11**）。
 - **前端多层级质量保障体系 (Frontend QA Strategy)**：
   - **端到端测试 (Frontend E2E - Playwright)**：覆盖核心用户链路（Main Path / Happy Path），利用 `page.route` 对大模型流式 SSE 接口进行轻量 Mock，保障真实路由鉴权、题目浏览及 AI 交互界面的稳定可用；**C42** 另锁解析面板三字段可见性与无整篇 `v-html`；**S6** 另锁助教助手气泡安全 Markdown（§4.1 `E2E-MAIN-04` / `E2E-CHAT-MD-*`）。
   - **状态机与单元测试 (Frontend UT/IT - Vitest)**：针对 Pinia Store（`user`、`settings`、`breadcrumb`）、题目解析归一化/渲染辅助及工具函数，快速验证状态迁移、本地持久化与边界容错；**B33** 另锁登录态 `chat` / `answer/generate` 的 HMAC 六头注入（§4.5 `UT-FE-SIG-*`）；**S3** 另锁助教 `POST /api/chat` 请求体 `messages[]` 尾窗与截断（§4.6 `UT-FE-CHAT-HIST-*`）；**S6** 另锁助手气泡 Markdown→DOMPurify 与用户气泡纯文本（§4.7 `UT-FE-CHAT-MD-*`）；**S7** 另锁换票 `fetch` URL 与签名 path 均为 `/api/auth/token`（§4.8 `UT-FE-TOKEN-URL-*`）。**S8** 只锁公开文档 env 名 `VITE_AI_CLIENT_SECRET`（§2.33），本层不新增前端测码。
@@ -676,6 +677,46 @@ C22 合入后 problems 关键字召回主路径改为 FTS（失败回退 LIKE）
 | UT-DOC-GUARD-12 | 不做：本表不要求改代码默认或打开 B32 | 前置：只读本小节断言与 backlog S8 **不做**；对照 `ai-guard.js` 默认解析式。 | 1. PASS **不**要求把 `?? 'false'` 改成 `true`，也不要求改 `backend/.env` / Nginx / 部署开关；<br>2. **不**要求改 B33 六头注入、S1 换票 claims、S2 日志通道；<br>3. 与 SEC-GUARD-09 / UT-GUARD-SIG-01 分界：运行时默认已由那些 ID 锁，本表只锁文档与之同向。 |
 | UT-DOC-GUARD-13 | 配置基线节列出验签开关 | 前置：切出 `## 7.`（当前配置基线）至下一 `##`。 | 1. §7 列表出现 `AI_REQUIRE_SIGNED_HEADERS`（与 `AI_GUARD_ENABLED` 并列或紧邻鉴权项）；<br>2. 该条注明默认 `false` 或「未设则不强制验签」；<br>3. **不得**只列 `AI_GUARD_ENABLED` 却让读者以为 HMAC 默认开启。 |
 
+### 2.34 S9 登录态审计 `userIdentifier` 取会话主键、忽略 `x-user-id` 覆盖（`backend/src/tests/ai-guard-user-identifier.test.js` → `ai-guard.js` middleware / `finalize` / `appendAudit`）
+
+对应 **S9**（`docs/backlog.md` §S9）。回归点：现状 `req.aiGuard.userIdentifier = req.header('x-user-id') || sha256Hex(ip).slice(0, 16)`（约 `ai-guard.js` 准入赋值），**不看** `req.user.id`，客户端可伪造 `x-user-id` 污染审计身份；且 `finalize`/`reject` 的 `appendAudit` 载荷若漏传 `userIdentifier`，SQL `ai_audit_logs.user_identifier` 会一直为 `null`。
+
+**做**：
+
+1. 当 `req.user` 存在且有稳定主键（冻约字段 **`id`**，与登录 JWT / `authenticateToken` 一致）时：`req.aiGuard.userIdentifier === String(req.user.id)`；同请求即使带伪造 `x-user-id` 也**不得**覆盖。
+2. 无登录会话（`req.user` 为 `undefined`/`null`，或存在但**无**可用主键 `id`）：若 `x-user-id` 头非空字符串，则用其（允许按现有输入上限如 `AI_MAX_INPUT_CHARS` 或实现约定的 header 上限截断，截断后长度 ≤ 上限且为原串前缀）；否则回退 `sha256Hex(getIpFromRequest(req)).slice(0, 16)`（与现网 IP 哈希短前缀一致）。
+3. 写入审计时：NDJSON 行字段名仍为 **`userIdentifier`**（camelCase），SQL 列仍为 **`user_identifier`**；值与同请求的 `req.aiGuard.userIdentifier` **全等**。`finalize`（`decision: 'allow'`）与会调用 `appendAudit` 的拒答路径均须带上该字段（至少锁定 `finalize` 成功记账路径）。
+
+**不做**：按登录用户维度扣减日配额 / 改 `checkAndConsumeQuota` 键空间；改审计表列名或 NDJSON 字段名（禁止把 `userIdentifier` 改成别的键却要求本表跟改）；回填历史审计行；改 HMAC 签名、`exchangeToken` 换票、限流/并发逻辑。
+
+**residual**：匿名调用在无 `x-user-id` 时仍可能只有 IP 哈希短前缀；配额计数仍是全局 + `ai_clients` / 进程内（文档措辞对齐见 **S11**）。用户级配额若要做须另开条目（含 schema），本表不得以「必须按 user id 限流/限额」为 FAIL。
+
+**协议 / 时序**（下一阶段 `it()` 须对齐）：
+
+1. 前置：`AI_REQUIRE_SIGNED_HEADERS=false`（本表不测验签）；独立 `AI_AUDIT_FILE_PATH`；`createAiGuard({ jwtSecret })`；`mockHttp` 可注入 `req.user`、`header('x-user-id')`、`headers['x-forwarded-for']` / `req.ip`。
+2. 调用 `middleware(req, res, next)` → 断言 `next` 被调用且 `req.aiGuard.userIdentifier` 已定值。
+3. 调用 `req.aiGuard.finalize({ status: 'ok', reason: 'stream_done', completionText: 'uid', upstreamReached: true })`（或等价 allow 路径）。
+4. 读 NDJSON 末行：含 `userIdentifier`；若注入可成功 `INSERT` 的 `dbPool`，断言绑定参数中 `user_identifier` 位等于同一字符串。
+5. IP 回退对照：测码用与实现相同的 `sha256Hex`（UTF-8 明文 IP → hex）再 `.slice(0, 16)`，禁止臆造哈希算法。
+
+**测法**：优先 `backend/src/tests/ai-guard-user-identifier.test.js`（复用 `ai-guard-cache.test.js` / `ai-guard-quota.test.js` 的 `mockHttp` + 审计文件隔离）。禁止连真实 Redis/外网。`it()` 标题须包含下表 ID。
+
+| ID | 用例标题 | 场景描述 | 预期结果 |
+| :--- | :--- | :--- | :--- |
+| UT-AUDIT-UID-01 | 登录态：identifier 等于用户主键字符串 | 前置：`AI_REQUIRE_SIGNED_HEADERS=false`；独立审计文件；`req.user = { id: 42, username: 'alice', clientId: 'web' }`；**不**设 `x-user-id`；`POST /api/chat` body `{ "message": "uid-01" }` 经 middleware `next()`。 | 1. `req.aiGuard.userIdentifier === '42'`（`String(42)`，类型为字符串）；<br>2. **不得**等于 `username`、`clientId` 或 IP 哈希短前缀；<br>3. `next()` 恰好 1 次。 |
+| UT-AUDIT-UID-02 | 登录态 + 伪造 `x-user-id` 不得覆盖 | 前置：同 UT-AUDIT-UID-01，但 `header('x-user-id')` 返回 `'attacker-spoof'`（或任意与 `42` 不同的非空串）；其余头/body 合法。 | 1. `req.aiGuard.userIdentifier === '42'`；<br>2. **严格不等于** `'attacker-spoof'`；<br>3. 证明有稳定主键时**忽略**客户端 `x-user-id`（S9 核心回归：旧实现会写成伪造头）。 |
+| UT-AUDIT-UID-03 | 登录态 finalize 审计行写入同一 identifier | 前置：同 UT-AUDIT-UID-02（含伪造头）；middleware 后调用 `finalize({ status: 'ok', reason: 'stream_done', completionText: 'ok', upstreamReached: true })`。 | 1. NDJSON 末行 `decision: 'allow'`、`reason === 'stream_done'`；<br>2. 该行 `userIdentifier === '42'`（字段名精确为 camelCase `userIdentifier`）；<br>3. 与 `req.aiGuard.userIdentifier` 全等；**不得**为 `'attacker-spoof'` 或缺失该键却写入 SQL 空串冒充成功（若只测 NDJSON，则键必须存在且值正确）。 |
+| UT-AUDIT-UID-04 | 主键为非数字字符串仍取 `String(id)` | 前置：`req.user = { id: 'user-uuid-7', clientId: 'web' }`；带伪造 `x-user-id: 'other'`；middleware。 | 1. `req.aiGuard.userIdentifier === 'user-uuid-7'`；<br>2. 不等于 `'other'`；<br>3. 证明主键不限于整数，只要 `id` 稳定可字符串化。 |
+| UT-AUDIT-UID-05 | 匿名 + 非空 `x-user-id` → 采用该头 | 前置：`req.user` 为 `undefined`/`null`；`x-user-id` 为 `'anon-client-9'`（短于上限）；固定 IP（如 `req.ip = '203.0.113.10'`）；middleware。 | 1. `req.aiGuard.userIdentifier === 'anon-client-9'`；<br>2. **不等于** `sha256Hex('203.0.113.10').slice(0, 16)`；<br>3. `finalize` 后审计行 `userIdentifier` 同为 `'anon-client-9'`。 |
+| UT-AUDIT-UID-06 | 匿名 + 无 `x-user-id` → IP 哈希短前缀 | 前置：无 `req.user`；`x-user-id` 缺失或空串；`x-forwarded-for` 首段或 `req.ip` 固定为 `'198.51.100.20'`（与 `getIpFromRequest` 一致）；middleware。 | 1. `req.aiGuard.userIdentifier === sha256Hex('198.51.100.20').slice(0, 16)`；<br>2. 长度为 **16** 的小写 hex 串（与现网 `slice(0, 16)` 一致）；<br>3. 审计行同值；证明匿名回退与现网一致。 |
+| UT-AUDIT-UID-07 | `req.user` 无 `id` 时走匿名规则 | 前置：`req.user = { clientId: 'web', username: 'no-pk' }`（**无** `id`）；`x-user-id: 'from-header'`；middleware。 | 1. `req.aiGuard.userIdentifier === 'from-header'`（视为无稳定主键，回落匿名头路径）；<br>2. **不得**误用 `username`/`clientId` 当作审计主键；<br>3. 若同时去掉 `x-user-id`，则回退 IP 哈希（可与 UT-AUDIT-UID-06 合取或本行补断言）。 |
+| UT-AUDIT-UID-08 | 匿名超长 `x-user-id` 可截断 | 前置：无 `req.user`；`x-user-id` 为长度明显超过 `AI_MAX_INPUT_CHARS`（默认 1200）或实现声明的 header 上限的重复字符串（如 `'U'.repeat(2000)`）；middleware。 | 1. `userIdentifier` 为非空字符串；若实现截断，则 `length <=` 该上限且为原串前缀；若实现选择不截断，则全等原串——两种皆可，但**不得**回落 IP 哈希（头非空时优先用头）；<br>2. 审计行与上下文一致；<br>3. 不抛未捕获异常、middleware 仍可 `next()`（本行不测 message 过长 400）。 |
+| UT-AUDIT-UID-09 | chat 与 generate 两条路由同一规则 | 前置：`req.user = { id: 7, clientId: 'web' }`；`x-user-id: 'spoof'`；分别对 `POST /api/chat` 与 `POST /api/problems/1/answer/generate` 走 middleware。 | 1. 两次 `req.aiGuard.userIdentifier === '7'`；<br>2. 均不等于 `'spoof'`；<br>3. 不得只修 chat 而漏 generate（`routeKey` 可不同，identifier 规则相同）。 |
+| UT-AUDIT-UID-10 | SQL 审计绑定 `user_identifier`（可选注入 dbPool） | 前置：注入 fake `dbPool.withConnection`，捕获 `INSERT INTO ai_audit_logs` 的参数数组；登录 `id: 99` + 伪造 `x-user-id`；`finalize` 触发 `appendAudit`；等待异步 settle。 | 1. SQL 语句仍含列名 **`user_identifier`**（不做改列名）；<br>2. 对应绑定值 === `'99'`，不等于伪造头；<br>3. 与 NDJSON `userIdentifier` 同值（若本环境同时写文件）。 |
+| UT-AUDIT-UID-11 | 不做：不要求按用户日配额 | 前置：只读本小节与 backlog S9 **不做**；可选两次不同 `req.user.id` 的准入，配额 env 保持全局默认。 | 1. PASS **不**要求 `checkAndConsumeQuota` 按 `user.id` 分桶或 429 `user_daily_*`；<br>2. 本表仅锁审计身份字段；<br>3. 与 residual / **S11** 分界：用户级配额另条。 |
+| UT-AUDIT-UID-12 | 不做：不改字段名 / 不回填历史 / 不改签名换票限流 | 前置：只读断言范围与 backlog S9 **不做**列表。 | 1. 本表**不**要求重命名 NDJSON `userIdentifier` 或表列 `user_identifier`；<br>2. **不**要求迁移/UPDATE 历史审计行；<br>3. **不**断言 HMAC 六头、`exchangeToken` claims、Redis 限流键变更（那些仍属 B31/B33/S1/B51 等既有表）。 |
+| UT-AUDIT-UID-13 | residual：匿名无头时仅 IP 哈希可接受 | 前置：同 UT-AUDIT-UID-06；对照 backlog residual。 | 1. 允许 `userIdentifier` 仅为 16 位 IP 哈希前缀（无更强设备指纹要求）；<br>2. 本表**不得**以「匿名必须登录」或「必须强制 `x-user-id`」为 FAIL；<br>3. 证明 residual 被承认而非本项范围外缺陷。 |
+
 ---
 
 ## 3. 安全防护与集成测试用例 (Security & Integration)
@@ -922,6 +963,17 @@ Prompt 内容来自数据库，不能只依赖客户端 `AI_MAX_INPUT_CHARS` 防
 | SEC-TOKEN-ISO-01 | 机调票不能提权为 admin（安全回归） | 前置：攻击者仅持有合法客户端凭证，完成一次换票；**不**持有任何用户密码；用换票 JWT 依次打 `GET /api/admin/pending-users`、`GET /api/admin/audit-logs`、`POST /api/admin/approve-user`。 | 1. 三条均为 HTTP **403** / `Admin access required`；<br>2. `jwt.verify` 后 `role !== 'admin'` 且无登录身份 `id`/`username`；<br>3. 回归：旧实现 `role:'admin'` 会导致本条 FAIL（期望隔离后 PASS）。 |
 | SEC-TOKEN-ISO-02 | 换票响应与审计不得泄露 JWT_SECRET / client secret | 前置：一次成功换票与一次故意坏签名换票（`signature` 篡改）。 | 1. 成功/失败响应 JSON 字符串**不**包含 `AI_JWT_SECRET`、credentials 明文 secret、完整 `signatureBase` 调试泄露（若有）；<br>2. 成功体仅契约字段 `code`/`data.token`/`data.expiresIn`/`message`；<br>3. 失败体为既有 401 文案（如 `Invalid signature`），无 stack / secret。 |
 | SEC-TOKEN-ISO-03 | 不做 / residual 边界：不测凭证轮换与部署开关 | 前置：只读本小节与 backlog S1 不做/residual。 | 1. 不要求实现密钥轮换或前端删除换票；<br>2. 不要求改 `AI_REQUIRE_SIGNED_HEADERS` 默认或 Nginx；<br>3. 与 §2.31 UT-TOKEN-ISO-08/09 分界一致。 |
+
+### 3.21 S9 登录态审计身份防伪造（`backend/src/tests/ai-guard-user-identifier-integration.test.js` 或扩展 §2.34 同文件）
+
+对应 **S9** 在 **鉴权会话 → Guard middleware → finalize/appendAudit** 链路上的安全回归：攻击者持合法登录会话（或测码直接注入 `req.user`）时，不得用自定义 `x-user-id` 把审计 `userIdentifier`/`user_identifier` 改写成他人身份。单元细节见 §2.34；本表锁「有会话 + 伪造头 → 审计仍为会话主键」与「匿名回退不变」。`it()` 标题须包含下表 ID。
+
+| ID | 用例标题 | 场景描述 | 预期结果 |
+| :--- | :--- | :--- | :--- |
+| SEC-AUDIT-UID-01 | 伪造 `x-user-id` 不能冒充他人审计身份 | 前置：`AI_REQUIRE_SIGNED_HEADERS=false`；独立审计文件；合法登录用户（JWT/`req.user.id === 42`，或完整 `app.handle` 登录后带 Bearer）；对 `POST /api/chat`（body 短消息）设置请求头 `x-user-id: victim-999`（或 `X-User-Id`）；请求进入 Guard 并完成一次 `finalize`（可用 stub 上游快速结束 SSE / 或 middleware+finalize 探针，测码注释写明路径）。 | 1. 审计 NDJSON（或 SQL）该请求行 `userIdentifier === '42'`（或登录用户真实主键的字符串形式）；<br>2. **严格不等于** `'victim-999'`；<br>3. HTTP 不因本头被 4xx 拒绝（本项不把 `x-user-id` 当必填）；证明客户端无法覆盖会话主键写入审计。 |
+| SEC-AUDIT-UID-02 | 匿名路径不受登录态规则误伤 | 前置：无 Bearer / 无 `req.user`；带 `x-user-id: guest-a`；同一审计环境对 AI 路由走 Guard（开关 false，使匿名可过验签门）；触发一次审计写入。 | 1. 审计 `userIdentifier === 'guest-a'`（或截断后的前缀，规则同 UT-AUDIT-UID-05/08）；<br>2. **不得**因「强制只要登录主键」而变成空/`null`/抛错；<br>3. 与 SEC-AUDIT-UID-01 对照：有会话忽略头，无会话可用头。 |
+| IT-AUDIT-UID-01 | generate 登录态同样忽略伪造头 | 前置：已登录 `id` 稳定；`POST /api/problems/:id/answer/generate` 带 `x-user-id: spoof-gen`；缓存命中或 stub 生成均可，只要触发 Guard `finalize`。 | 1. 审计行 `userIdentifier` 等于会话 `String(id)`；<br>2. 不等于 `'spoof-gen'`；<br>3. 与 chat 路径 SEC-AUDIT-UID-01 合取，覆盖两条 AI 路由。 |
+| IT-AUDIT-UID-02 | 不做边界：不测用户配额 / 不改列名 | 前置：只读 backlog S9 **不做** 与本表断言。 | 1. PASS **不**要求按 `userIdentifier` 做日配额 429；<br>2. **不**要求改 `user_identifier` 列名或回填历史；<br>3. 与 §2.34 UT-AUDIT-UID-11/12 分界一致。 |
 
 ---
 
