@@ -92,7 +92,7 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | S6  | feat | scan | auto | done | 助教助手气泡 Markdown + DOMPurify，用户气泡纯文本 |
 | S7  | fix | scan | auto | done | 换票 fetch URL 与签名 path 对齐为 `/api/auth/token` |
 | S8  | fix | scan | auto | done | 对齐 security-ai-guard.md 与签名默认/会话验签/前端 env 名 |
-| S9  | fix | scan | auto | todo | 登录态审计 user_identifier 取会话用户主键，忽略客户端 x-user-id 覆盖 |
+| S9  | fix | scan | auto | done | 登录态审计 user_identifier 取会话用户主键，忽略客户端 x-user-id 覆盖 |
 | S10 | feat | scan | auto | todo | cached_answer 命中且库内为三字段 JSON 时响应顶层带回 summary/keyPoints/nextStep |
 | S11 | fix | scan | auto | todo | 对齐 security-ai-guard.md：去掉未实现的用户/角色配额表述 |
 | E1  | feat | gate | assist | todo | CI/安全/质量基线（契约未冻，禁止周扫描拆成 auto）：依赖漏洞每月出报告、不挡合并；口令与密钥硬编码单独拦截提交；新增代码覆盖率 ≥80%，前后端历史各 ≥60%；文档与实现一致要能拦住；提交说明按公约覆盖全部 type |
@@ -324,3 +324,4 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | 2026-10-25 | S8 完成：对齐 security-ai-guard.md 与签名默认/会话验签/前端 env 名 |
 | 2026-10-25 | B32 完成：生产 PM2 将 AI_REQUIRE_SIGNED_HEADERS 设为 true，代码默认仍为 false |
 | 2026-10-25 | 周扫描：新增 auto S9（登录态审计身份）、S10（cached_answer 三字段响应）、S11（白皮书配额措辞对齐）；无逾期待决；待决表仍空；D3/D4/E1 未拆 |
+| 2026-10-26 | S9 完成：登录态审计 user_identifier 取会话用户主键，忽略客户端 x-user-id 覆盖 |

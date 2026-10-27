@@ -197,6 +197,27 @@ const getIpFromRequest = (req) => {
   return xff || req.ip || req.socket?.remoteAddress || 'unknown';
 };
 
+/**
+ * 解析写入审计的 userIdentifier（S9）。
+ * 登录会话有稳定主键 id 时取 String(id)，忽略客户端 x-user-id；
+ * 否则非空 x-user-id（可按 maxChars 截断）优先，再回退 IP 哈希短前缀。
+ */
+const resolveAuditUserIdentifier = (req, ip, maxChars) => {
+  const rawId = req.user?.id;
+  if (rawId !== undefined && rawId !== null && String(rawId) !== '') {
+    return String(rawId);
+  }
+  const headerVal = req.header('x-user-id');
+  if (headerVal != null && String(headerVal) !== '') {
+    const s = String(headerVal);
+    const limit = Number.isFinite(Number(maxChars)) && Number(maxChars) > 0
+      ? Number(maxChars)
+      : null;
+    return limit && s.length > limit ? s.slice(0, limit) : s;
+  }
+  return sha256Hex(ip).slice(0, 16);
+};
+
 const matchAiRoute = (req) => {
   if (req.method !== 'POST') return null;
   if (req.path === '/api/chat') return 'chat';
@@ -461,6 +482,7 @@ export function createAiGuard({ dbPool = null, redis = null, jwtSecret = null } 
     metrics.rejectedByReason.set(reason, reasonCount + 1);
 
     const requestId = res.getHeader('X-Request-Id') || req.header('x-request-id') || '-';
+    const rejectIp = getIpFromRequest(req);
     appendAudit({
       ts: new Date().toISOString(),
       requestId,
@@ -469,7 +491,8 @@ export function createAiGuard({ dbPool = null, redis = null, jwtSecret = null } 
       reason,
       route: routeKey,
       clientId,
-      ipHash: sha256Hex(getIpFromRequest(req)),
+      userIdentifier: resolveAuditUserIdentifier(req, rejectIp, config.maxInputChars),
+      ipHash: sha256Hex(rejectIp),
       userAgent: req.header('user-agent'),
       method: req.method,
       path: req.path,
@@ -768,13 +791,16 @@ export function createAiGuard({ dbPool = null, redis = null, jwtSecret = null } 
 
     let quotaFinalized = false;
 
+    // S9：登录有稳定主键时取会话 id，忽略客户端 x-user-id；匿名才用头或 IP 哈希回退
+    const userIdentifier = resolveAuditUserIdentifier(req, ip, config.maxInputChars);
+
     req.aiGuard = {
       clientId,
       routeKey,
       missionId,
       promptTokens,
       projectedTokens,
-      userIdentifier: req.header('x-user-id') || sha256Hex(ip).slice(0, 16),
+      userIdentifier,
       pagePath: req.header('x-page-path') || req.path,
       pageTitle: req.header('x-page-title') || '',
       actionName: routeKey === 'chat' ? 'AI 助手对话' : '生成题目解析',
@@ -841,6 +867,7 @@ export function createAiGuard({ dbPool = null, redis = null, jwtSecret = null } 
           reason,
           route: routeKey,
           clientId,
+          userIdentifier,
           ipHash: sha256Hex(ip),
           method: req.method,
           path: req.path,
