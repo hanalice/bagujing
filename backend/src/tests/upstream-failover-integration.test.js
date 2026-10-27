@@ -196,6 +196,9 @@ describe('D21 / P1-5: 主备 Base URL failover 集成', () => {
 
   beforeEach(async () => {
     modelCalls.length = 0;
+    if (app?.aiGuard?.flushAudit) {
+      await app.aiGuard.flushAudit();
+    }
     try { fs.unlinkSync(TEST_AUDIT_PATH); } catch { /* ignore */ }
     resetUpstreamRetryForTests();
     setUpstreamRetryForTests({ jitterMs: [0, 0], sleep: async () => {} });
@@ -340,6 +343,9 @@ describe('D21 / P1-5: 主备 Base URL failover 集成', () => {
     modelCalls.length = 0;
     primaryGenerateMode = 'ok';
     backupGenerateMode = 'ok';
+    if (app?.aiGuard?.flushAudit) {
+      await app.aiGuard.flushAudit();
+    }
     try { fs.unlinkSync(TEST_AUDIT_PATH); } catch { /* ignore */ }
 
     const response = await invokeRoute(app, '/api/problems/42/answer/generate', { force: true });

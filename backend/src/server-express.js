@@ -64,6 +64,7 @@ const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'bagujing-secret-2026';
 
 const aiGuard = createAiGuard({ jwtSecret: JWT_SECRET });
+app.aiGuard = aiGuard;
 if (process.env.REDIS_URL) {
   aiGuard.redis = new Redis(process.env.REDIS_URL);
 }
@@ -1078,6 +1079,7 @@ app.use((error, req, res, next) => {
 
 export {
   app,
+  aiGuard,
   buildPromptMessages,
   promptBudget,
   buildRagContext,

@@ -98,6 +98,9 @@ function jsonPayload(response) {
  * appendAudit 走异步队列，未等齐就 unlink 时，迟到的 server_error 会写进下一次断言。
  */
 async function discardSettledAudit(count) {
+  if (app?.aiGuard?.flushAudit) {
+    await app.aiGuard.flushAudit();
+  }
   await readAuditLines(count);
   try { fs.unlinkSync(TEST_AUDIT_PATH); } catch { /* 文件可能已被清空 */ }
 }
@@ -113,6 +116,9 @@ describe('D12 / P1-5: generate 进程内熔断集成', () => {
 
   beforeEach(async () => {
     modelCalls.length = 0;
+    if (app?.aiGuard?.flushAudit) {
+      await app.aiGuard.flushAudit();
+    }
     try { fs.unlinkSync(TEST_AUDIT_PATH); } catch { /* ignore */ }
     resetUpstreamRetryForTests();
     setUpstreamRetryForTests({ jitterMs: [0, 0], sleep: async () => {} });

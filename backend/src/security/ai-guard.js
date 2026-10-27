@@ -929,6 +929,7 @@ export function createAiGuard({ dbPool = null, redis = null, jwtSecret = null } 
     corsOptions,
     exchangeToken,
     getMetrics,
+    flushAudit: () => auditQueue,
     set dbPool(val) { currentDbPool = val; },
     set redis(val) { currentRedis = val; }
   };
