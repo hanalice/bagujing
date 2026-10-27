@@ -227,10 +227,18 @@ export function createRouteResponse(resolve) {
 // 通过 app.handle 执行真实 Express 路由链并等待响应结束。
 export function invokeRoute(app, route, body, options = {}) {
   return new Promise((resolve, reject) => {
-    const res = createRouteResponse(resolve);
+    const handleResponse = async (response) => {
+      try {
+        if (app?.aiGuard?.flushAudit) {
+          await app.aiGuard.flushAudit();
+        }
+      } catch { /* ignore */ }
+      resolve(response);
+    };
+    const res = createRouteResponse(handleResponse);
     app.handle(createRouteRequest(route, body, options), res, (error) => {
       if (error) reject(error);
-      else if (!res.ended) resolve(res);
+      else if (!res.ended) handleResponse(res);
     });
   });
 }

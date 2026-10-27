@@ -64,6 +64,7 @@ const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'bagujing-secret-2026';
 
 const aiGuard = createAiGuard({ jwtSecret: JWT_SECRET });
+app.aiGuard = aiGuard;
 if (process.env.REDIS_URL) {
   aiGuard.redis = new Redis(process.env.REDIS_URL);
 }
@@ -731,13 +732,22 @@ app.post('/api/problems/:id/answer/generate', authenticateToken, requirePermissi
         upstreamReached: false,
       });
 
+      // S10：库内已是 C41 三字段 JSON 时，响应顶层与未缓存成功路径对齐带回三字段
+      const cachedData = {
+        id: Number(id),
+        answer: detail.answer,
+        cached: true,
+      };
+      const parsedCached = parseGeneratedAnswerJson(detail.answer);
+      if (parsedCached.ok) {
+        cachedData.summary = parsedCached.value.summary;
+        cachedData.keyPoints = parsedCached.value.keyPoints;
+        cachedData.nextStep = parsedCached.value.nextStep;
+      }
+
       return res.json({
         code: 0,
-        data: {
-          id: Number(id),
-          answer: detail.answer,
-          cached: true,
-        },
+        data: cachedData,
         message: 'success',
       });
     }
@@ -1069,6 +1079,7 @@ app.use((error, req, res, next) => {
 
 export {
   app,
+  aiGuard,
   buildPromptMessages,
   promptBudget,
   buildRagContext,

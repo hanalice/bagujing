@@ -22,6 +22,7 @@
 - **换票 fetch URL 与签名 path 对齐 (S7)**：`frontend/src/utils/ai-auth.ts` 的 `fetchAiSessionToken`：实际 `fetch` 的 URL pathname 与 HMAC 签名基串中的 path **均为** `/api/auth/token`（与后端 `POST /api/auth/token` 的 Express `req.path` 一致）；`getApiBase()` 在 `VITE_API_BASE_URL` 未设置时回退与 axios 相同（`/api`），避免拼出裸 `/auth/token`。Vitest 锁发出 URL 与签名 path（§4.8 `UT-FE-TOKEN-URL-*`）。**不做**：改换票 JWT claims / 权限面（S1）；改 AI 路由六头注入（B33）；改后端换票验签算法或路由挂载点。**residual**：机调票权限隔离仍见 S1；登录态/受保护路径 HMAC 六头仍见 B33。
 - **对齐 security-ai-guard 与签名默认/会话验签/前端 env 名 (S8)**：只改公开文档 `docs/security-ai-guard.md`，与当前代码对齐：验签开关 `AI_REQUIRE_SIGNED_HEADERS` 代码默认 `false`；为 `true` 时有登录会话也验签（**B31**）；前端密钥环境变量名为 `VITE_AI_CLIENT_SECRET`；限流/并发有 Redis 已落地（**B51/B52**），配额仍进程内/SQL 未完成；§5.3 不得写成 HMAC 已全面注入。静态读文档锁约见 §2.33 `UT-DOC-GUARD-*`。**不做**：改任何代码或默认值；打开生产签名开关（**B32**）；改 B33/S1/S2 实现范围。**residual**：WAF、自动封禁、成本告警、审计报表仍属未来项；公开文档不写利用步骤。
 - **登录态审计 userIdentifier 取会话主键 (S9)**：`backend/src/security/ai-guard.js` 写入审计/上下文的 `userIdentifier`：当 `req.user` 存在且有稳定主键（如 `id`）时取 `String(id)`，**忽略**客户端 `x-user-id` 覆盖；无登录会话时非空 `x-user-id` 可用（可按现有输入上限截断），否则 IP 哈希短前缀回退（现网 `sha256Hex(ip).slice(0, 16)`）。单测锁上下文与审计行一致（§2.34 `UT-AUDIT-UID-*`）；安全回归见 §3.21 `SEC-AUDIT-UID-*`。**不做**：按用户日配额；改审计表列名/NDJSON 字段名；回填历史行；改签名/换票/限流。**residual**：匿名仍可能只有 IP 哈希；配额仍全局 + `ai_clients` / 进程内（见 **S11**）。
+- **cached_answer 三字段顶层回传 (S10)**：`POST /api/problems/:id/answer/generate` 在 SQLite 业务缓存早退（未触达上游、`cached: true`）时：若库内 `details.answer` 能被与 **C41** 同构的 `parseGeneratedAnswerJson`（或等价）解析为三字段，则响应 `data` **同时**返回 `summary` / `keyPoints` / `nextStep` / `answer` / `cached: true`（与未缓存成功路径顶层字段对齐）；解析失败则保持现状，只返回 `answer` + `cached: true`（旧 HTML）。不调模型；不计配额语义仍属 **A7**（`upstreamReached: false`）。单测/集成见 §2.35 / §3.22。**不做**：改 `force` 重生成；批量改写库内旧 HTML；改前端 `normalizeStructuredAnswer` 优先级；改配额判据。**residual**：存量整篇 HTML 缓存仍无顶层三字段；近似/语义缓存见 D4。
 - **前端多层级质量保障体系 (Frontend QA Strategy)**：
   - **端到端测试 (Frontend E2E - Playwright)**：覆盖核心用户链路（Main Path / Happy Path），利用 `page.route` 对大模型流式 SSE 接口进行轻量 Mock，保障真实路由鉴权、题目浏览及 AI 交互界面的稳定可用；**C42** 另锁解析面板三字段可见性与无整篇 `v-html`；**S6** 另锁助教助手气泡安全 Markdown（§4.1 `E2E-MAIN-04` / `E2E-CHAT-MD-*`）。
   - **状态机与单元测试 (Frontend UT/IT - Vitest)**：针对 Pinia Store（`user`、`settings`、`breadcrumb`）、题目解析归一化/渲染辅助及工具函数，快速验证状态迁移、本地持久化与边界容错；**B33** 另锁登录态 `chat` / `answer/generate` 的 HMAC 六头注入（§4.5 `UT-FE-SIG-*`）；**S3** 另锁助教 `POST /api/chat` 请求体 `messages[]` 尾窗与截断（§4.6 `UT-FE-CHAT-HIST-*`）；**S6** 另锁助手气泡 Markdown→DOMPurify 与用户气泡纯文本（§4.7 `UT-FE-CHAT-MD-*`）；**S7** 另锁换票 `fetch` URL 与签名 path 均为 `/api/auth/token`（§4.8 `UT-FE-TOKEN-URL-*`）。**S8** 只锁公开文档 env 名 `VITE_AI_CLIENT_SECRET`（§2.33），本层不新增前端测码。
@@ -129,7 +130,7 @@
 | :--- | :--- | :--- | :--- |
 | UT-QUOTA-CACHE-01 | cached_answer + upstreamReached:false 记零并回补预扣 | 前置：`AI_REQUIRE_SIGNED_HEADERS=false`；无 dbPool 走内存日配额；`AI_GLOBAL_DAILY_TOKEN_LIMIT` 仅够约 1 次保守预扣（同 A4 失败回补手法）；对 `POST /api/problems/1/answer/generate` 走 `createAiGuard().middleware` 准入后，调用 `finalize({ status: 'ok', reason: 'cached_answer', completionText: 很长的 HTML（≥1KB）, upstreamReached: false })`；再发第二次同路由 middleware。 | 1. 审计 NDJSON 存在 `reason === 'cached_answer'` 的行，且 `promptTokens === 0`、`completionTokens === 0`、`totalTokens === 0`（长 `completionText` 不得按 `ceil(len/4)` 结算）；2. 第二次 `next()` 被调用、HTTP 状态保持可准入（非 429）；3. 证明「上游未触达」路径全额回补预扣。 |
 | UT-QUOTA-CACHE-02 | 连续缓存命中不消耗日配额 | 前置：日 token 上限约等于 1～2 次保守预扣；同一 `clientId` 连续 ≥3 次：middleware 准入 `answer/generate` → `finalize({ status: 'ok', reason: 'cached_answer', completionText: 长 HTML, upstreamReached: false })`。 | 1. ≥3 次全部 `next()`，无一次 `statusCode === 429` / `client_daily_token_limit`；2. 审计中 `reason === 'cached_answer'` 的条数等于请求次数（可统计命中）；3. 每条上述审计的 `totalTokens === 0`。 |
-| UT-QUOTA-CACHE-03 | generate handler 缓存早退必须传 upstreamReached:false | 前置：SQLite 题详情已有非空 `answer`；请求 body 未设 `force`（或 `force !== true`）；spy/stub `model.invoke`（或 `getLlmModel`）与 `req.aiGuard.finalize`；经 handler（或等价抽取路径）处理 `POST /api/problems/:id/answer/generate`。 | 1. **零次**上游 `invoke`/`stream`；2. `finalize` 恰好一次，payload 含 `status: 'ok'`、`reason: 'cached_answer'`、`upstreamReached: false`（`upstreamStatus` 为 `null` 或不计费语义）；3. 响应 HTTP 200，JSON：`code === 0`、`data.cached === true`、`data.answer` 等于库内原文。 |
+| UT-QUOTA-CACHE-03 | generate handler 缓存早退必须传 upstreamReached:false | 前置：SQLite 题详情已有非空 `answer`（本行可用旧 HTML 或任意非空串；**三字段顶层回传**属 **S10** §2.35，本行不锁）；请求 body 未设 `force`（或 `force !== true`）；spy/stub `model.invoke`（或 `getLlmModel`）与 `req.aiGuard.finalize`；经 handler（或等价抽取路径）处理 `POST /api/problems/:id/answer/generate`。 | 1. **零次**上游 `invoke`/`stream`；2. `finalize` 恰好一次，payload 含 `status: 'ok'`、`reason: 'cached_answer'`、`upstreamReached: false`（`upstreamStatus` 为 `null` 或不计费语义）；3. 响应 HTTP 200，JSON：`code === 0`、`data.cached === true`、`data.answer` 等于库内原文；本行**不**因缺顶层 `summary`/`keyPoints`/`nextStep` 判 FAIL（结构化缓存见 UT-CACHE-STRUCT-*）。 |
 | UT-QUOTA-CACHE-04 | 对照：真实生成仍按上游触达计费 | 前置：题无可用缓存答案，或 body `{ "force": true }`；mock `invoke` 返回合法短 JSON 三字段（`{"summary":"…","keyPoints":["…"],"nextStep":"…"}`，对齐 **C41**）；成功路径 `finalize` 走 `reason: 'generated_answer'`（`upstreamReached` 默认 `true` 或显式 `true`，可带 `upstreamStatus: 200`）；本用例 mock **不**附带 `usage`（有 usage 的回写见 §2.26 UT-USAGE-*）。 | 1. 审计 `reason === 'generated_answer'`（或成功生成等价 reason）；2. `totalTokens > 0`（至少含 prompt 估算，不得因 A7 误把生成路径也记零），且 `token_source === 'estimate'`；3. 响应 `data.cached === false`，且 `data` 含可解析的 `summary`/`keyPoints`/`nextStep`（或与入库规范序列化一致的等价载荷）。 |
 | UT-QUOTA-CACHE-05 | 仅 reason=cached_answer 但未传 upstreamReached 仍计费 | 前置：同 UT-QUOTA-CACHE-01 的 Guard 环境；`finalize({ status: 'ok', reason: 'cached_answer', completionText: 长 HTML })`，**故意省略** `upstreamReached`（依赖 Guard 默认 `upstreamReached = true`）。 | 1. 审计该行 `totalTokens > 0` 且 `completionTokens === estimateTokensByText(completionText)`；2. 说明不计费**不**由 `reason` 字符串单独决定，必须由调用方显式传 `upstreamReached: false`（护栏：防止只改 reason 文案却漏传判据）。 |
 
@@ -394,7 +395,7 @@ C22 合入后 problems 关键字召回主路径改为 FTS（失败回退 LIKE）
 
 **不做**：改前端按三字段渲染 / 去掉整篇 `v-html`（属 **C42**，见 §4.1 / §4.3）；继续要求模型吐整篇 HTML（generate `systemPrompt` 不得再硬性要求「仅 body 内 HTML 片段」或强制 `<p>/<h3>/<ul>/<li>` 作为唯一输出形态）。
 
-**residual**：库内旧版整篇 HTML `answer` 如何展示由 C42 处理（§4.1 `E2E-ANSWER-03` / §4.3 `UT-FE-ANSWER-06`）；本表缓存早退（`cached_answer`）仍可原样回传既有 `answer` 字符串，不强制对旧缓存做三字段重解析。
+**residual**：库内旧版整篇 HTML `answer` 如何展示由 C42 处理（§4.1 `E2E-ANSWER-03` / §4.3 `UT-FE-ANSWER-06`）。缓存早退（`cached_answer`）对**不可解析**的旧 HTML 仍原样回传 `answer` + `cached: true`（不强制升级、不得 502）；库内已是合法三字段 JSON 时须在响应顶层带回 `summary`/`keyPoints`/`nextStep`，属 **S10**（§2.35 / §3.22），本表不重复锁该契约。
 
 **测法**：纯函数解析/校验（可导出 `parseGeneratedAnswerJson` 或 handler 内同等模块）+ spy `upsertProblemAnswerById`；集成见 §3.14。允许剥离常见 markdown 代码围栏（`` ```json ... ``` ``）后再 `JSON.parse`。`it()` 标题须包含下表 ID。
 
@@ -717,6 +718,48 @@ C22 合入后 problems 关键字召回主路径改为 FTS（失败回退 LIKE）
 | UT-AUDIT-UID-12 | 不做：不改字段名 / 不回填历史 / 不改签名换票限流 | 前置：只读断言范围与 backlog S9 **不做**列表。 | 1. 本表**不**要求重命名 NDJSON `userIdentifier` 或表列 `user_identifier`；<br>2. **不**要求迁移/UPDATE 历史审计行；<br>3. **不**断言 HMAC 六头、`exchangeToken` claims、Redis 限流键变更（那些仍属 B31/B33/S1/B51 等既有表）。 |
 | UT-AUDIT-UID-13 | residual：匿名无头时仅 IP 哈希可接受 | 前置：同 UT-AUDIT-UID-06；对照 backlog residual。 | 1. 允许 `userIdentifier` 仅为 16 位 IP 哈希前缀（无更强设备指纹要求）；<br>2. 本表**不得**以「匿名必须登录」或「必须强制 `x-user-id`」为 FAIL；<br>3. 证明 residual 被承认而非本项范围外缺陷。 |
 
+### 2.35 S10 `cached_answer` 命中且库内为三字段 JSON 时响应顶层带回 `summary`/`keyPoints`/`nextStep`（`backend/src/tests/answer-cached-structured.test.js` → generate handler / `parseGeneratedAnswerJson`）
+
+对应 **S10**（`docs/backlog.md` §S10）。回归点：现状缓存早退仅返回 `{ id, answer, cached: true }`（约 `server-express.js` `cached_answer` 分支），即使库内 `details.answer` 已是 C41 入库的规范三字段 JSON，响应顶层也**没有** `summary`/`keyPoints`/`nextStep`，与未缓存成功路径（同文件 `cached: false` 分支）字段不对齐。
+
+**做**：
+
+1. `POST /api/problems/:id/answer/generate` 在题详情已有非空 `details.answer` 且未 `force` 时走 SQLite 业务缓存早退：**零次**上游 `invoke`/`stream`；`finalize({ status: 'ok', reason: 'cached_answer', upstreamReached: false, ... })`（配额语义仍属 **A7**，本表不重复锁计费数值）。
+2. 对库内 `answer` 调用与 **C41** 同构的 `parseGeneratedAnswerJson`（或 handler 内等价解析）：若 `ok === true`，响应 HTTP **200**，JSON `code === 0`，`data` **同时**含：
+   - `summary`：与解析值全等的非空字符串；
+   - `keyPoints`：`Array.isArray` 且与解析值深等的字符串数组；
+   - `nextStep`：与解析值全等的非空字符串；
+   - `answer`：等于库内原文（或与 `serializeStructuredAnswer(parsed.value)` 同构的规范串，测码固定一种并断言与库内一致）；
+   - `cached === true`；
+   - 允许保留既有 `id` 等字段。
+3. 若解析失败（旧 HTML、截断 JSON、缺字段、`keyPoints` 类型不对等）：保持现状——HTTP **200**，`code === 0`，`data.cached === true`，`data.answer` 等于库内原文；`data` **不得**出现顶层 `summary` / `keyPoints` / `nextStep`（或三者皆为 `undefined`/`null` 且不得用空串/`[]` 冒充成功结构化）；**不得**因旧缓存形状返回 **502**；**零次**模型调用。
+
+**不做**：改 `force: true` 重生成路径（仍触达上游、`cached === false`）；批量 `UPDATE`/`migrate` 把库内旧 HTML 改写成 JSON；改前端 `normalizeStructuredAnswer` 优先级或 C42 渲染；改 A7 的 `upstreamReached: false` 不计配额语义。
+
+**residual**：存量整篇 HTML 缓存仍无顶层三字段，前端继续走 legacy 纯文本（C42）；近似/语义缓存见 **D4**，本表不测。
+
+**协议 / 时序**（下一阶段 `it()` 须对齐）：
+
+1. 前置：隔离 SQLite（或 stub `getProblemDetail`/`details.answer`）；`AI_REQUIRE_SIGNED_HEADERS=false`；已登录且具备 `study`（或测码注入等价鉴权）；spy/stub `model.invoke`（及 `getLlmModel`/`stream`）断言调用次数。
+2. 请求：`POST /api/problems/:id/answer/generate`，body **无** `force` 或 `force: false`。
+3. 调用序：鉴权 → Guard middleware → handler 读库 →（可选）`parseGeneratedAnswerJson(detail.answer)` → `finalize(reason: 'cached_answer', upstreamReached: false)` → `res.json`；全程 **零次**上游模型。
+4. 对照：同题再发 `{ "force": true }` 时须进入生成路径（本表只断言「不做改 force」边界，完整生成契约仍属 C41）。
+
+**测法**：优先 `backend/src/tests/answer-cached-structured.test.js`（可复用 `answer-structured-json-integration.test.js` / `llm.test.js` 的 handler 探针与 stub 手法）。禁止连真实上游。`it()` 标题须包含下表 ID。
+
+| ID | 用例标题 | 场景描述 | 预期结果 |
+| :--- | :--- | :--- | :--- |
+| UT-CACHE-STRUCT-01 | 库内合法三字段 JSON：缓存命中顶层带回三字段且 cached===true | 前置：题 `details.answer` 预置规范串 `{"summary":"缓存结论","keyPoints":["k1","k2"],"nextStep":"去复盘"}`（与 C41 入库同构）；body 无 `force`；spy `invoke`/`stream` 与 `finalize`。 | 1. HTTP **200**，`code === 0`；<br>2. `data.cached === true`；`data.summary === '缓存结论'`；`data.keyPoints` 深等于 `['k1','k2']`；`data.nextStep === '去复盘'`；`data.answer` 等于库内原文（或同构规范串）；<br>3. **零次**上游 `invoke`/`stream`；`finalize` 恰好 1 次且 `reason === 'cached_answer'`、`upstreamReached === false`。 |
+| UT-CACHE-STRUCT-02 | 旧 HTML 缓存命中：无顶层三字段、模型调用次数为 0 | 前置：题 `details.answer` 预置 `'<p>legacy-html-cache</p><ul><li>x</li></ul>'`；body 无 `force`；spy `invoke`。 | 1. HTTP **200**，`code === 0`，`data.cached === true`，`data.answer` 全等于该 HTML 原文；<br>2. `data.summary` / `data.keyPoints` / `data.nextStep` 均**不存在**或为 `undefined`/`null`（禁止用 `''`/`[]` 冒充结构化成功）；<br>3. `invoke` 次数 === **0**；不得 HTTP 502；`finalize` `reason: 'cached_answer'`、`upstreamReached: false`。 |
+| UT-CACHE-STRUCT-03 | 截断/非法 JSON 缓存：与旧 HTML 同路径（只回 answer） | 前置：分别覆盖库内 `answer`：A) `{"summary":"断`（截断）；B) `{"summary":"s","keyPoints":"不是数组","nextStep":"n"}`；C) 空对象 `{}`；body 无 `force`；spy `invoke`。 | 1. A/B/C 均 HTTP **200**、`cached === true`、`data.answer` 等于各自库内原文；<br>2. 均**无**可用顶层三字段（同 UT-CACHE-STRUCT-02 判据）；<br>3. 均零次 `invoke`；均不得因解析失败改写库或返回 502。 |
+| UT-CACHE-STRUCT-04 | markdown 围栏包裹的库内 JSON 亦可解析出顶层三字段 | 前置：库内 `answer` 为 `` ```json\n{"summary":"围栏S","keyPoints":["K"],"nextStep":"N"}\n``` ``（允许与 C41 围栏剥离规则一致）；body 无 `force`。 | 1. HTTP 200，`cached === true`；<br>2. `data.summary === '围栏S'`、`data.keyPoints` 深等于 `['K']`、`data.nextStep === 'N'`；<br>3. 零次 `invoke`；证明缓存路径复用与 C41 同构解析，而非只认裸 `JSON.parse`。 |
+| UT-CACHE-STRUCT-05 | 顶层字段与未缓存成功路径对齐（键名/形状） | 前置：A) 缓存命中路径，库内合法三字段；B) 对照：无缓存或 `force: true`，stub `invoke` 返回**相同**三字段 JSON；分别取响应 `data` 的键集合。 | 1. A/B 均含键 `summary`、`keyPoints`、`nextStep`、`answer`、`cached`（`typeof keyPoints === 'object' && Array.isArray`）；<br>2. A 的 `cached === true`，B 的 `cached === false`；<br>3. A/B 的三字段值在相同输入下一致（A 来自库，B 来自 stub）；证明 S10 目标是「与未缓存成功路径顶层字段对齐」。 |
+| UT-CACHE-STRUCT-06 | 缓存命中不得写库改写 answer（不做批量翻写） | 前置：库内合法三字段 JSON 或旧 HTML 均可；spy `upsertProblemAnswerById`（及任何 `UPDATE details SET answer=…` 且**新 answer 与旧值不同**的路径）；body 无 `force`。 | 1. HTTP 200，`cached === true`；<br>2. 不得以「迁移/升级旧缓存」为由把 HTML 写成 JSON，或改写已有 JSON 内容；若实现仍调用 upsert 且传入**与库内全等**的 `answer`（现状早退会 upsert 同文），允许，但读回库必须与请求前快照全等；<br>3. 零次 `invoke`。 |
+| UT-CACHE-STRUCT-07 | 不做：force 重生成路径不被本项改写为缓存 | 前置：题已有非空合法三字段 `answer`；body `{ "force": true }`；stub `invoke` 返回另一组三字段（如 summary=`force-new`）；spy `invoke`。 | 1. `invoke` 次数 ≥ **1**（进入真实生成，非缓存早退）；<br>2. HTTP 200，`data.cached === false`，`data.summary === 'force-new'`（或 stub 约定值）；<br>3. 证明 S10 **不做**改 force 路径；本行失败条件不得要求 `force` 也走 `cached: true`。 |
+| UT-CACHE-STRUCT-08 | 不做：upstreamReached:false 配额语义保持（与 A7 合取） | 前置：同 UT-CACHE-STRUCT-01 的结构化缓存命中；spy `finalize`。 | 1. `finalize` payload 含 `upstreamReached: false`、`reason: 'cached_answer'`；<br>2. 本表**不**要求改为计费或省略该判据；<br>3. 与 §2.10 UT-QUOTA-CACHE-03 合取：结构化回传**不得**破坏不计配额。 |
+| UT-CACHE-STRUCT-09 | 不做：不测前端 normalizeStructuredAnswer 优先级 | 前置：只读 backlog S10 **不做** 与本表范围。 | 1. PASS **不**要求改动或断言前端 `normalizeStructuredAnswer` / C42 组件优先级；<br>2. 本表仅锁后端 generate 缓存响应 JSON 形状；<br>3. 前端仍由 §4.3 / §4.1 覆盖。 |
+| UT-CACHE-STRUCT-10 | residual：存量 HTML 无顶层三字段可接受 | 前置：同 UT-CACHE-STRUCT-02；对照 backlog S10 residual。 | 1. 允许响应仅有 `answer` + `cached: true`（无三字段）；<br>2. 本表**不得**以「必须后台批量把 HTML 升 JSON」为 FAIL；<br>3. 近似/语义缓存（D4）不在断言范围。 |
+
 ---
 
 ## 3. 安全防护与集成测试用例 (Security & Integration)
@@ -859,7 +902,7 @@ Prompt 内容来自数据库，不能只依赖客户端 `AI_MAX_INPUT_CHARS` 防
 
 ### 3.14 C41 解析生成三字段 JSON 与失败不入库集成 (`backend/src/tests/answer-structured-json-integration.test.js`)
 
-对应 **C41 / P1-4** 完成标准：经 `app.handle`（鉴权 → Guard → generate handler）走真实生成路径；stub `model.invoke` 返回可控 `content`；成功则 HTTP 200 且响应/库内为三字段；失败则 HTTP **502** 且 `details.answer` 保持请求前快照。前端渲染属 **C42**（§4.1 `E2E-ANSWER-*` / §4.3 `UT-FE-ANSWER-*`），本表禁止断言 Vue/`v-html`。旧 HTML 缓存展示属 residual/C42；`cached_answer` 早退行为仍由 §2.10 / §3.3 覆盖。`it()` 标题须包含下表 ID。
+对应 **C41 / P1-4** 完成标准：经 `app.handle`（鉴权 → Guard → generate handler）走真实生成路径；stub `model.invoke` 返回可控 `content`；成功则 HTTP 200 且响应/库内为三字段；失败则 HTTP **502** 且 `details.answer` 保持请求前快照。前端渲染属 **C42**（§4.1 `E2E-ANSWER-*` / §4.3 `UT-FE-ANSWER-*`），本表禁止断言 Vue/`v-html`。旧 HTML 缓存展示属 residual/C42；配额向的 `cached_answer` 早退仍由 §2.10 / §3.3 覆盖；**库内三字段 JSON 缓存命中顶层带回 summary/keyPoints/nextStep** 属 **S10**（§2.35 / §3.22），本表 IT-ANSWER-JSON-05 只锁旧 HTML residual。`it()` 标题须包含下表 ID。
 
 | ID | 用例标题 | 场景描述 | 预期结果 |
 | :--- | :--- | :--- | :--- |
@@ -867,7 +910,7 @@ Prompt 内容来自数据库，不能只依赖客户端 `AI_MAX_INPUT_CHARS` 防
 | IT-ANSWER-JSON-02 | 模型吐 HTML：502 且 answer 不更新 | 前置：同登录；题 `42` 的 `details.answer` 预置 `'PRE-C41-OLD'`；`force: true`；stub `invoke` 返回 `<p>旧式整篇解析</p><ul><li>x</li></ul>`。 | 1. HTTP **502**，`code === 502`，`message` 表明解析/校验失败（非空可读串即可，禁止静默 200）；<br>2. 读库 `answer === 'PRE-C41-OLD'`（**未**被 HTML 覆盖）；<br>3. 写库调用次数为 0；上游 `invoke` 仍为 1 次（已触达）；`finalize` 为 error（reason 如 `invalid_structured_answer` / `empty_answer` 等价），且不得 `reason: 'generated_answer'`。 |
 | IT-ANSWER-JSON-03 | 缺字段 / keyPoints 非字符串数组 → 502 不入库 | 前置：同 IT-ANSWER-JSON-02 的库快照；分别 stub：A) `{"summary":"s","nextStep":"n"}`（缺 keyPoints）；B) `{"summary":"s","keyPoints":"不是数组","nextStep":"n"}`。 | 1. A/B 均 HTTP **502**、`code === 502`；<br>2. 两次后库内 `answer` 仍为预置快照；<br>3. 无 `generated_answer` 成功审计。 |
 | IT-ANSWER-JSON-04 | 围栏 JSON 成功路径与 prompt 契约 | 前置：`force: true`；stub 返回带 `` ```json `` 围栏的合法三字段；捕获发往模型的 `messages[0]` system。 | 1. HTTP 200、`code === 0`，三字段正确；<br>2. system content 满足 UT-ANSWER-JSON-09（要求 JSON 三字段、无整篇 HTML 硬性指令）；<br>3. 入库成功 1 次。 |
-| IT-ANSWER-JSON-05 | 缓存早退不强制重解析旧 HTML（residual） | 前置：题已有非空旧 HTML `answer`（形如 `<p>legacy</p>`）；body **无** `force` / `force: false`；spy `invoke`。 | 1. HTTP 200，`data.cached === true`，`data.answer` 等于库内旧 HTML 原文；<br>2. **零次** `invoke`；`finalize` `reason: 'cached_answer'`、`upstreamReached: false`；<br>3. 本用例**不**要求把旧 HTML 升级为三字段（属 C42 residual）；亦不得因旧 HTML 形状对缓存路径返回 502。 |
+| IT-ANSWER-JSON-05 | 缓存早退不强制重解析旧 HTML（residual） | 前置：题已有非空旧 HTML `answer`（形如 `<p>legacy</p>`）；body **无** `force` / `force: false`；spy `invoke`。 | 1. HTTP 200，`data.cached === true`，`data.answer` 等于库内旧 HTML 原文；顶层**无**可用 `summary`/`keyPoints`/`nextStep`（与 **S10** residual / UT-CACHE-STRUCT-02 一致）；<br>2. **零次** `invoke`；`finalize` `reason: 'cached_answer'`、`upstreamReached: false`；<br>3. 本用例**不**要求把旧 HTML 升级为三字段；亦不得因旧 HTML 形状对缓存路径返回 502。库内已是三字段 JSON 的缓存顶层回传见 §3.22 **IT-CACHE-STRUCT-***。 |
 | SEC-ANSWER-JSON-01 | 校验失败不得用模型原文污染 answer | 前置：预置 `answer='SAFE'`；`force: true`；stub 返回含 `<script>alert(1)</script>` 与 `javascript:xss()` 的非 JSON 脏串。 | 1. HTTP 502；<br>2. 读库仍为 `'SAFE'`，且**不含** `<script>` / `javascript:`；<br>3. 响应 body（若含 `message`）不得回显完整脏 HTML 作为成功 `data.answer`。 |
 
 ### 3.15 C51 上游 usage 经路由回写审计集成（P1-6）(`backend/src/tests/ai-guard-usage-integration.test.js`)
@@ -974,6 +1017,20 @@ Prompt 内容来自数据库，不能只依赖客户端 `AI_MAX_INPUT_CHARS` 防
 | SEC-AUDIT-UID-02 | 匿名路径不受登录态规则误伤 | 前置：无 Bearer / 无 `req.user`；带 `x-user-id: guest-a`；同一审计环境对 AI 路由走 Guard（开关 false，使匿名可过验签门）；触发一次审计写入。 | 1. 审计 `userIdentifier === 'guest-a'`（或截断后的前缀，规则同 UT-AUDIT-UID-05/08）；<br>2. **不得**因「强制只要登录主键」而变成空/`null`/抛错；<br>3. 与 SEC-AUDIT-UID-01 对照：有会话忽略头，无会话可用头。 |
 | IT-AUDIT-UID-01 | generate 登录态同样忽略伪造头 | 前置：已登录 `id` 稳定；`POST /api/problems/:id/answer/generate` 带 `x-user-id: spoof-gen`；缓存命中或 stub 生成均可，只要触发 Guard `finalize`。 | 1. 审计行 `userIdentifier` 等于会话 `String(id)`；<br>2. 不等于 `'spoof-gen'`；<br>3. 与 chat 路径 SEC-AUDIT-UID-01 合取，覆盖两条 AI 路由。 |
 | IT-AUDIT-UID-02 | 不做边界：不测用户配额 / 不改列名 | 前置：只读 backlog S9 **不做** 与本表断言。 | 1. PASS **不**要求按 `userIdentifier` 做日配额 429；<br>2. **不**要求改 `user_identifier` 列名或回填历史；<br>3. 与 §2.34 UT-AUDIT-UID-11/12 分界一致。 |
+
+### 3.22 S10 `cached_answer` 三字段顶层回传集成（`backend/src/tests/answer-cached-structured-integration.test.js`）
+
+对应 **S10** 在 **鉴权 → Guard → `POST /api/problems/:id/answer/generate` handler → SQLite 缓存早退** 链路上的闭环：须经 `app.handle`（或等价完整中间件链）；题详情预置可控 `details.answer`；spy/stub 上游 `invoke` 断言调用次数为 0；断言响应 JSON 顶层字段。单元细节见 §2.35。配额连续命中不计费仍属 §3.3；C41 真实生成/502 仍属 §3.14。`it()` 标题须包含下表 ID。
+
+| ID | 用例标题 | 场景描述 | 预期结果 |
+| :--- | :--- | :--- | :--- |
+| IT-CACHE-STRUCT-01 | 库内三字段 JSON：缓存命中 HTTP 200 且顶层含三字段 | 前置：有效登录且 `study`；题 `42` 的 `details.answer` 预置 `{"summary":"集成缓存","keyPoints":["a"],"nextStep":"下一步"}`；body **无** `force`；spy `model.invoke`；独立审计可选。 | 1. HTTP **200**，`code === 0`；<br>2. `data.cached === true`；`data.summary === '集成缓存'`；`data.keyPoints` 深等于 `['a']`；`data.nextStep === '下一步'`；`data.answer` 等于库内原文（或同构规范串）；<br>3. `invoke` 次数 === **0**；审计/finalize `reason === 'cached_answer'` 且 `upstreamReached === false`（若断言审计）。 |
+| IT-CACHE-STRUCT-02 | 库内旧 HTML：缓存命中无三字段、零次模型调用 | 前置：同登录；题 `answer` 预置 `'<p>IT-legacy</p>'`；body 无 `force`；spy `invoke`。 | 1. HTTP **200**，`code === 0`，`data.cached === true`，`data.answer === '<p>IT-legacy</p>'`；<br>2. 响应 JSON **不**含可用顶层 `summary`/`keyPoints`/`nextStep`；<br>3. `invoke` === **0**；不得 502。 |
+| IT-CACHE-STRUCT-03 | 连续两次缓存命中均带回三字段且始终不调模型 | 前置：同 IT-CACHE-STRUCT-01 的合法 JSON 缓存；同一 `clientId` 连续 2 次 `POST .../answer/generate`（均无 `force`）；spy `invoke`。 | 1. 两次均 HTTP 200、`cached === true`、三字段值与库内一致；<br>2. 全程 `invoke` 总次数 === **0**；<br>3. 与 §3.3 配额合取时可再断言无 429，但本行最低要求是结构化字段稳定回传。 |
+| IT-CACHE-STRUCT-04 | 对照：force:true 仍走生成且 cached===false（不做边界） | 前置：题已有合法三字段缓存；`{ "force": true }`；stub `invoke` 返回 `{"summary":"forced","keyPoints":["n"],"nextStep":"x"}`。 | 1. `invoke` ≥ 1；HTTP 200，`data.cached === false`，`data.summary === 'forced'`；<br>2. 证明 S10 不把 force 改成缓存早退；<br>3. 写库/生成细节仍以 C41 为准，本行只锁「非缓存」。 |
+| IT-CACHE-STRUCT-05 | 解析失败缓存不得 502、不得污染库 | 前置：预置 `answer='{"summary":"坏'`（截断）；body 无 `force`；读库快照；spy 写库与 `invoke`。 | 1. HTTP **200**（非 502），`cached === true`，`data.answer` 等于截断原文；无顶层三字段；<br>2. 读库仍等于请求前快照；<br>3. `invoke` === **0**。 |
+| SEC-CACHE-STRUCT-01 | 缓存 HTML 含 script 时早退不得当成功三字段，也不得执行路径升级写入 | 前置：库内 `answer` 含 `<script>alert(1)</script><p>x</p>`（旧脏 HTML 存量）；body 无 `force`；spy 写库。 | 1. HTTP 200，`cached === true`，`data.answer` 为库内原文；**无**顶层三字段冒充；<br>2. 不得因「尝试解析失败」而把脏串当 `summary` 返回；<br>3. 不得借机把库改写成未消毒 HTML/JSON（读回等于快照）；前端消毒仍属 C42，本行锁后端早退不升级。 |
+| IT-CACHE-STRUCT-06 | residual / 不做：不要求批量翻写旧 HTML、不测前端优先级 | 前置：只读 backlog S10 residual/**不做**。 | 1. PASS **不**要求迁移脚本把全库 HTML 升 JSON；<br>2. **不**断言前端 `normalizeStructuredAnswer`；<br>3. **不**要求近似/语义缓存（D4）。 |
 
 ---
 
