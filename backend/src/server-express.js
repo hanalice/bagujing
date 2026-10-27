@@ -731,13 +731,22 @@ app.post('/api/problems/:id/answer/generate', authenticateToken, requirePermissi
         upstreamReached: false,
       });
 
+      // S10：库内已是 C41 三字段 JSON 时，响应顶层与未缓存成功路径对齐带回三字段
+      const cachedData = {
+        id: Number(id),
+        answer: detail.answer,
+        cached: true,
+      };
+      const parsedCached = parseGeneratedAnswerJson(detail.answer);
+      if (parsedCached.ok) {
+        cachedData.summary = parsedCached.value.summary;
+        cachedData.keyPoints = parsedCached.value.keyPoints;
+        cachedData.nextStep = parsedCached.value.nextStep;
+      }
+
       return res.json({
         code: 0,
-        data: {
-          id: Number(id),
-          answer: detail.answer,
-          cached: true,
-        },
+        data: cachedData,
         message: 'success',
       });
     }
