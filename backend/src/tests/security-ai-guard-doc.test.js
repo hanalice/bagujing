@@ -1,6 +1,8 @@
 /**
- * S8：对齐 docs/security-ai-guard.md 与签名默认 / 会话验签 / 前端 env 名。
- * 用例 ID 与 docs/test_cases.md §2.33 对齐；只读 Markdown + 对照源码，不发 HTTP / 不连 Redis。
+ * S8 / S11：对齐 docs/security-ai-guard.md。
+ * S8（§2.33）：签名默认 / 会话验签 / 前端 env 名。
+ * S11（§2.36）：去掉未实现的用户/角色配额表述。
+ * 只读 Markdown + 对照源码，不发 HTTP / 不连 Redis / 不调 createAiGuard().middleware。
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -329,5 +331,276 @@ describe('2.33 S8 对齐 security-ai-guard.md（签名默认 / 会话验签 / �
       /未设则不强制验签/.test(switchLine) ||
       /未设置不强制/.test(switchLine);
     assert.ok(notesDefault, '该条须注明默认 false 或未设则不强制验签');
+  });
+});
+
+describe('2.36 S11 对齐 security-ai-guard.md（去掉未实现的用户/角色配额表述）', () => {
+  const doc = fs.readFileSync(DOC_PATH, 'utf8');
+  const guardSrc = fs.readFileSync(GUARD_JS, 'utf8');
+
+  /** 从 checkAndConsumeQuota 起切一段源码，缩小 SQL 断言范围。 */
+  function quotaFnSource(src) {
+    const start = src.indexOf('const checkAndConsumeQuota');
+    assert.ok(start >= 0, 'ai-guard.js 须含 checkAndConsumeQuota');
+    return src.slice(start, start + 2500);
+  }
+
+  it('UT-DOC-QUOTA-01: §4.5 不得把「角色级配额」写成已落地策略', () => {
+    const sec45 = sectionBetween(doc, '### 4.5');
+    const oldBullet =
+      /\*\*角色级配额\*\*[：:].*按用户角色.*日\/?月\s*Token\s*上限/.test(sec45);
+    assert.equal(oldBullet, false, '不得保留无限定的旧「角色级配额」bullet');
+
+    // 若仍提及角色与配额同段，必须带「未实现 / 没有 / 不」等现状否定
+    if (/角色/.test(sec45) && /配额|Token\s*上限/.test(sec45)) {
+      const hasNegation =
+        /没有[\s\S]{0,40}角色|未[\s\S]{0,20}按角色|不[\s\S]{0,20}按[\s\S]{0,20}角色|角色级配额未实现|未实现/.test(
+          sec45,
+        );
+      assert.ok(hasNegation, '若保留角色+配额描述，须明确现状未按角色行覆盖');
+    }
+  });
+
+  it('UT-DOC-QUOTA-02: §4.5 不得把「用户级覆盖」写成已落地策略', () => {
+    const sec45 = sectionBetween(doc, '### 4.5');
+    const oldBullet =
+      /\*\*用户级覆盖\*\*[：:].*单独调优配额/.test(sec45) ||
+      /优先级高于角色配额/.test(sec45);
+    assert.equal(oldBullet, false, '不得保留无限定的旧「用户级覆盖」bullet');
+
+    if (/用户级/.test(sec45) && /配额/.test(sec45)) {
+      const hasNegation =
+        /没有[\s\S]{0,40}用户|未实现|用户级[\s\S]{0,20}配额未实现|不[\s\S]{0,30}按登录用户/.test(
+          sec45,
+        );
+      assert.ok(hasNegation, '若保留用户级+配额描述，须带未实现/没有等限定');
+    }
+  });
+
+  it('UT-DOC-QUOTA-03: §4.5 如实写现状：全局 env + ai_clients，无用户/角色行覆盖', () => {
+    const sec45 = sectionBetween(doc, '### 4.5');
+    const hasGlobalEnv =
+      /AI_GLOBAL_DAILY_TOKEN_LIMIT/.test(sec45) ||
+      /AI_DAILY_TOKEN_LIMIT_PER_CLIENT/.test(sec45) ||
+      /AI_GLOBAL_DAILY_REQUEST_LIMIT/.test(sec45);
+    const hasAiClients =
+      /ai_clients/.test(sec45) &&
+      (/daily_token_limit/.test(sec45) || /daily_request_limit/.test(sec45));
+    assert.ok(
+      hasGlobalEnv || hasAiClients,
+      '§4.5 须写明限额来自全局 env 与/或 ai_clients',
+    );
+
+    const hasCounting =
+      /进程内/.test(sec45) ||
+      (/ai_audit_logs/.test(sec45) && /client_id/.test(sec45)) ||
+      /dbPool/.test(sec45);
+    assert.ok(hasCounting, '§4.5 须写明进程内 Map 与/或按 client_id 审计汇总');
+
+    const deniesUserOrRole =
+      /(没有|未|不).{0,40}(登录用户|用户主键|角色).{0,40}(配额|上限|覆盖)/.test(sec45) ||
+      /(没有|未|不).{0,40}(按登录用户|按.*角色).{0,40}(配额|上限)/.test(sec45) ||
+      /用户级\s*\/\s*角色级配额未实现/.test(sec45);
+    assert.ok(deniesUserOrRole, '§4.5 须明确否定按登录用户或角色行覆盖 Token 上限');
+  });
+
+  it('UT-DOC-QUOTA-04: §4.5「结果」不得宣称已到「具体用户」精细配额管控', () => {
+    const sec45 = sectionBetween(doc, '### 4.5');
+    const resultLine = sec45.split('\n').find((l) => /\*\*结果\*\*/.test(l)) || '';
+    assert.equal(
+      /从[“"]客户端[”"]到[“"]具体用户[”"]的精细化管控/.test(resultLine) ||
+        /从“客户端”到“具体用户”的精细化管控/.test(resultLine),
+      false,
+      '不得再写无限定的「从客户端到具体用户的精细化管控」',
+    );
+    // 允许 429 / client/全局粒度
+    assert.ok(
+      /429|client|全局/.test(sec45),
+      '允许写超限拒绝与 client/全局粒度',
+    );
+  });
+
+  it('UT-DOC-QUOTA-05: §7 禁止 users/roles 表实时下发与 User>Role>Global 优先级链', () => {
+    const sec7 = sectionBetween(doc, '## 7.');
+    assert.equal(
+      /通过\s*`users`\s*与\s*`roles`[\s\S]{0,40}实时下发/.test(sec7),
+      false,
+      '§7 不得把 users/roles 实时下发写成现行配置',
+    );
+    // 无「未实现」限定的优先级链禁止出现
+    const priorityAsCurrent =
+      /User\s*>\s*Role\s*>\s*Global(\s*Env)?/.test(sec7) &&
+      !/(没有|未|不).{0,80}User\s*>\s*Role/.test(sec7);
+    assert.equal(
+      priorityAsCurrent,
+      false,
+      '§7 不得出现无「未实现」限定的 User > Role > Global 优先级链',
+    );
+    assert.equal(
+      /\*\*动态配额\*\*[：:].*users[\s\S]{0,80}roles[\s\S]{0,80}User\s*>\s*Role/.test(sec7),
+      false,
+      '不得保留旧「动态配额」bullet',
+    );
+  });
+
+  it('UT-DOC-QUOTA-06: §7 列出真实配额配置源（全局 env / ai_clients）', () => {
+    const sec7 = sectionBetween(doc, '## 7.');
+    const hasGlobal =
+      /AI_GLOBAL_DAILY_TOKEN_LIMIT/.test(sec7) ||
+      /AI_GLOBAL_DAILY_REQUEST_LIMIT/.test(sec7);
+    const hasPerClient =
+      /AI_DAILY_TOKEN_LIMIT_PER_CLIENT/.test(sec7) ||
+      /AI_DAILY_REQUEST_LIMIT_PER_CLIENT/.test(sec7);
+    const hasAiClientsCols =
+      /ai_clients/.test(sec7) &&
+      (/daily_token_limit/.test(sec7) || /日\s*Token/.test(sec7) || /请求限额/.test(sec7));
+    assert.ok(
+      (hasGlobal && hasPerClient) || hasAiClientsCols,
+      '§7 须出现全局日限额 env 与 per-client env，或 ai_clients + 日限额列',
+    );
+    assert.ok(
+      /进程内|SQLite|未迁 Redis/.test(sec7),
+      '§7 须注明计数仍进程内 / SQLite（或未迁 Redis）',
+    );
+    assert.equal(
+      /\*\*动态配额\*\*[：:].*`users`[\s\S]{0,40}`roles`/.test(sec7),
+      false,
+      '不得用「动态配额 + users/roles」替代真实源',
+    );
+  });
+
+  it('UT-DOC-QUOTA-07: 清单：用户级配额不得标为已完成', () => {
+    const lines = checklistLines(doc);
+    assert.equal(
+      lines.some(
+        (l) =>
+          /^-\s\[x\]/.test(l) &&
+          /多租户\/多角色隔离策略（用户级配额、角色继承）/.test(l),
+      ),
+      false,
+      '不得仍为 - [x] 多租户/多角色隔离策略（用户级配额、角色继承）原文',
+    );
+
+    const withUserQuota = lines.filter((l) => /用户级配额|按角色配额|角色级.*配额|用户级\/角色级\s*Token\s*配额/.test(l));
+    for (const line of withUserQuota) {
+      assert.ok(
+        /^-\s\[\s\]/.test(line),
+        `含用户级/角色级配额语义的清单项必须未完成：${line}`,
+      );
+    }
+
+    // 若保留 [x] 的角色权限条，正文不得再含用户级配额
+    const doneRoleLines = lines.filter(
+      (l) => /^-\s\[x\]/.test(l) && /角色/.test(l),
+    );
+    for (const line of doneRoleLines) {
+      assert.equal(
+        /用户级配额|按角色配额/.test(line),
+        false,
+        `已勾选的角色相关条不得含用户级配额语义：${line}`,
+      );
+    }
+  });
+
+  it('UT-DOC-QUOTA-08: 清单：配额 Redis / WAF / 封禁 / 告警 / 报表仍未完成', () => {
+    const lines = checklistLines(doc);
+    const quotaRedisOpen = lines.some(
+      (l) =>
+        /^-\s\[\s\]/.test(l) &&
+        /配额/.test(l) &&
+        (/Redis|完全态/.test(l)),
+    );
+    assert.ok(quotaRedisOpen, '配额迁移到 Redis / 配额完全态须保持未完成');
+
+    const stillOpen = (kw) =>
+      lines.some((l) => /^-\s\[\s\]/.test(l) && l.includes(kw));
+    assert.ok(stillOpen('WAF'), 'WAF 须仍为未勾选');
+    assert.ok(stillOpen('自动封禁'), '自动封禁须仍为未勾选');
+    assert.ok(stillOpen('成本告警'), '成本告警须仍为未勾选');
+    assert.ok(
+      lines.some((l) => /^-\s\[\s\]/.test(l) && /审计/.test(l) && /报表|可视化/.test(l)),
+      '审计可视化/报表须仍为未勾选',
+    );
+
+    for (const kw of ['WAF', '自动封禁', '成本告警']) {
+      assert.equal(
+        lines.some((l) => /^-\s\[x\]/.test(l) && l.includes(kw)),
+        false,
+        `不得因本项把 ${kw} 改成 [x]`,
+      );
+    }
+  });
+
+  it('UT-DOC-QUOTA-09: 全文禁止把未实现的用户/角色配额标成验收已通过', () => {
+    const sec8 = sectionBetween(doc, '## 8.');
+    assert.equal(
+      /按登录用户.*日限额已实现|角色日限额已实现|用户级配额已实现|角色配额已实现/.test(sec8),
+      false,
+      '§8 不得宣称按登录用户/角色日限额已实现',
+    );
+    // 允许保留 client/全局日配额 429
+    assert.ok(
+      /日配额|全局配额/.test(sec8) && /429/.test(sec8),
+      '允许保留达到日配额或全局配额后 429',
+    );
+    assert.equal(
+      /user_daily_|role_daily_/.test(sec8),
+      false,
+      '§8 不得把日配额改写成 user/role reason',
+    );
+  });
+
+  it('UT-DOC-QUOTA-10: 对照代码：无 users/roles 配额 SQL', () => {
+    const quotaSrc = quotaFnSource(guardSrc);
+    assert.equal(
+      /FROM\s+users\b/i.test(quotaSrc),
+      false,
+      '配额路径 SQL 不得 FROM users',
+    );
+    assert.equal(
+      /FROM\s+roles\b/i.test(quotaSrc),
+      false,
+      '配额路径 SQL 不得 FROM roles',
+    );
+    assert.ok(
+      /FROM\s+ai_clients\b/i.test(quotaSrc) || /FROM\s+ai_audit_logs\b/i.test(quotaSrc),
+      '有 db 时须可见 FROM ai_clients 与/或 FROM ai_audit_logs',
+    );
+    assert.ok(/client_id/.test(quotaSrc), '配额汇总须按 client_id');
+  });
+
+  it('UT-DOC-QUOTA-11: 不做：不要求改运行时 / 不实现用户角色配额 / 不改签名默认', () => {
+    assert.ok(
+      guardSrc.includes(REQUIRE_SIGNED_DEFAULT),
+      'ai-guard.js 默认解析式仍为 ?? false（本表不要求改成 true）',
+    );
+    assert.equal(
+      /user_daily_token_limit|user_daily_request_limit/.test(guardSrc),
+      false,
+      '本表不要求实现 user_daily_* reason（断言源码仍无即可）',
+    );
+    // 文档对齐边界：本表只锁配额措辞，不强制改运行时
+    assert.ok(
+      /没有[\s\S]{0,60}(登录用户|角色)|用户级[\s\S]{0,20}配额未实现/.test(doc),
+      '文档须承认用户/角色配额未实现（锁措辞，不改代码）',
+    );
+  });
+
+  it('UT-DOC-QUOTA-12: residual：用户/角色日限额另条；公开文档无利用步骤', () => {
+    const exploitHints = [
+      /openssl\s+[^\n]+HMAC/i,
+      /node\s+-e[\s\S]{0,200}X-Signature/,
+      /curl[\s\S]{0,300}X-Signature[\s\S]{0,200}http/,
+    ];
+    for (const re of exploitHints) {
+      assert.equal(re.test(doc), false, `不得给出可复现伪造 HMAC 配方：${re}`);
+    }
+    assert.ok(/HMAC-SHA256/.test(doc), '允许保留 HMAC-SHA256');
+    // residual：不以「文档未实现用户配额」为由要求改代码——源码仍无 user 配额即 PASS
+    assert.equal(
+      /FROM\s+users\b[\s\S]{0,80}daily_token_limit/i.test(guardSrc),
+      false,
+      '本阶段不得以文档对齐为由实现 users 表配额 SQL',
+    );
   });
 });
