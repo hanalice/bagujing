@@ -95,6 +95,9 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | S9  | fix | scan | auto | done | 登录态审计 user_identifier 取会话用户主键，忽略客户端 x-user-id 覆盖 |
 | S10 | feat | scan | auto | done | cached_answer 命中且库内为三字段 JSON 时响应顶层带回 summary/keyPoints/nextStep |
 | S11 | fix | scan | auto | done | 对齐 security-ai-guard.md：去掉未实现的用户/角色配额表述 |
+| S12 | fix | scan | auto | todo | 无 Redis 时 middleware 内存 nonce 按 TTL 过期淘汰 |
+| S13 | feat | scan | auto | todo | 有 Redis 时日配额预扣/回补走 Redis，否则内存 Map |
+| S14 | fix | scan | auto | todo | 对齐 security-ai-guard.md：去掉「月配额」已落地暗示，只写日配额 |
 | E1  | feat | gate | assist | todo | CI/安全/质量基线（契约未冻，禁止周扫描拆成 auto）：依赖漏洞每月出报告、不挡合并；口令与密钥硬编码单独拦截提交；新增代码覆盖率 ≥80%，前后端历史各 ≥60%；文档与实现一致要能拦住；提交说明按公约覆盖全部 type |
 
 
@@ -272,6 +275,24 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 - **不做**：改 `ai-guard.js` 或任何运行时代码；实现用户/角色配额（另条）；打开或改签名默认值。
 - **residual**：真要做用户/角色日限额需 schema 与产品口径，不塞进本文档对齐项。
 
+### S12
+
+- **做**：`backend/src/security/ai-guard.js` 在**无 Redis** 且强制验签走 middleware 内存 `nonces` Map 时，写入的 nonce 必须在 `nonceTtlMs` 后淘汰（对齐同文件 `exchangeToken` 路径对 `nonceCache` 的 `setTimeout` 删除，或等价按时间戳惰性清理）；过期后同一 nonce 可再次使用。单测 `it()` 标题含用例 ID：注入假时钟/`nonceTtlMs` 后，TTL 内重放仍 401/`replay_blocked`；TTL 外不再因旧条目误杀。有 Redis 时仍只走现有 `SET NX PX`，本项不改。
+- **不做**：改 `AI_REQUIRE_SIGNED_HEADERS` 默认值；改 Redis nonce 键格式；引入真 Redis 集成测；扩大为通用 LRU 框架。
+- **residual**：无 Redis 时防重放仍是单进程有效；日切 `refreshDailyStateIfNeeded` 清空可保留作兜底。公开表不写重放利用步骤。
+
+### S13
+
+- **做**：存在 Redis 客户端时，`checkAndConsumeQuota` / `adjustQuotaTokens` 里进程内日配额计数（`usage.globalRequests` / `usage.globalTokens` / `usage.clients`）改为 Redis 键：按 UTC 日（与现 `nowDayKey` 一致）切分并设 TTL 覆盖到次日；预扣、失败/abort 回补、成功按 delta 调整的语义与现内存路径一致。无 Redis 时保持现有 Map。有 `dbPool` 时对 `ai_clients` 限额与 `ai_audit_logs` 按日汇总的校验**保留**。单测注入 mock Redis（风格对齐 B51/B52）。可同步 `docs/security-ai-guard.md` 清单：将「有 Redis 时日配额计数」标为已完成（类 B51），「用户/角色配额」仍未完成。
+- **不做**：改默认限额数字；实现月配额；实现用户/角色配额；要求生产必须配置 Redis；真集群压测或改 PM2/Nginx。
+- **residual**：无 Redis 时文档「单进程有效」仍成立；生产是否配 Redis 属运维，不改代码默认连库行为。
+
+### S14
+
+- **做**：只改 `docs/security-ai-guard.md`（及锁文档的只读单测，风格对齐 S8/S11）：①凡「日/月配额」等暗示**月**配额已计数或已有月限额 env 的措辞，改为与代码一致——仅有按 `nowDayKey` 的**日**配额（全局 env + `ai_clients` / 审计汇总）；不得写月限额已落地。②文末「配额迁移到 Redis / 配额完全态」若仍含「日/月」字样，改为「日配额」；在 S13 合入前该项可继续标未完成。公开文档不写利用步骤。
+- **不做**：改 `ai-guard.js` 或任何运行时代码；实现月配额或用户/角色配额；打开签名默认值；抢做 S13 的 Redis 配额实现。
+- **residual**：真要做月限额或用户级配额需另开条目（含产品口径与 schema）。S13 负责 Redis 日计数代码切片。
+
 ### E1
 
 登记用，契约未冻。禁止周扫描把本项改成 `auto` 或拆子项；由人拆。
@@ -327,3 +348,4 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | 2026-10-26 | S9 完成：登录态审计 user_identifier 取会话用户主键，忽略客户端 x-user-id 覆盖 |
 | 2026-10-27 | S10 完成：cached_answer 命中且库内为三字段 JSON 时响应顶层带回 summary/keyPoints/nextStep |
 | 2026-10-28 | S11 完成：对齐 security-ai-guard.md：去掉未实现的用户/角色配额表述 |
+| 2026-10-29 | 周扫描：新增 auto S12（无 Redis 时 nonce TTL 淘汰）、S13（有 Redis 时日配额走 Redis）、S14（白皮书去掉月配额暗示）；无逾期待决；待决表仍空；D3/D4/E1 未拆 |
