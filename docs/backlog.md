@@ -95,10 +95,17 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | S9  | fix | scan | auto | done | 登录态审计 user_identifier 取会话用户主键，忽略客户端 x-user-id 覆盖 |
 | S10 | feat | scan | auto | done | cached_answer 命中且库内为三字段 JSON 时响应顶层带回 summary/keyPoints/nextStep |
 | S11 | fix | scan | auto | done | 对齐 security-ai-guard.md：去掉未实现的用户/角色配额表述 |
+| E1  | feat | gate | assist | split | 已拆为 E11–E17；月报与现有测试/ESLint 门禁不另开实现项 |
+| E11 | feat | gate | auto | todo | 提交说明脚本：feat 四段、refactor 三段、轻量 type 有正文；钩子与日修沙盒共用 |
+| E12 | feat | gate | auto | todo | PR 使用与 E11 同一套提交说明校验 |
+| E13 | feat | gate | auto | todo | pre-commit 拦截暂存区硬编码口令、密钥、私钥与连接串 |
+| E14 | feat | gate | auto | todo | qa-report 采集前后端行覆盖率并写入报告，不因比例失败 |
+| E15 | feat | gate | assist | todo | 历史行覆盖率前后端各 ≥60% 才拦截（E14 出数字前禁止改 auto） |
+| E16 | feat | gate | assist | todo | PR 新增行覆盖率 ≥80% 才失败（E14 合入前禁止改 auto） |
+| E17 | feat | gate | auto | todo | 部署文档 §3 环境变量名与代码及 .env.example 不一致则单测失败 |
 | S12 | fix | scan | auto | todo | 无 Redis 时 middleware 内存 nonce 按 TTL 过期淘汰 |
 | S13 | feat | scan | auto | todo | 有 Redis 时日配额预扣/回补走 Redis，否则内存 Map |
 | S14 | fix | scan | auto | todo | 对齐 security-ai-guard.md：去掉「月配额」已落地暗示，只写日配额 |
-| E1  | feat | gate | assist | todo | CI/安全/质量基线（契约未冻，禁止周扫描拆成 auto）：依赖漏洞每月出报告、不挡合并；口令与密钥硬编码单独拦截提交；新增代码覆盖率 ≥80%，前后端历史各 ≥60%；文档与实现一致要能拦住；提交说明按公约覆盖全部 type |
 
 
 ---
@@ -295,13 +302,59 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 
 ### E1
 
-登记用，契约未冻。禁止周扫描把本项改成 `auto` 或拆子项；由人拆。
+已由人拆为 E11–E17。周扫描不得把本父项改回 `todo`，不得把 E15/E16 改成 `auto`，不得把 OSV 接进 `qa.yml` 或让扫描器改本队列。
 
-- **依赖漏洞**：每月 OSV-Scanner 出报告，任意等级都记录，不阻断合并。严重与高危列入后续 milestone，排期看当时计划。见 `docs/dependency-vulnerability-scanning.md`。扫描器不写本队列。
-- **口令与密钥**：单独检查，不并进漏洞扫描。命中硬编码的密码、token、私钥或连接串则拒绝提交，输出必须带位置和建议改法。
-- **质量**：现有测试失败与后端 ESLint error 为 0 的门禁保持。另加覆盖率：本次新增代码 ≥80%，前端历史与后端历史各 ≥60%。行、分支或语句的统计口径在拆分时再定。
-- **文档**：与实现一致，且不一致时要能拦住提交或 CI。对照哪些文件在拆分时再定。
-- **提交说明**：`.githooks/commit-msg` 与 PR 检查对齐 `docs/git-commit-convention.md` 和 `.agents/skills/commit-message/SKILL.md`。`feat` 四段、`fix` 三段、`refactor` 为动机 / 变更 / 验证；`docs` / `chore` / `test` / `perf` / `ci` 为简要要点。轻量 type 不要写成 `feat` 长模板。
+- **依赖漏洞**：每月 OSV-Scanner 出报告，任意等级都记录，不阻断合并。已落地，见 `docs/dependency-vulnerability-scanning.md`。严重与高危仍按后续 milestone 排期。不另开实现项。
+- **口令与密钥**：E13。单独检查，不并进漏洞扫描。
+- **质量**：现有测试失败与后端 ESLint error 为 0 的门禁保持。覆盖率口径定为**行覆盖率**。采集见 E14；历史各 ≥60% 见 E15；本次新增 ≥80% 见 E16。
+- **文档**：E17，只锁 `docs/deployment-and-operations.md` §3。
+- **提交说明**：E11 为本地钩子与日修沙盒，E12 为 PR。对齐 `docs/git-commit-convention.md`。
+
+### E11
+
+- **做**：抽出可单独喂消息文件的校验脚本，`.githooks/commit-msg` 与 `scripts/automation/lib/git-sandbox.sh` 都调用它。header 仍为 Conventional Commits。`fix` 仍要「问题现象」「根因分析」「解决方案」。`feat` 在「背景」「设计」之外再要「变更内容」「测试与兼容性」（标题与公约 §4.2 一致）。`refactor` 要「动机」「变更内容」「验证」（公约 §4.3）。`docs` / `chore` / `test` / `perf` / `ci` 在 header 之外至少一行非空正文。`style` / `build` / `revert` 以及 Merge / Revert / Initial commit / Release / Version 仍只查 header 或直接放行。用样例消息做断言：缺段失败、齐全通过、轻量 type 空正文失败、有一行正文通过。
+- **不做**：改历史提交；加 PR/CI 检查（E12）；密钥扫描（E13）；把轻量 type 写成 feat 四段。
+- **residual**：`COMMIT_MSG_GATE=off` 跳过保持。不重写 `.agents/skills/commit-message/SKILL.md` 全文。
+
+### E12
+
+- **做**：PR 的 CI 对本次提交调用 E11 的同一脚本，失败则该检查失败。豁免与钩子相同。断言锁住：入口是 E11 的脚本，不是第二份规则。
+- **不做**：改 E11 的段落规则；在 pre-commit 再跑一遍提交说明。
+- **residual**：E11 未合入时不得另写一套规则。Merge 提交保持豁免。
+
+### E13
+
+- **做**：`.githooks/pre-commit` 在 `qa-report.sh` 之前检查暂存 diff。命中则退出码非 0，输出 `文件:行`，并说明明文不要入库、改走环境变量。只认三类：① PEM 私钥块（`BEGIN` 与 `PRIVATE KEY`）；② 带用户名和密码的 URL（`://` … `:` … `@`）；③ 变量名含 `PASSWORD`、`SECRET`、`TOKEN`、`API_KEY`、`PRIVATE_KEY` 之一，且右侧是长度不少于 8 的引号字面量。放行：字面量是 `change_me`、以 `your_` 或 `example` 开头，以及路径属于 `*.example`、`docs/**`、`*.test.js`、`*.spec.ts`、`*.test.ts`、`package-lock.json`。用构造的 diff 文本做单测，命中与放行都要有断言。
+- **不做**：并进 OSV 或 `vulnerability-report.yml`；扫描 git 历史；升级依赖；让 `qa.yml` 因漏洞失败；改写已入库的密钥。
+- **residual**：混淆或编码后的秘密、已在历史中的密钥，本项不清除。
+
+### E14
+
+- **做**：`scripts/qa-report.sh` 采集行覆盖率并写入 `docs/qa_report.md`。后端沿用 `npm run test:coverage`（`src/**`，排除 `src/tests/**`）。前端用 Vitest 行覆盖率，只统计 `frontend/src`，不含 e2e。报告里要有后端、前端两个可解析的百分比。比例高低都不得让门禁失败。采集命令本身跑不起来则失败。
+- **不做**：因覆盖率比例拦截（E15/E16）；为凑比例改业务代码；把 E2E 算进行覆盖率。
+- **residual**：历史 ≥60% 与新增行 ≥80% 仍是 E15/E16，禁止周扫描提前改成 `auto`。
+
+### E15
+
+分级保持 `assist`。禁止周扫描改成 `auto`。仅当 E14 已合入，且报告中的前端与后端历史行覆盖率都已经 ≥60%，才由人把队列表改为 `auto`。任一侧低于 60% 时保持 `assist`，补测试另开条目。
+
+- **做**：改为 `auto` 之后，沿用 E14 的行覆盖率；前端历史或后端历史低于 60% 时 `qa-report.sh` 退出码非 0，从而本地钩子与 `qa.yml` 一起拦住。
+- **不做**：改成按分支或语句统计；用缩小 include 或删文件凑门槛；实现 E16 的 diff 门槛。
+- **residual**：未达标时的补测试不在本项。
+
+### E16
+
+分级保持 `assist`。禁止周扫描改成 `auto`。E14 的全量行覆盖率采集合入之后，才由人改为 `auto`。
+
+- **做**：改为 `auto` 之后，只在 PR 上计算本次 diff 新增可执行行的行覆盖率，低于 80% 则 CI 失败。测试文件与 E2E 不计入。本地 pre-commit 不单独跑 diff。
+- **不做**：改 E15 的历史全库门槛；本地每次提交都做 diff 覆盖率。
+- **residual**：E14 未合入前不能改 `auto`。
+
+### E17
+
+- **做**：单测锁 `docs/deployment-and-operations.md` §3 表格第一列的环境变量名。表中每个名字必须在后端 `process.env.<名>` 或前端 `import.meta.env.<名>` 出现（`VITE_` 前缀只查前端）。`backend/.env.example` 与 `frontend/.env.example` 里的键必须出现在该节的表中。缺任一侧则测试失败。允许补表或补 example 使测试变绿，不得删掉代码里仍在读的变量来凑通过。
+- **不做**：改 `docs/security-ai-guard.md`（S8/S11/S14）；对齐散文、架构图或 Nginx 段落；新增环境变量。
+- **residual**：两份 `.env.example` 都没有的内部开关不要求进表。
 
 ---
 
@@ -349,3 +402,4 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | 2026-10-27 | S10 完成：cached_answer 命中且库内为三字段 JSON 时响应顶层带回 summary/keyPoints/nextStep |
 | 2026-10-28 | S11 完成：对齐 security-ai-guard.md：去掉未实现的用户/角色配额表述 |
 | 2026-10-29 | 周扫描：新增 auto S12（无 Redis 时 nonce TTL 淘汰）、S13（有 Redis 时日配额走 Redis）、S14（白皮书去掉月配额暗示）；无逾期待决；待决表仍空；D3/D4/E1 未拆 |
+| 2026-10-29 | 人拆 E1：父项 split；E11–E14、E17 为 auto+todo 并排在 S12–S14 之前；E15/E16 保持 assist |
