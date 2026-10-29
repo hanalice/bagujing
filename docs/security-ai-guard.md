@@ -11,7 +11,7 @@
 3. **自动化脚本重放/高频攻击**（短时间拖垮服务或耗尽预算）。
 4. **无审计闭环**（事后无法定位谁、在什么时候、以何种模式滥用）。
 
-目前设计目标已演进为：在集成完整账号体系的基础上，实现按角色继承、按用户覆盖的精细化成本控制、调用识别、攻击阻断与日志审计。
+目前设计目标已演进为：在集成完整账号体系的基础上，实现可识别调用方的成本硬边界、攻击阻断与日志审计。配额按全局 env 与 `ai_clients`（client 粒度）收口；按登录用户 / 角色行覆盖的 Token 配额**尚未**实现。
 
 ---
 
@@ -70,13 +70,13 @@
 
 ### 4.5 成本无上限与身份粒度不足
 
-- **威胁**：即便有速率限制，全天累计成本仍可能失控；且无法区分究竟是哪个具体用户消耗了 Token。
-- **策略**：
-  - **角色级配额**：按用户角色（如 `admin`、`user`）设置默认日/月 Token 上限。
-  - **用户级覆盖**：支持为特定高价值用户单独调优配额，优先级高于角色配额。
-  - **全局配额回退**：若无具体配置，则回退到系统全局硬边界（`.env`）。
+- **威胁**：即便有速率限制，全天累计成本仍可能失控；审计可记登录用户主键，但配额键仍按 client / 全局，无法按人限额。
+- **策略**（现状，与 `checkAndConsumeQuota` 一致）：
+  - **全局 env 硬边界**：`AI_GLOBAL_DAILY_TOKEN_LIMIT` / `AI_GLOBAL_DAILY_REQUEST_LIMIT`，以及按 client 的 `AI_DAILY_TOKEN_LIMIT_PER_CLIENT` / `AI_DAILY_REQUEST_LIMIT_PER_CLIENT`。
+  - **`ai_clients` 可选覆盖**：有 `dbPool` 时可读取 `daily_token_limit` / `daily_request_limit`；用量按 `ai_audit_logs` 按 `client_id` 汇总。
   - 日/月配额计数仍为进程内 Map / SQLite `dbPool`，**尚未**迁到 Redis INCR。
-- **结果**：配额耗尽即拒绝，实现从“客户端”到“具体用户”的精细化管控。
+  - **没有**按登录用户主键或 `roles` 行覆盖日/月 Token 上限（用户级 / 角色级配额未实现）。
+- **结果**：超限拒绝（`429`，如 `global_daily_token_limit` / `client_daily_token_limit`）；管控粒度止于全局与 client，而非具体用户。
 
 ### 4.6 事后不可追踪
 
@@ -183,7 +183,7 @@ sha256Hex(`${method}:${path}:${JSON.stringify(body)}`)
 - 强制验签：`AI_REQUIRE_SIGNED_HEADERS`（代码默认 `false`；未设则不强制验签；为 `true` 时有登录会话也验签，见 **B31**）
 - 允许来源：`AI_ALLOWED_ORIGINS`
 - 客户端凭证：`AI_CLIENT_CREDENTIALS`
-- **动态配额**：通过 `users` 与 `roles` 数据表实时下发（优先级：User > Role > Global Env）；计数仍进程内 / SQLite，未迁 Redis
+- **配额限额源**（现状）：全局 `AI_GLOBAL_DAILY_TOKEN_LIMIT` / `AI_GLOBAL_DAILY_REQUEST_LIMIT`，按 client 的 `AI_DAILY_TOKEN_LIMIT_PER_CLIENT` / `AI_DAILY_REQUEST_LIMIT_PER_CLIENT`；可选 `ai_clients.daily_token_limit` / `daily_request_limit`。计数仍进程内 Map / SQLite，未迁 Redis。**没有**从 `users` / `roles` 表下发或按 User > Role > Global 覆盖 Token 上限
 - 输入/输出限制：`AI_MAX_INPUT_CHARS`、`AI_MAX_COMPLETION_TOKENS`
 - 超时：`AI_UPSTREAM_TIMEOUT_MS`、`AI_SSE_IDLE_TIMEOUT_MS`
 - 限流：`AI_RATE_LIMIT_CLIENT_PER_MINUTE`、`AI_RATE_LIMIT_CLIENT_PER_HOUR`、`AI_RATE_LIMIT_IP_PER_MINUTE`（有 Redis 时 `rl:*` INCR，**B51**）
@@ -217,7 +217,8 @@ sha256Hex(`${method}:${path}:${JSON.stringify(body)}`)
 ---
 
 - [x] 前端敏感头下沉到后端签发短时票据 / 接入 JWT 统一认证
-- [x] 多租户/多角色隔离策略（用户级配额、角色继承）
+- [x] 多角色权限继承（账号体系 RBAC；与 Token 配额脱钩）
+- [ ] 用户级/角色级 Token 配额（按登录用户或 roles 行覆盖日限额；另开条目）
 - [x] 持久化审计追踪（SQL 存储替代部分 NDJSON）
 - [x] 有 Redis 时限流走 Redis INCR（`rl:*`，**B51**）；无 Redis 回退内存 Map
 - [x] 有 Redis 时并发计数走 Redis INCR（`cc:`，**B52**）；无 Redis 回退内存 Map
