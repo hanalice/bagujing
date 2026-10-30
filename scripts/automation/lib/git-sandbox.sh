@@ -46,28 +46,14 @@ git_sandbox_abandon_if_empty() {
   return 0
 }
 
-# Conventional Commits 头 + 按 type 校验正文（与 .githooks/commit-msg 对齐）。
+# 提交说明预检：与 .githooks/commit-msg 共用 scripts/check-commit-msg.sh（E11）。
+_GIT_SANDBOX_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+_GIT_SANDBOX_REPO_ROOT="$(cd "$_GIT_SANDBOX_LIB_DIR/../../.." && pwd)"
+_CHECK_COMMIT_MSG_SH="$_GIT_SANDBOX_REPO_ROOT/scripts/check-commit-msg.sh"
+
 git_sandbox_commit_msg_ok() {
   local file="$1"
-  local msg_header msg_body type_name
-  msg_header="$(head -n 1 "$file" 2>/dev/null | tr -d '\r' || true)"
-  msg_body="$(cat "$file" 2>/dev/null || true)"
-  printf '%s' "$msg_header" | grep -qE '^(feat|fix|chore|refactor|test|docs|perf)(\(.+\))?: ' || return 1
-  type_name="$(printf '%s' "$msg_header" | sed -E 's/^([a-z]+)(\(.*\))?:.*/\1/')"
-  case "$type_name" in
-    fix)
-      printf '%s' "$msg_body" | grep -qE '问题现象|Symptoms' \
-        && printf '%s' "$msg_body" | grep -qE '根因分析|Root Cause' \
-        && printf '%s' "$msg_body" | grep -qE '解决方案|Solution'
-      ;;
-    feat)
-      printf '%s' "$msg_body" | grep -qE '背景|Background' \
-        && printf '%s' "$msg_body" | grep -qE '设计|Design'
-      ;;
-    *)
-      return 0
-      ;;
-  esac
+  bash "$_CHECK_COMMIT_MSG_SH" "$file"
 }
 
 git_sandbox_confirm() {
