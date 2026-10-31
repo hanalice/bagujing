@@ -29,6 +29,7 @@
   - **状态机与单元测试 (Frontend UT/IT - Vitest)**：针对 Pinia Store（`user`、`settings`、`breadcrumb`）、题目解析归一化/渲染辅助及工具函数，快速验证状态迁移、本地持久化与边界容错；**B33** 另锁登录态 `chat` / `answer/generate` 的 HMAC 六头注入（§4.5 `UT-FE-SIG-*`）；**S3** 另锁助教 `POST /api/chat` 请求体 `messages[]` 尾窗与截断（§4.6 `UT-FE-CHAT-HIST-*`）；**S6** 另锁助手气泡 Markdown→DOMPurify 与用户气泡纯文本（§4.7 `UT-FE-CHAT-MD-*`）；**S7** 另锁换票 `fetch` URL 与签名 path 均为 `/api/auth/token`（§4.8 `UT-FE-TOKEN-URL-*`）。**S8** / **S11** 只锁公开文档（§2.33 / §2.36），本层不新增前端测码。
   - **静态类型与代码质量 (Static Check - vue-tsc & ESLint)**：基于 `vue-tsc` 严格类型推断与 ESLint 规范，在编译期杜绝类型断言失误与样式违规。
 - **登录态 AI 请求 HMAC 头 (B33 / P0-5)**：`AI_REQUIRE_SIGNED_HEADERS=true` 时，已登录用户的 `POST /api/chat` 与 `POST /api/problems/:id/answer/generate` 也须带齐与 `ai-guard.js` 一致的六头；后端有会话也验签见 **B31**（§2.19 / §3.1），生产开开关见 **B32**。
+- **提交说明校验脚本共用 (E11)**：抽出可单独喂消息文件的校验脚本；`.githooks/commit-msg` 与 `scripts/automation/lib/git-sandbox.sh`（日修沙盒）共用同一入口。`feat` 四段、`refactor` 三段、轻量 type 须有非空正文；对齐 `docs/git-commit-convention.md`。单测见 §2.37 `UT-COMMIT-MSG-*`。**不做**：PR/CI（**E12**）；密钥扫描（**E13**）。**residual**：`COMMIT_MSG_GATE=off` 跳过保持。
 
 ---
 
@@ -792,6 +793,52 @@ C22 合入后 problems 关键字召回主路径改为 FTS（失败回退 LIKE）
 | UT-DOC-QUOTA-10 | 对照代码：无 `users`/`roles` 配额 SQL | 前置：只读 `backend/src/security/ai-guard.js` 中 `checkAndConsumeQuota` 及其调用的 SQL 字符串；**不**要求改代码。 | 1. 源码配额路径 SQL **零次** `FROM users` / `FROM roles`（或等价取角色 Token 上限）；<br>2. 有 db 时可见 `FROM ai_clients` 与/或 `FROM ai_audit_logs` 且按 `client_id`；<br>3. 本行证明文档应对齐的代码事实；文档断言失败时不得以「先改代码实现用户配额」为修法（那属 **不做**）。 |
 | UT-DOC-QUOTA-11 | 不做：不要求改运行时 / 不实现用户角色配额 / 不改签名默认 | 前置：只读本小节与 backlog S11 **不做**；对照 `AI_REQUIRE_SIGNED_HEADERS ?? 'false'`。 | 1. PASS **不**要求改 `ai-guard.js`、实现 `user_daily_*` reason、或按 `req.user.id`/`role` 分桶配额；<br>2. **不**要求把验签默认改为 `true` 或改 B32 部署；<br>3. 与 §2.33 / §2.34 分界：S8 锁签名文档，S9 锁审计身份，本表只锁配额**文档措辞**。 |
 | UT-DOC-QUOTA-12 | residual：用户/角色日限额另条；公开文档无利用步骤 | 前置：只读 backlog S11 residual；扫描文档代码块（合取 `UT-DOC-GUARD-11`）。 | 1. 本表 PASS **不**要求在 backlog 外实现用户/角色配额 schema；<br>2. **不得**以「文档未实现用户配额」为由要求本阶段改代码；<br>3. 文档仍**不得**给出可复现伪造 HMAC/重放配方（允许算法名与头名列表）。 |
+
+### 2.37 提交说明校验脚本：feat 四段 / refactor 三段 / 轻量 type 有正文；钩子与日修沙盒共用（E11）（`backend/src/tests/commit-msg-gate.test.js` → 共享脚本 + `.githooks/commit-msg` + `scripts/automation/lib/git-sandbox.sh`）
+
+对应 **E11**（`docs/backlog.md` §E11；对齐 `docs/git-commit-convention.md` §3–§4）。现状：`.githooks/commit-msg` 与 `git_sandbox_commit_msg_ok` **各写一份**规则，且 `feat` 只查「背景/设计」两段、无 `refactor` 三段、轻量 type（`docs`/`chore`/`test`/`perf`/`ci`）不要求正文。完成标准：**抽出**可单独喂消息文件的校验脚本；上述两入口都**调用它**（禁止继续维护第二份段落规则）。
+
+**做**：
+
+1. 存在可执行校验脚本，契约路径优先 `scripts/check-commit-msg.sh`（允许落在 `scripts/lib/` 等价名，但钩子与沙盒必须解析到**同一文件**）。调用约定：`bash <脚本> <消息文件路径>`（或 `exec` 同参）；退出码 `0` = 通过，非 `0` = 拦截；stderr/stdout 须能区分失败原因（缺 header / 缺段 / 轻量 type 无正文）。
+2. Header 仍为 Conventional Commits：`^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([a-zA-Z0-9_\/-]+\))?: .+$`（与现网钩子一致；scope 可缺）。
+3. **`fix`**：正文须同时含「问题现象|Symptoms」「根因分析|Root Cause」「解决方案|Solution」（公约 §4.1）。
+4. **`feat`**：在「背景|Background」「设计|Design」之外，再须「变更内容|Changes」「测试与兼容性|Testing」（或 `Testing & Compatibility` / 小节标题 `【测试与兼容性`）；四段标题与公约 §4.2 一致。
+5. **`refactor`**：须「动机|Motivation」「变更内容|Changes」「验证|Verification」（公约 §4.3）。
+6. **轻量 type** `docs` / `chore` / `test` / `perf` / `ci`：header 之外至少 **一行非空正文**（trim 后长度 > 0；仅空行 / 仅 `#` git 注释不算）。
+7. **`style` / `build` / `revert`**：只查 header（或直接放行正文）；**不得**按 feat 四段拦截。
+8. **豁免首行**：`Merge` / `Revert` / `Initial commit` / `Release` / `Version` 前缀直接 `exit 0`（不查段落）。
+9. 用**临时样例消息文件**做断言：缺段失败、齐全通过、轻量 type 空正文失败、有一行正文通过。
+
+**不做**：改历史提交；加 PR/CI 检查（属 **E12**）；密钥扫描（属 **E13**）；把轻量 type 写成 feat 四段。
+
+**residual**：`COMMIT_MSG_GATE=off` 时钩子跳过校验保持；**不**重写 `.agents/skills/commit-message/SKILL.md` 全文（允许技能日后另条对齐，本表不得以 SKILL 全文未改为 FAIL）。
+
+**测法**：`node:test`；建议 `backend/src/tests/commit-msg-gate.test.js`。① 静态读 `.githooks/commit-msg` 与 `scripts/automation/lib/git-sandbox.sh`，断言二者均调用同一脚本路径（子串匹配脚本相对路径，且**不得**再内联一套完整 `feat`/`fix`/`refactor` 段落 `grep` 作为唯一裁决）；② 写临时消息文件，`spawnSync('bash', [script, msgFile], { env })` 断言退出码与输出；③ 禁止依赖真实 `git commit` / 网络 / 改仓库历史。`it()` 标题须包含下表 ID。
+
+| ID | 用例标题 | 场景描述 | 预期结果 |
+| :--- | :--- | :--- | :--- |
+| UT-COMMIT-MSG-01 | 共享校验脚本存在且可单独喂消息文件 | 前置：定位契约脚本（优先 `scripts/check-commit-msg.sh`，若实现用 `scripts/lib/*commit*msg*` 则以其为准）；构造临时文件，首行为合法 `chore(test): probe`，正文一行 `probe body`；`COMMIT_MSG_GATE` 未设或 `on`。 | 1. 脚本文件存在、可读、shebang 为 bash/sh；<br>2. `bash <脚本> <临时文件>` 退出码 `=== 0`；<br>3. 不依赖 `.git/COMMIT_EDITMSG` 固定路径——第二个位置参数（或文档约定的唯一入参）即为消息文件。 |
+| UT-COMMIT-MSG-02 | `.githooks/commit-msg` 调用共享脚本而非自维护第二套段落规则 | 前置：读取 `.githooks/commit-msg` 全文；对照 UT-COMMIT-MSG-01 解析出的脚本路径 basename/相对路径。 | 1. 钩子源码出现对该脚本的调用（`bash …/check-commit-msg.sh "$1"` / `source` / `exec` 等价，路径与共享脚本一致）；<br>2. 钩子**不得**在调用共享脚本之外，再保留一套独立的 `feat` 四段 / `refactor` 三段 / 轻量正文完整裁决逻辑作为唯一门禁（允许保留水印清理、`COMMIT_MSG_GATE` 短路、空消息早退）；<br>3. 水印清理（Cursor `Co-authored-by` / `Made-with`）可仍在钩子内、在调用校验前执行。 |
+| UT-COMMIT-MSG-03 | `git-sandbox.sh` 调用同一共享脚本 | 前置：读取 `scripts/automation/lib/git-sandbox.sh`；定位原 `git_sandbox_commit_msg_ok`（或后继等价函数）。 | 1. 沙盒校验路径调用与 UT-COMMIT-MSG-01 **同一**脚本文件（相对路径字符串全等或规范化后全等）；<br>2. **不得**再以内联 `grep '背景\|Background'` + 仅两段 `feat` 作为唯一通过条件；<br>3. 日修 `git commit -F` 前若做预检，失败时不得 `exit 0` 冒充通过（预检失败 → 非 0 或明确中止提交）。 |
+| UT-COMMIT-MSG-04 | Header：合法 Conventional Commits 通过 | 前置：消息文件仅一行 `fix(ai-guard): 修复示例` 且含完整 fix 三段（见 UT-COMMIT-MSG-07）；或 `style: 调整缩进`（style 仅 header）。 | 1. 退出码 `=== 0`；<br>2. 允许的 type 集合至少含：`feat\|fix\|docs\|style\|refactor\|perf\|test\|build\|ci\|chore\|revert`；<br>3. 带 scope 形式 `type(scope): subject` 与无 scope 的 `type: subject` 均可通过（本行至少覆盖一种合法 header）。 |
+| UT-COMMIT-MSG-05 | Header：非法首行拦截 | 前置：消息文件首行为 `更新了一点东西`（无 type）或 `Feat: 大写错误`（非法 type 大小写，若实现大小写敏感则本行适用）或 `feat 缺冒号`。 | 1. 退出码 `!== 0`；<br>2. 输出含「Header」或「不符合规范」或 Conventional / type 提示之一；<br>3. **不得**因正文齐全而放行非法 header。 |
+| UT-COMMIT-MSG-06 | `fix`：缺任一段失败 | 前置：分别构造三份仅缺一段的 `fix(x): subject` 消息——A 无「问题现象/Symptoms」；B 无「根因分析/Root Cause」；C 无「解决方案/Solution」；其余两段与合法 header 齐全。 | 1. A/B/C 退出码均 `!== 0`；<br>2. 输出点名缺失小节（或列出 missing 段名）；<br>3. 证明三段为**合取**，不可只查其中一段。 |
+| UT-COMMIT-MSG-07 | `fix`：三段齐全通过 | 前置：消息含合法 `fix(…): …` header，正文含【问题现象 (Symptoms)】【根因分析 (Root Cause)】【解决方案 (Solution)】（或英文关键词等价），每段下至少一行说明。 | 1. 退出码 `=== 0`；<br>2. 不要求 feat 四段字段；<br>3. 与公约 §4.1 同向。 |
+| UT-COMMIT-MSG-08 | `feat`：仅背景+设计（旧两段）失败 | 前置：合法 `feat(gate): …` header；正文**只有**【背景 (Background)】与【设计概述 (Design)】（或 Background/Design 关键词），**故意不含**「变更内容/Changes」与「测试与兼容性/Testing」。 | 1. 退出码 `!== 0`；<br>2. 输出提示缺失「变更内容」和/或「测试与兼容性」（至少能观察到与四段相关的缺失信息）；<br>3. 证明 E11 相对旧钩子**升级**为四段，旧两段样例不得再 PASS。 |
+| UT-COMMIT-MSG-09 | `feat`：缺「变更内容」或「测试与兼容性」分别失败 | 前置：A 有背景+设计+测试与兼容性、无变更内容；B 有背景+设计+变更内容、无测试与兼容性。 | 1. A、B 退出码均 `!== 0`；<br>2. 各自输出能区分所缺段（或列出 missing）；<br>3. 关键词匹配大小写不敏感（与现网 `grep -qiE` 同向）。 |
+| UT-COMMIT-MSG-10 | `feat`：四段齐全通过 | 前置：header `feat(test): …`；正文按公约 §4.2 含【背景 (Background)】【设计概述 (Design)】【变更内容 (Changes)】【测试与兼容性 (Testing & Compatibility)】，每段非空。 | 1. 退出码 `=== 0`；<br>2. 四段标题字面可含中英括号形式；<br>3. 不得额外要求 fix 三段或 refactor 动机段。 |
+| UT-COMMIT-MSG-11 | `refactor`：缺任一段失败 | 前置：合法 `refactor(backend): …`；分别缺「动机/Motivation」「变更内容/Changes」「验证/Verification」之一，另两段齐全。 | 1. 三份样例退出码均 `!== 0`；<br>2. 输出含缺失段提示；<br>3. 证明 refactor 为三段合取（公约 §4.3）。 |
+| UT-COMMIT-MSG-12 | `refactor`：三段齐全通过 | 前置：header +【动机 (Motivation)】【变更内容 (Changes)】【验证 (Verification)】均非空。 | 1. 退出码 `=== 0`；<br>2. 不要求 feat 的「背景/测试与兼容性」；<br>3. 与 §4.3 同向。 |
+| UT-COMMIT-MSG-13 | 轻量 type：仅 header、无非空正文失败 | 前置：分别构造 `docs(readme): 更新说明`、`chore(deps): 升级依赖`、`test(gate): 补充用例`、`perf(api): 降低延迟`、`ci(qa): 调整门禁`——文件**仅一行 header**（或 header + 仅空行 / 仅 `#` 注释行）。`COMMIT_MSG_GATE` 未 off。 | 1. 上述五种 type 退出码均 `!== 0`；<br>2. 输出提示须有正文 / body / 非空行之一；<br>3. **不得**按 feat 四段文案报错（轻量 type 只要一行正文，不做四段）。 |
+| UT-COMMIT-MSG-14 | 轻量 type：header + 一行非空正文通过 | 前置：同上五种 type，各在 header 下增加一行非空正文（如 `- 更新部署章节环境变量表`）。 | 1. 五种退出码均 `=== 0`；<br>2. 正文一行即可，**不**要求【背景】等 feat 小节；<br>3. 证明「有一行正文通过」契约。 |
+| UT-COMMIT-MSG-15 | `style` / `build` / `revert`：仅 header 通过 | 前置：三份消息各仅一行：`style: 格式化空白`、`build: 调整打包配置`、`revert: 回滚误提交`（无正文）。 | 1. 退出码均 `=== 0`；<br>2. **不得**因无正文或无四段而失败；<br>3. 与 backlog「仍只查 header 或直接放行」一致。 |
+| UT-COMMIT-MSG-16 | 豁免：Merge / Revert / Initial commit / Release / Version 直接放行 | 前置：五份消息首行分别为 `Merge branch 'main' into x`、`Revert "feat(x): y"`、`Initial commit`、`Release 1.2.3`、`Version 1.2.3`（可无 Conventional header、可无正文）。 | 1. 五份退出码均 `=== 0`；<br>2. 不因缺 type/段落失败；<br>3. 与现网钩子豁免前缀一致（E12 亦保持；本行只锁 E11 脚本行为）。 |
+| UT-COMMIT-MSG-17 | residual：`COMMIT_MSG_GATE=off` 时钩子跳过 | 前置：经 `.githooks/commit-msg` 入口（或钩子在调用共享脚本前的短路）；消息故意非法（如首行 `bad message`）；环境变量 `COMMIT_MSG_GATE=off`。 | 1. 钩子进程退出码 `=== 0`；<br>2. 证明跳过发生在校验之前或校验尊重该开关；<br>3. 未设该变量时同消息须非 0（可与 UT-COMMIT-MSG-05 合取对照）。 |
+| UT-COMMIT-MSG-18 | 不做：轻量 type 不得被要求 feat 四段 | 前置：`chore(e11): 调整脚本` + 一行正文；正文**不含**背景/设计/变更内容/测试与兼容性。 | 1. 退出码 `=== 0`；<br>2. FAIL 条件：因缺 feat 四段而拦截轻量 type；<br>3. 与 backlog E11 **不做**「把轻量 type 写成 feat 四段」字面一致。 |
+| UT-COMMIT-MSG-19 | 不做：本表不要求 PR/CI 接线（E12 分界） | 前置：只读本小节与 backlog E11/E12 **不做**；可选扫描 `.github/workflows/*.yml`。 | 1. PASS **不**要求 `qa.yml` / PR workflow 调用本脚本；<br>2. **不**以「CI 未跑提交说明」为本表 FAIL；<br>3. E12 另表锁「PR 调同一脚本」；本表只锁本地钩子 + 日修沙盒。 |
+| UT-COMMIT-MSG-20 | 不做：不要求密钥扫描 / 不改历史提交（E13 分界） | 前置：只读 backlog E11 **不做**；本表测文件不构造 PEM/连接串断言。 | 1. PASS **不**要求 `.githooks/pre-commit` 扫密钥（属 **E13**）；<br>2. **不**要求 `git filter-repo` / 改写历史提交说明；<br>3. 测码只写临时消息文件，不 `git commit --amend` 仓库历史。 |
+| UT-COMMIT-MSG-21 | residual：不强制重写 commit-message SKILL 全文 | 前置：只读 `.agents/skills/commit-message/SKILL.md`（若存在）与 backlog E11 residual。 | 1. 本表 PASS **不**以「SKILL.md 未逐字改为四段模板」为 FAIL；<br>2. 允许 SKILL 仍描述旧两段 feat，由后续文档项对齐；<br>3. 运行时门禁以共享脚本 + UT-COMMIT-MSG-08/10 为准。 |
 
 ---
 

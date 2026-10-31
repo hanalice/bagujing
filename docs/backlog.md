@@ -96,7 +96,7 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | S10 | feat | scan | auto | done | cached_answer 命中且库内为三字段 JSON 时响应顶层带回 summary/keyPoints/nextStep |
 | S11 | fix | scan | auto | done | 对齐 security-ai-guard.md：去掉未实现的用户/角色配额表述 |
 | E1  | feat | gate | assist | split | 已拆为 E11–E17；月报与现有测试/ESLint 门禁不另开实现项 |
-| E11 | feat | gate | auto | todo | 提交说明脚本：feat 四段、refactor 三段、轻量 type 有正文；钩子与日修沙盒共用 |
+| E11 | feat | gate | auto | done | 提交说明脚本：feat 四段、refactor 三段、轻量 type 有正文；钩子与日修沙盒共用 |
 | E12 | feat | gate | auto | todo | PR 使用与 E11 同一套提交说明校验 |
 | E13 | feat | gate | auto | todo | pre-commit 拦截暂存区硬编码口令、密钥、私钥与连接串 |
 | E14 | feat | gate | auto | todo | qa-report 采集前后端行覆盖率并写入报告，不因比例失败 |
@@ -403,3 +403,4 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | 2026-10-28 | S11 完成：对齐 security-ai-guard.md：去掉未实现的用户/角色配额表述 |
 | 2026-10-29 | 周扫描：新增 auto S12（无 Redis 时 nonce TTL 淘汰）、S13（有 Redis 时日配额走 Redis）、S14（白皮书去掉月配额暗示）；无逾期待决；待决表仍空；D3/D4/E1 未拆 |
 | 2026-10-29 | 人拆 E1：父项 split；E11–E14、E17 为 auto+todo 并排在 S12–S14 之前；E15/E16 保持 assist |
+| 2026-10-30 | E11 完成：提交说明脚本：feat 四段、refactor 三段、轻量 type 有正文；钩子与日修沙盒共用 |
