@@ -30,6 +30,7 @@
   - **静态类型与代码质量 (Static Check - vue-tsc & ESLint)**：基于 `vue-tsc` 严格类型推断与 ESLint 规范，在编译期杜绝类型断言失误与样式违规。
 - **登录态 AI 请求 HMAC 头 (B33 / P0-5)**：`AI_REQUIRE_SIGNED_HEADERS=true` 时，已登录用户的 `POST /api/chat` 与 `POST /api/problems/:id/answer/generate` 也须带齐与 `ai-guard.js` 一致的六头；后端有会话也验签见 **B31**（§2.19 / §3.1），生产开开关见 **B32**。
 - **提交说明校验脚本共用 (E11)**：抽出可单独喂消息文件的校验脚本；`.githooks/commit-msg` 与 `scripts/automation/lib/git-sandbox.sh`（日修沙盒）共用同一入口。`feat` 四段、`refactor` 三段、轻量 type 须有非空正文；对齐 `docs/git-commit-convention.md`。单测见 §2.37 `UT-COMMIT-MSG-*`。**不做**：PR/CI（**E12**）；密钥扫描（**E13**）。**residual**：`COMMIT_MSG_GATE=off` 跳过保持。
+- **PR 提交说明与 E11 同脚本 (E12)**：PR 的 CI 对本次提交范围调用 E11 同一入口 `scripts/check-commit-msg.sh`（禁止第二套段落规则）；脚本非 0 → 该检查失败；豁免与钩子/E11 脚本相同（含 Merge）。单测见 §2.38 `UT-COMMIT-PR-*`。**不做**：改 E11 段落规则；在 `.githooks/pre-commit` 再跑一遍提交说明。**residual**：E11 未合入时不得另写一套规则；Merge 保持豁免。
 
 ---
 
@@ -836,9 +837,42 @@ C22 合入后 problems 关键字召回主路径改为 FTS（失败回退 LIKE）
 | UT-COMMIT-MSG-16 | 豁免：Merge / Revert / Initial commit / Release / Version 直接放行 | 前置：五份消息首行分别为 `Merge branch 'main' into x`、`Revert "feat(x): y"`、`Initial commit`、`Release 1.2.3`、`Version 1.2.3`（可无 Conventional header、可无正文）。 | 1. 五份退出码均 `=== 0`；<br>2. 不因缺 type/段落失败；<br>3. 与现网钩子豁免前缀一致（E12 亦保持；本行只锁 E11 脚本行为）。 |
 | UT-COMMIT-MSG-17 | residual：`COMMIT_MSG_GATE=off` 时钩子跳过 | 前置：经 `.githooks/commit-msg` 入口（或钩子在调用共享脚本前的短路）；消息故意非法（如首行 `bad message`）；环境变量 `COMMIT_MSG_GATE=off`。 | 1. 钩子进程退出码 `=== 0`；<br>2. 证明跳过发生在校验之前或校验尊重该开关；<br>3. 未设该变量时同消息须非 0（可与 UT-COMMIT-MSG-05 合取对照）。 |
 | UT-COMMIT-MSG-18 | 不做：轻量 type 不得被要求 feat 四段 | 前置：`chore(e11): 调整脚本` + 一行正文；正文**不含**背景/设计/变更内容/测试与兼容性。 | 1. 退出码 `=== 0`；<br>2. FAIL 条件：因缺 feat 四段而拦截轻量 type；<br>3. 与 backlog E11 **不做**「把轻量 type 写成 feat 四段」字面一致。 |
-| UT-COMMIT-MSG-19 | 不做：本表不要求 PR/CI 接线（E12 分界） | 前置：只读本小节与 backlog E11/E12 **不做**；可选扫描 `.github/workflows/*.yml`。 | 1. PASS **不**要求 `qa.yml` / PR workflow 调用本脚本；<br>2. **不**以「CI 未跑提交说明」为本表 FAIL；<br>3. E12 另表锁「PR 调同一脚本」；本表只锁本地钩子 + 日修沙盒。 |
+| UT-COMMIT-MSG-19 | 不做：本表不要求 PR/CI 接线（E12 分界） | 前置：只读本小节与 backlog E11/E12 **不做**；可选扫描 `.github/workflows/*.yml`。PR/CI 接线契约见 **§2.38** `UT-COMMIT-PR-*`。 | 1. PASS **不**要求 `qa.yml` / PR workflow 调用本脚本；<br>2. **不**以「CI 未跑提交说明」为本表 FAIL；<br>3. E12 由 §2.38 锁「PR 调同一脚本」；本表只锁本地钩子 + 日修沙盒。 |
 | UT-COMMIT-MSG-20 | 不做：不要求密钥扫描 / 不改历史提交（E13 分界） | 前置：只读 backlog E11 **不做**；本表测文件不构造 PEM/连接串断言。 | 1. PASS **不**要求 `.githooks/pre-commit` 扫密钥（属 **E13**）；<br>2. **不**要求 `git filter-repo` / 改写历史提交说明；<br>3. 测码只写临时消息文件，不 `git commit --amend` 仓库历史。 |
 | UT-COMMIT-MSG-21 | residual：不强制重写 commit-message SKILL 全文 | 前置：只读 `.agents/skills/commit-message/SKILL.md`（若存在）与 backlog E11 residual。 | 1. 本表 PASS **不**以「SKILL.md 未逐字改为四段模板」为 FAIL；<br>2. 允许 SKILL 仍描述旧两段 feat，由后续文档项对齐；<br>3. 运行时门禁以共享脚本 + UT-COMMIT-MSG-08/10 为准。 |
+
+### 2.38 PR CI 使用与 E11 同一套提交说明校验（E12）（`backend/src/tests/commit-msg-pr-gate.test.js` → `.github/workflows/*.yml` + E11 `scripts/check-commit-msg.sh`；对照 `.githooks/pre-commit`）
+
+对应 **E12**（`docs/backlog.md` §E12；对齐 `docs/git-commit-convention.md`；规则本体属 **E11** / §2.37）。现状：`qa.yml` 在 `pull_request` 上只跑 `./scripts/qa-report.sh`，**未**对 PR 提交范围调用 `scripts/check-commit-msg.sh`。完成标准：**做**——PR 的 CI 对本次提交调用 E11 的同一脚本，失败则该检查失败；豁免与钩子相同；断言锁住入口是 E11 脚本，不是第二份规则。
+
+**做**：
+
+1. 存在对 `pull_request`（可与现有 `qa.yml` 同文件新 step/job，或独立 workflow）触发的门禁步骤，对 PR **本次提交范围**（契约：`github.event.pull_request.base.sha`…`github.sha` / `HEAD`，或等价 `git rev-list`/`git log` 区间）逐条取出提交说明，调用 E11 契约脚本。
+2. 调用入口必须是 E11 已落地的 **`scripts/check-commit-msg.sh`**（与 `UT-COMMIT-MSG-01` 解析路径规范化后全等；允许经薄封装脚本转发，但最终 `bash`/`exec` 目标仍是该文件）。
+3. 任一非豁免提交经该脚本退出码 `!== 0` 时，对应 CI step/job **必须**非 0 退出，使该检查在 PR 上标失败（不得被后续 step `continue-on-error: true` 吞掉，除非另有显式阻断 job）。
+4. 豁免与钩子 / E11 脚本相同：首行 `Merge` / `Revert` / `Initial commit` / `Release` / `Version` 前缀由**同一脚本**放行（`exit 0`）；CI 侧不得另写一套更严/更松的豁免表替代脚本裁决。
+5. 断言锁住「入口是 E11 脚本」：workflow / CI 封装脚本源码须出现 `scripts/check-commit-msg.sh`（或规范化等价路径）；**不得**在 CI 内再内联一套完整的 `feat` 四段 / `refactor` 三段 / 轻量正文 `grep` 作为唯一裁决。
+
+**不做**：改 E11 的段落规则（`feat` 四段 / `refactor` 三段 / 轻量正文等仍以 §2.37 与 `scripts/check-commit-msg.sh` 为准）；在 `.githooks/pre-commit` 再跑一遍提交说明校验。
+
+**residual**：E11 未合入（共享脚本不存在）时，**不得**在 CI 另写第二套段落规则凑绿；Merge 提交保持豁免（经同一脚本）。`COMMIT_MSG_GATE=off` 仍属本地钩子 residual（§2.37 UT-COMMIT-MSG-17），本表**不**要求 CI 默认尊重该开关放行非法消息。
+
+**测法**：`node:test`；建议 `backend/src/tests/commit-msg-pr-gate.test.js`。① 静态读 `.github/workflows/qa.yml` 及同目录其它 `*.yml`/`*.yaml`，定位提交说明门禁 step（或被其 `run:`/`bash` 调用的仓库内封装脚本）；② 断言调用链终点为 `scripts/check-commit-msg.sh`，且无第二套段落规则；③ 读取 `.githooks/pre-commit`，断言**不**调用该脚本；④ 可选：对封装脚本用临时消息文件 `spawnSync` 验证「脚本非 0 → 封装非 0」透传；⑤ 禁止依赖真实向 GitHub 发 PR / 改仓库历史。`it()` 标题须包含下表 ID。段落缺段/齐全样例**不**在本表重复枚举（复用 §2.37）；本表只锁 **PR 接线、同脚本、失败传导、豁免同源、不做边界**。
+
+| ID | 用例标题 | 场景描述 | 预期结果 |
+| :--- | :--- | :--- | :--- |
+| UT-COMMIT-PR-01 | PR workflow 存在提交说明校验步骤 | 前置：读取 `.github/workflows/` 下全部 yml/yaml；定位含 `on.pull_request`（或 `pull_request:` 触发）且与提交说明相关的 job/step（名称或 `run` 含 commit-msg / check-commit-msg / 提交说明）。 | 1. 至少一处 workflow 在 `pull_request` 事件下会执行提交说明校验（可与现有 QA job 同文件新增 step，或独立 job/workflow）；<br>2. 该 step 的 `run` / `uses` 指向的仓库内脚本最终会调用校验逻辑（非注释死代码）；<br>3. **不**以「仅 push 到 main」满足本行——必须覆盖 PR 路径。 |
+| UT-COMMIT-PR-02 | 入口是 E11 的 `scripts/check-commit-msg.sh`（禁止第二套规则） | 前置：由 UT-COMMIT-PR-01 定位到的 step 文本 + 其直接 `bash`/`./` 调用的仓库内封装脚本（若有）；对照 `UT-COMMIT-MSG-01` 的契约路径 `scripts/check-commit-msg.sh`（若实现落在 `scripts/lib/*commit*msg*` 则以 E11 实测路径为准，须与钩子/沙盒同一文件）。 | 1. 源码出现对该脚本相对路径的调用（`bash scripts/check-commit-msg.sh` / `"$ROOT/scripts/check-commit-msg.sh"` / `exec` 等价）；<br>2. workflow 与封装脚本**不得**再内联一套完整 `feat` 四段 / `fix` 三段 / `refactor` 三段 / 轻量正文裁决作为**唯一**门禁；<br>3. 证明「断言锁住：入口是 E11 的脚本，不是第二份规则」。 |
+| UT-COMMIT-PR-03 | 校验对象为 PR 本次提交范围 | 前置：读取门禁 step / 封装脚本；检索 `git log` / `git rev-list` / `github.event.pull_request.base.sha` / `GITHUB_BASE_REF` / `...HEAD` 等区间表达式。 | 1. 存在对「基线…头」提交区间的遍历或逐条取出 `%B`/`%s%n%b` 消息的逻辑（或文档化等价：对 PR commits API 列表逐条喂文件）；<br>2. 每条非空消息写入临时文件后调用共享脚本（或 stdin/参数约定与 E11「喂消息文件」兼容）；<br>3. FAIL：只校验仓库最新一次 `HEAD` 而忽略 PR 中其余 commits（除非 workflow 显式 `fetch-depth`+区间证明覆盖全部 PR commits）。 |
+| UT-COMMIT-PR-04 | 共享脚本非 0 → CI 该检查失败 | 前置：若存在仓库内 CI 封装脚本，构造临时消息文件首行 `bad message`（非法 header）；`spawnSync` 跑封装（或直接模拟 step 中「脚本失败则 `exit 1`」分支）。若仅 inline `run:`，则静态断言：调用后无 `\|\| true` / 无 `continue-on-error: true` 作用于该 step。 | 1. 封装路径：共享脚本退出码 `!== 0` 时，封装进程退出码 `!== 0`；<br>2. workflow 路径：该 step **未**设 `continue-on-error: true`，且失败未被 `\|\| true` 抹成 0；<br>3. 证明 backlog「失败则该检查失败」。 |
+| UT-COMMIT-PR-05 | 合法轻量提交说明 → 校验步骤可通过 | 前置：临时消息 `chore(e12): probe\n\n- PR 接线同脚本\n`（对齐 E11 轻量 type 一行正文）；经 CI 封装或直接 `bash scripts/check-commit-msg.sh`。 | 1. 退出码 `=== 0`；<br>2. 证明 CI 接线未额外要求 feat 四段；<br>3. 与 §2.37 UT-COMMIT-MSG-14/18 同向（本行只抽一条冒烟，不重复五种 type）。 |
+| UT-COMMIT-PR-06 | residual：Merge 提交保持豁免（同源脚本） | 前置：消息首行 `Merge branch 'main' into feature/x`（可无 Conventional header）；经 **同一** `scripts/check-commit-msg.sh`（CI 路径与本地钩子相同入口）。 | 1. 退出码 `=== 0`；<br>2. CI 封装**不得**在调用脚本前因「非 Conventional」先 `exit 1` 杀掉 Merge；<br>3. 与 backlog E12 residual「Merge 提交保持豁免」及 UT-COMMIT-MSG-16 一致。 |
+| UT-COMMIT-PR-07 | 豁免与钩子相同：Revert / Initial commit / Release / Version | 前置：四份消息首行分别为 `Revert "chore(x): y"`、`Initial commit`、`Release 1.2.3`、`Version 1.2.3`；经同一共享脚本（CI 入口）。 | 1. 四份退出码均 `=== 0`；<br>2. 证明豁免表未在 CI 侧收窄；<br>3. 与 E11 脚本 `^(Merge\|Revert\|Initial commit\|Release\|Version)` 行为一致（Merge 见 UT-COMMIT-PR-06）。 |
+| UT-COMMIT-PR-08 | 不做：不改 E11 段落规则 | 前置：只读 `scripts/check-commit-msg.sh`（或 E11 契约路径）与本小节；对照 §2.37 做列表（feat 四段、refactor 三段、轻量正文）。 | 1. E12 测码 / workflow **不得**要求修改共享脚本内段落关键词或放宽/收紧四段规则作为本项 PASS 条件；<br>2. 本表 PASS **不**以「重写 UT-COMMIT-MSG-08/10 规则」为必要；<br>3. 与 backlog E12 **不做**「改 E11 的段落规则」字面一致。 |
+| UT-COMMIT-PR-09 | 不做：pre-commit 不再跑一遍提交说明 | 前置：读取 `.githooks/pre-commit` 全文；检索 `check-commit-msg` / `commit-msg` 校验脚本调用。 | 1. `pre-commit` **不**调用 `scripts/check-commit-msg.sh`（或等价提交说明校验）；<br>2. 允许继续只跑 `scripts/qa-report.sh`（现状）；<br>3. FAIL：为满足 E12 在 pre-commit 增加提交说明二次门禁。 |
+| UT-COMMIT-PR-10 | residual：禁止在 E11 脚本缺失时另写第二套规则 | 前置：静态审查 CI workflow + 封装脚本；对照 backlog「E11 未合入时不得另写一套规则」。 | 1. CI 源码对段落的唯一裁决入口仍指向 E11 脚本路径；<br>2. **不得**出现「若脚本不存在则用内联 grep 背景/设计凑过」的回退分支；<br>3. 脚本缺失时允许 CI 显式失败（非 0）或 skip 并标失败——但**禁止**用第二套规则标绿。 |
+| UT-COMMIT-PR-11 | 与 E11 分界：本表不以本地钩子未改为 FAIL | 前置：只读 §2.37 与 backlog E11/E12；`.githooks/commit-msg` 已由 E11 调用共享脚本。 | 1. PASS **不**要求再次断言钩子/沙盒接线（属 UT-COMMIT-MSG-02/03）；<br>2. **不**以「日修沙盒未改」为本表 FAIL；<br>3. 本表范围 = PR/CI 接线 + 同脚本 + 失败传导 + pre-commit 不做边界。 |
+| UT-COMMIT-PR-12 | checkout 深度足以列出 PR 提交（若用 git log 区间） | 前置：若 UT-COMMIT-PR-03 采用 `git log/rev-list` 本地遍历，则读取对应 workflow 的 `actions/checkout` 配置。 | 1. `fetch-depth` 为 `0` 或足够覆盖 `base…HEAD`（不得默认 depth=1 导致区间为空却假 PASS）；<br>2. 若改用 GitHub API / `pull_request` commits 列表而不依赖完整 clone 历史，本行改为断言该 API/列表路径存在且非空时才逐条校验；<br>3. 区间为空且未校验任何 commit 时**不得**静默 `exit 0` 冒充通过（应失败或明确跳过策略写进断言）。 |
 
 ---
 
