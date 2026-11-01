@@ -18,6 +18,16 @@ jobs:
     steps:
       - name: 检出仓库
         uses: actions/checkout@v4
+        with:
+          # E12：PR 提交说明需 base…HEAD 完整历史；push 全量亦无害
+          fetch-depth: 0
+
+      - name: 校验 PR 提交说明
+        if: github.event_name == 'pull_request'
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: ./scripts/check-pr-commit-msgs.sh
 
       - name: 安装 Node.js
         uses: actions/setup-node@v4
