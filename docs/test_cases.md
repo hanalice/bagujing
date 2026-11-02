@@ -31,6 +31,7 @@
 - **登录态 AI 请求 HMAC 头 (B33 / P0-5)**：`AI_REQUIRE_SIGNED_HEADERS=true` 时，已登录用户的 `POST /api/chat` 与 `POST /api/problems/:id/answer/generate` 也须带齐与 `ai-guard.js` 一致的六头；后端有会话也验签见 **B31**（§2.19 / §3.1），生产开开关见 **B32**。
 - **提交说明校验脚本共用 (E11)**：抽出可单独喂消息文件的校验脚本；`.githooks/commit-msg` 与 `scripts/automation/lib/git-sandbox.sh`（日修沙盒）共用同一入口。`feat` 四段、`refactor` 三段、轻量 type 须有非空正文；对齐 `docs/git-commit-convention.md`。单测见 §2.37 `UT-COMMIT-MSG-*`。**不做**：PR/CI（**E12**）；密钥扫描（**E13**）。**residual**：`COMMIT_MSG_GATE=off` 跳过保持。
 - **PR 提交说明与 E11 同脚本 (E12)**：PR 的 CI 对本次提交范围调用 E11 同一入口 `scripts/check-commit-msg.sh`（禁止第二套段落规则）；脚本非 0 → 该检查失败；豁免与钩子/E11 脚本相同（含 Merge）。单测见 §2.38 `UT-COMMIT-PR-*`。**不做**：改 E11 段落规则；在 `.githooks/pre-commit` 再跑一遍提交说明。**residual**：E11 未合入时不得另写一套规则；Merge 保持豁免。
+- **pre-commit 拦截暂存区硬编码口令/密钥 (E13)**：`.githooks/pre-commit` 在 `qa-report.sh` **之前**检查暂存 diff；只认三类明文（PEM 私钥块、带用户名密码的 URL、敏感变量名 + ≥8 引号字面量）；命中则非 0 并输出 `文件:行` + 改走环境变量提示；占位字面量与 `*.example` / `docs/**` / 测试文件 / `package-lock.json` 放行。用构造的 diff 文本单测命中与放行（§2.39 `UT-SECRET-SCAN-*`）。**不做**：并进 OSV / `vulnerability-report.yml`；扫 git 历史；升级依赖；让 `qa.yml` 因漏洞失败；改写已入库密钥。**residual**：混淆/编码秘密与历史中已有密钥本项不清除。
 
 ---
 
@@ -869,10 +870,58 @@ C22 合入后 problems 关键字召回主路径改为 FTS（失败回退 LIKE）
 | UT-COMMIT-PR-06 | residual：Merge 提交保持豁免（同源脚本） | 前置：消息首行 `Merge branch 'main' into feature/x`（可无 Conventional header）；经 **同一** `scripts/check-commit-msg.sh`（CI 路径与本地钩子相同入口）。 | 1. 退出码 `=== 0`；<br>2. CI 封装**不得**在调用脚本前因「非 Conventional」先 `exit 1` 杀掉 Merge；<br>3. 与 backlog E12 residual「Merge 提交保持豁免」及 UT-COMMIT-MSG-16 一致。 |
 | UT-COMMIT-PR-07 | 豁免与钩子相同：Revert / Initial commit / Release / Version | 前置：四份消息首行分别为 `Revert "chore(x): y"`、`Initial commit`、`Release 1.2.3`、`Version 1.2.3`；经同一共享脚本（CI 入口）。 | 1. 四份退出码均 `=== 0`；<br>2. 证明豁免表未在 CI 侧收窄；<br>3. 与 E11 脚本 `^(Merge\|Revert\|Initial commit\|Release\|Version)` 行为一致（Merge 见 UT-COMMIT-PR-06）。 |
 | UT-COMMIT-PR-08 | 不做：不改 E11 段落规则 | 前置：只读 `scripts/check-commit-msg.sh`（或 E11 契约路径）与本小节；对照 §2.37 做列表（feat 四段、refactor 三段、轻量正文）。 | 1. E12 测码 / workflow **不得**要求修改共享脚本内段落关键词或放宽/收紧四段规则作为本项 PASS 条件；<br>2. 本表 PASS **不**以「重写 UT-COMMIT-MSG-08/10 规则」为必要；<br>3. 与 backlog E12 **不做**「改 E11 的段落规则」字面一致。 |
-| UT-COMMIT-PR-09 | 不做：pre-commit 不再跑一遍提交说明 | 前置：读取 `.githooks/pre-commit` 全文；检索 `check-commit-msg` / `commit-msg` 校验脚本调用。 | 1. `pre-commit` **不**调用 `scripts/check-commit-msg.sh`（或等价提交说明校验）；<br>2. 允许继续只跑 `scripts/qa-report.sh`（现状）；<br>3. FAIL：为满足 E12 在 pre-commit 增加提交说明二次门禁。 |
+| UT-COMMIT-PR-09 | 不做：pre-commit 不再跑一遍提交说明 | 前置：读取 `.githooks/pre-commit` 全文；检索 `check-commit-msg` / `commit-msg` 校验脚本调用。 | 1. `pre-commit` **不**调用 `scripts/check-commit-msg.sh`（或等价提交说明校验）；<br>2. 允许跑密钥扫描（**E13** / §2.39）与 `scripts/qa-report.sh`；仍禁止为 E12 在此钩子加提交说明门禁；<br>3. FAIL：为满足 E12 在 pre-commit 增加提交说明二次门禁。 |
 | UT-COMMIT-PR-10 | residual：禁止在 E11 脚本缺失时另写第二套规则 | 前置：静态审查 CI workflow + 封装脚本；对照 backlog「E11 未合入时不得另写一套规则」。 | 1. CI 源码对段落的唯一裁决入口仍指向 E11 脚本路径；<br>2. **不得**出现「若脚本不存在则用内联 grep 背景/设计凑过」的回退分支；<br>3. 脚本缺失时允许 CI 显式失败（非 0）或 skip 并标失败——但**禁止**用第二套规则标绿。 |
 | UT-COMMIT-PR-11 | 与 E11 分界：本表不以本地钩子未改为 FAIL | 前置：只读 §2.37 与 backlog E11/E12；`.githooks/commit-msg` 已由 E11 调用共享脚本。 | 1. PASS **不**要求再次断言钩子/沙盒接线（属 UT-COMMIT-MSG-02/03）；<br>2. **不**以「日修沙盒未改」为本表 FAIL；<br>3. 本表范围 = PR/CI 接线 + 同脚本 + 失败传导 + pre-commit 不做边界。 |
 | UT-COMMIT-PR-12 | checkout 深度足以列出 PR 提交（若用 git log 区间） | 前置：若 UT-COMMIT-PR-03 采用 `git log/rev-list` 本地遍历，则读取对应 workflow 的 `actions/checkout` 配置。 | 1. `fetch-depth` 为 `0` 或足够覆盖 `base…HEAD`（不得默认 depth=1 导致区间为空却假 PASS）；<br>2. 若改用 GitHub API / `pull_request` commits 列表而不依赖完整 clone 历史，本行改为断言该 API/列表路径存在且非空时才逐条校验；<br>3. 区间为空且未校验任何 commit 时**不得**静默 `exit 0` 冒充通过（应失败或明确跳过策略写进断言）。 |
+
+### 2.39 pre-commit 拦截暂存区硬编码口令、密钥、私钥与连接串（E13）（`backend/src/tests/precommit-secret-scan.test.js` → 扫描脚本 + `.githooks/pre-commit`；对照 OSV / `vulnerability-report.yml` / `qa.yml`）
+
+对应 **E13**（`docs/backlog.md` §E13；E1「口令与密钥」单独检查，**不**并进漏洞扫描）。现状：`.githooks/pre-commit` 仅调用 `./scripts/qa-report.sh`，**不**检查暂存 diff 中的明文口令/密钥。完成标准：**做**——在 `qa-report.sh` **之前**检查暂存 diff；命中则退出码非 0，输出 `文件:行`，并说明明文不要入库、改走环境变量；只认三类；占位字面量与约定路径放行；用构造的 diff 文本做单测，命中与放行都要有断言。
+
+**做**：
+
+1. 存在可单独喂入「构造的 diff 文本」的扫描入口（契约路径优先 `scripts/check-staged-secrets.sh`，允许落在 `scripts/lib/*secret*` 等价名；钩子须解析到**同一**实现）。调用约定：`bash <脚本> <diff 文件路径>`，或导出可测函数 / `node` 模块接收字符串；退出码 `0` = 放行，非 `0` = 拦截。
+2. `.githooks/pre-commit` 在调用 `./scripts/qa-report.sh` **之前**执行该扫描（对 `git diff --cached` / 等价暂存 diff）；密钥命中时**不得**再跑 `qa-report.sh`（短路非 0）。
+3. **只认三类**（合取范围外一律不因「像密钥」而拦）：
+   - ① PEM 私钥块：同一新增行（或连续块）同时出现子串 `BEGIN` 与 `PRIVATE KEY`（典型 `-----BEGIN … PRIVATE KEY-----`）。整行 `#` 注释只点名这两个词、且没有 `-----BEGIN` 装甲头的，不算私钥块；注释中的装甲头仍拦截。
+   - ② 带用户名和密码的 URL：匹配 `://` … `:` … `@`（如 `https://user:p@ssw0rd@host/db`）；
+   - ③ 变量名含 `PASSWORD`、`SECRET`、`TOKEN`、`API_KEY`、`PRIVATE_KEY` 之一（大小写不敏感子串即可），且赋值右侧为**引号字面量**（单/双引号），字面量内容长度 **≥ 8**。
+4. 命中输出：至少一行含 `文件:行`（或 `path:lineno` 等价，路径相对仓库根、行号为 diff 新增行可映射的正整数）；并含「明文不要入库」与「环境变量」语义提示（中英任一）。
+5. **放行**（即使行面看似敏感，亦须 exit 0）：
+   - ③ 类字面量精确为 `change_me`，或以 `your_` / `example` 开头（如 `your_secret_here`、`example_api_token_xx`）；
+   - 路径属于 `*.example`、`docs/**`、`*.test.js`、`*.spec.ts`、`*.test.ts`、`package-lock.json`（路径匹配在扫该文件的 diff hunk 时生效）。
+6. 无命中的干净暂存 diff → 扫描退出码 `0`，钩子可继续 `qa-report.sh`。
+
+**不做**：并进 OSV 或 `vulnerability-report.yml`；扫描 git 历史（`git log`/`git show` 旧提交）；升级依赖；让 `qa.yml` 因漏洞失败；改写已入库的密钥（`git filter-repo` / rewrite）。
+
+**residual**：Base64/hex 混淆、拆分拼接、已在历史中的密钥——本项**不**要求检出或清除；本表不得以「未扫历史 / 未解混淆」为 FAIL。
+
+**测法**：`node:test`；建议 `backend/src/tests/precommit-secret-scan.test.js`。① 静态读 `.githooks/pre-commit`，断言密钥扫描调用出现在 `qa-report.sh` 之前，且命中分支 `exit` 非 0；② 构造 unified diff / 纯文本探针（含 `+++ b/path` 与 `+` 新增行，或直接调扫描函数喂 `{ path, line, text }[]`），`spawnSync` 或直接调导出函数断言退出码与输出；③ 只读 `.github/workflows/vulnerability-report.yml` 与 `qa.yml`，断言本项**未**把密钥规则并进 OSV 月报、**未**要求 `qa.yml` 因依赖漏洞非 0；④ 禁止真实 `git commit` 写入仓库、禁止改写历史、禁止联网。`it()` 标题须包含下表 ID。
+
+| ID | 用例标题 | 场景描述 | 预期结果 |
+| :--- | :--- | :--- | :--- |
+| UT-SECRET-SCAN-01 | 扫描入口可单独喂构造的 diff 文本 | 前置：定位契约脚本/模块（优先 `scripts/check-staged-secrets.sh`，若实现为 `scripts/lib/*secret*` 或可 `require` 的扫描函数则以实测为准）；构造**无**三类命中的干净 diff（如 `+++ b/src/ok.js` + 行 `+const x = 1;`）。 | 1. 入口存在且可脱离真实 `git commit` 调用；<br>2. 喂入该 diff 后退出码 `=== 0`（或函数返回「无命中」）；<br>3. 证明单测以构造文本为输入，不依赖当前工作区脏状态。 |
+| UT-SECRET-SCAN-02 | `.githooks/pre-commit` 在 `qa-report.sh` 之前调用扫描 | 前置：读取 `.githooks/pre-commit` 全文；对照 UT-SECRET-SCAN-01 的入口路径。 | 1. 钩子源码在 `./scripts/qa-report.sh`（或 `qa-report.sh`）调用**之前**出现对扫描入口的调用；<br>2. 扫描非 0 时钩子 `exit` 非 0，且该失败路径上**不再**执行 `qa-report.sh`（`set -e` + 前置失败，或显式 `if ! scan; then exit 1; fi`）；<br>3. FAIL：仅在 `qa-report.sh` 之后扫密钥，或只文档说明却无调用。 |
+| UT-SECRET-SCAN-03 | 命中①：PEM 私钥块 → 非 0 + `文件:行` | 前置：构造 diff，路径 `backend/src/leak-key.js`（非放行路径）；新增行含 `-----BEGIN RSA PRIVATE KEY-----`（或任意同时含 `BEGIN` 与 `PRIVATE KEY` 的 PEM 头）。 | 1. 退出码 `!== 0`；<br>2. 输出含 `backend/src/leak-key.js:` + 正整行号（或等价 `文件:行`）；<br>3. 输出含「明文不要入库」与「环境变量」语义（子串即可）；<br>4. 证明①类独立可拦，不依赖③变量名规则。 |
+| UT-SECRET-SCAN-04 | 命中②：带用户名密码的连接串 URL → 非 0 | 前置：构造 diff，路径 `backend/src/db.js`；新增行 `+const url = 'postgres://appuser:s3cretPW@db.internal:5432/app';`（含 `://`…`:`…`@`）。 | 1. 退出码 `!== 0`；<br>2. 输出 `文件:行` 指向该新增行；<br>3. 含改走环境变量提示；<br>4. 证明②类独立可拦。 |
+| UT-SECRET-SCAN-05 | 命中③：`PASSWORD`/`SECRET`/`TOKEN`/`API_KEY`/`PRIVATE_KEY` + ≥8 引号字面量 | 前置：五份 diff（或一份多行），路径均非放行表；新增行分别为：`+const DB_PASSWORD = "abcdefgh";`、`+API_SECRET = '12345678';`、`+export AUTH_TOKEN = "tok_abcd12";`、`+OPENAI_API_KEY = "sk_live_xx";`、`+CLIENT_PRIVATE_KEY = "pk_abcd12";`（字面量 trim 后长度均 ≥ 8；变量名含对应关键词）。 | 1. 五份（或五行各自）扫描退出码均 `!== 0`；<br>2. 每条命中输出含对应文件与行号；<br>3. 证明五个关键词为**析取**，任一带 ≥8 引号字面量即拦。 |
+| UT-SECRET-SCAN-06 | ③类：字面量长度 &lt; 8 不拦 | 前置：路径 `backend/src/short.js`；`+const API_SECRET = "short";`（字面量长度 5 &lt; 8）；无①②命中。 | 1. 退出码 `=== 0`；<br>2. 输出**无**拦截用 `文件:行` 命中行（允许无输出或仅 info）；<br>3. 证明「不少于 8」为硬门槛。 |
+| UT-SECRET-SCAN-07 | ③类：变量名不含敏感关键词则不拦 | 前置：`+const DB_HOST = "abcdefghij";`（≥8 引号字面量，但名中无 PASSWORD/SECRET/TOKEN/API_KEY/PRIVATE_KEY）；无①②。 | 1. 退出码 `=== 0`；<br>2. 不因「长字符串」误拦；<br>3. 证明只认三类中的③名约束。 |
+| UT-SECRET-SCAN-08 | ②类：无密码段的 URL 不拦 | 前置：`+const u = 'https://example.com/path';` 或 `+const u = 'https://user@host/db';`（无 `://`…`:`…`@` 密码形态）；无①③命中。 | 1. 退出码 `=== 0`；<br>2. **不得**仅因出现 `://` 或 `@` 而失败；<br>3. 与 backlog「带用户名和密码的 URL」字面一致。 |
+| UT-SECRET-SCAN-09 | 放行：字面量 `change_me` | 前置：非放行路径；`+AI_CLIENT_TOKEN = "change_me";`（或 `PASSWORD`/`SECRET` 等价名 + `"change_me"`）。 | 1. 退出码 `=== 0`；<br>2. 即使变量名含 TOKEN/PASSWORD 也不拦；<br>3. 与 backlog 放行表一致。 |
+| UT-SECRET-SCAN-10 | 放行：字面量以 `your_` 或 `example` 开头 | 前置：A `+API_SECRET = "your_api_secret_here";`；B `+DB_PASSWORD = "example_password_xx";`；路径非放行表。 | 1. A、B 退出码均 `=== 0`；<br>2. 前缀匹配作用于字面量内容（非变量名）；<br>3. 证明 `your_` / `example` 开头放行。 |
+| UT-SECRET-SCAN-11 | 放行：路径 `*.example` / `docs/**` | 前置：A 文件路径 `backend/.env.example`，内容含 `+OPENAI_API_KEY="sk_live_realish";`；B 路径 `docs/runbook.md`，内容含 `+-----BEGIN PRIVATE KEY-----`。 | 1. A、B 退出码均 `=== 0`；<br>2. 路径放行优先于三类命中；<br>3. 证明 `*.example` 与 `docs/**` 在放行表内。 |
+| UT-SECRET-SCAN-12 | 放行：`*.test.js` / `*.spec.ts` / `*.test.ts` | 前置：三份 diff 路径分别为 `backend/src/tests/foo.test.js`、`frontend/src/x.spec.ts`、`frontend/src/y.test.ts`；各含一类本应命中的探针（③ ≥8 字面量或 PEM 头）。 | 1. 三份退出码均 `=== 0`；<br>2. 测试文件路径放行；<br>3. 与 backlog 放行扩展名表一致。 |
+| UT-SECRET-SCAN-13 | 放行：`package-lock.json` | 前置：diff 路径为 `backend/package-lock.json`（或根 `package-lock.json`）；新增行故意含 `+"_token": "abcdefghijklmnop"` 或类似长串。 | 1. 退出码 `=== 0`；<br>2. 不因 lockfile 哈希/元数据误拦；<br>3. 与放行表一致。 |
+| UT-SECRET-SCAN-14 | 干净 diff 放行后钩子可继续 qa-report | 前置：静态读 `pre-commit`；或集成：stub 扫描返回 0、stub `qa-report.sh` 记录是否被调用。 | 1. 扫描 0 之后控制流到达 `qa-report.sh`；<br>2. 扫描非 0 时 `qa-report.sh` 调用次数为 0；<br>3. 证明「之前检查」+ 短路顺序（与 UT-SECRET-SCAN-02 合取）。 |
+| UT-SECRET-SCAN-15 | 不做：不并进 OSV / `vulnerability-report.yml` | 前置：读取 `.github/workflows/vulnerability-report.yml`（若存在）及本扫描脚本；检索 OSV / `osv-scanner` / 密钥规则交叉。 | 1. 密钥扫描实现**不**作为该 workflow 的 step 依赖，也不把 PEM/连接串规则写入 OSV 月报脚本；<br>2. PASS **不**要求改 `docs/vulnerability-report.md`；<br>3. 与 backlog「单独检查，不并进漏洞扫描」及 **不做**「并进 OSV」一致。 |
+| UT-SECRET-SCAN-16 | 不做：不扫描 git 历史 / 不改写已入库密钥 | 前置：只读扫描脚本与测码；检索 `git log`/`git rev-list`/`filter-repo`/`bfg`。 | 1. 扫描输入仅为**暂存 diff**（或测码构造的等价文本），**无**遍历历史提交内容的必经路径；<br>2. 本表 PASS **不**要求 `git filter-repo` 清历史；<br>3. 与 **不做**「扫描 git 历史」「改写已入库的密钥」一致。 |
+| UT-SECRET-SCAN-17 | 不做：不升级依赖；不让 `qa.yml` 因漏洞失败 | 前置：读取 `.github/workflows/qa.yml`；对照本项 diff（实现阶段）不得借 E13 升级 `package-lock` 或把 OSV 高危设为 `qa.yml` 失败条件。 | 1. E13 测码 / 实现 **不以**「升级 axios/tar 等依赖」为 PASS 条件；<br>2. `qa.yml` **不**因本项新增「依赖漏洞非 0 则失败」门禁；<br>3. 与 **不做**「升级依赖」「让 `qa.yml` 因漏洞失败」字面一致。 |
+| UT-SECRET-SCAN-18 | residual：不要求检出混淆/编码秘密 | 前置：构造 `+const API_SECRET = Buffer.from('YWI=', 'base64').toString();` 或 `+const API_SECRET = ['a','b'].join('');`（无明文 ≥8 引号字面量、无 PEM、无 user:pass@ URL）。 | 1. 退出码 `=== 0`（允许漏过）；<br>2. **不得**以未拦截混淆秘密为本表 FAIL；<br>3. 与 residual「混淆或编码后的秘密…本项不清除」同向。 |
+| UT-SECRET-SCAN-19 | 与 E11/E12 分界：本表不锁提交说明段落 | 前置：只读 §2.37 / §2.38 与 backlog E13。 | 1. PASS **不**要求改 `scripts/check-commit-msg.sh` 或 PR 提交说明 step；<br>2. `pre-commit` 仍**不**调用提交说明校验（E12 **不做**保持）；<br>3. 本表范围 = 暂存 diff 密钥扫描 + 钩子顺序 + 命中/放行 + 不做/residual。 |
+| UT-SECRET-SCAN-20 | 删除行（`-`）中的旧秘密不拦 | 前置：diff 仅含删除行 `-const API_SECRET = "abcdefghijklmnop";`，无 `+` 新增命中行；路径非放行表。 | 1. 退出码 `=== 0`；<br>2. 只扫暂存**新增**内容（`+` / 新文件），不因清理旧明文而失败；<br>3. 与「检查暂存 diff」防泄漏目标一致（拦的是入库增量）。 |
+| UT-SECRET-SCAN-21 | 规则注释点名 BEGIN 与 PRIVATE KEY 不拦 | 前置：非放行路径。A 整行 `#` 注释只点名这两个词、没有 `-----BEGIN`；B 非注释代码行同时含这两个词；C 整行 `#` 注释含 `-----BEGIN` 与 `PRIVATE KEY`。 | 1. A 退出码 `=== 0`；<br>2. B、C 退出码均 `!== 0`，且输出对应 `文件:行`；<br>3. 证明放行的是规则说明，不是注释里的私钥装甲头，也不是代码里的 PEM 标记。 |
 
 ---
 
