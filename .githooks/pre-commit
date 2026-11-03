@@ -8,6 +8,16 @@ set -e
 PROJECT_ROOT="$(git rev-parse --show-toplevel)"
 cd "$PROJECT_ROOT"
 
+echo "🔐 [Git Hook] 正在扫描暂存区硬编码口令/密钥/私钥/连接串..."
+
+# 0. E13：在 qa-report 之前拦截明文密钥（命中则短路，不再跑 qa-report）
+if ! ./scripts/check-staged-secrets.sh; then
+  echo ""
+  echo "❌ [Git Hook 拦截] 暂存区存在疑似硬编码秘密，提交已被取消！"
+  echo "👉 明文不要入库，请改走环境变量后再次提交。"
+  exit 1
+fi
+
 echo "🔍 [Git Hook] 正在执行提交前全栈测试校验 (qa-report.sh)..."
 
 # 1. 运行全栈测试并生成报告

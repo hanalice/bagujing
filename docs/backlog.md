@@ -98,7 +98,7 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | E1  | feat | gate | assist | split | 已拆为 E11–E17；月报与现有测试/ESLint 门禁不另开实现项 |
 | E11 | feat | gate | auto | done | 提交说明脚本：feat 四段、refactor 三段、轻量 type 有正文；钩子与日修沙盒共用 |
 | E12 | feat | gate | auto | done | PR 使用与 E11 同一套提交说明校验 |
-| E13 | feat | gate | auto | todo | pre-commit 拦截暂存区硬编码口令、密钥、私钥与连接串 |
+| E13 | feat | gate | auto | done | pre-commit 拦截暂存区硬编码口令、密钥、私钥与连接串 |
 | E14 | feat | gate | auto | todo | qa-report 采集前后端行覆盖率并写入报告，不因比例失败 |
 | E15 | feat | gate | assist | todo | 历史行覆盖率前后端各 ≥60% 才拦截（E14 出数字前禁止改 auto） |
 | E16 | feat | gate | assist | todo | PR 新增行覆盖率 ≥80% 才失败（E14 合入前禁止改 auto） |
@@ -324,7 +324,7 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 
 ### E13
 
-- **做**：`.githooks/pre-commit` 在 `qa-report.sh` 之前检查暂存 diff。命中则退出码非 0，输出 `文件:行`，并说明明文不要入库、改走环境变量。只认三类：① PEM 私钥块（`BEGIN` 与 `PRIVATE KEY`）；② 带用户名和密码的 URL（`://` … `:` … `@`）；③ 变量名含 `PASSWORD`、`SECRET`、`TOKEN`、`API_KEY`、`PRIVATE_KEY` 之一，且右侧是长度不少于 8 的引号字面量。放行：字面量是 `change_me`、以 `your_` 或 `example` 开头，以及路径属于 `*.example`、`docs/**`、`*.test.js`、`*.spec.ts`、`*.test.ts`、`package-lock.json`。用构造的 diff 文本做单测，命中与放行都要有断言。
+- **做**：`.githooks/pre-commit` 在 `qa-report.sh` 之前检查暂存 diff。命中则退出码非 0，输出 `文件:行`，并说明明文不要入库、改走环境变量。只认三类：① PEM 私钥块（`BEGIN` 与 `PRIVATE KEY`；整行 `#` 注释只点名这两个词、且没有 `-----BEGIN` 装甲头的，不算私钥块）；② 带用户名和密码的 URL（`://` … `:` … `@`）；③ 变量名含 `PASSWORD`、`SECRET`、`TOKEN`、`API_KEY`、`PRIVATE_KEY` 之一，且右侧是长度不少于 8 的引号字面量。放行：字面量是 `change_me`、以 `your_` 或 `example` 开头，以及路径属于 `*.example`、`docs/**`、`*.test.js`、`*.spec.ts`、`*.test.ts`、`package-lock.json`。用构造的 diff 文本做单测，命中与放行都要有断言。
 - **不做**：并进 OSV 或 `vulnerability-report.yml`；扫描 git 历史；升级依赖；让 `qa.yml` 因漏洞失败；改写已入库的密钥。
 - **residual**：混淆或编码后的秘密、已在历史中的密钥，本项不清除。
 
@@ -405,3 +405,4 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | 2026-10-29 | 人拆 E1：父项 split；E11–E14、E17 为 auto+todo 并排在 S12–S14 之前；E15/E16 保持 assist |
 | 2026-10-30 | E11 完成：提交说明脚本：feat 四段、refactor 三段、轻量 type 有正文；钩子与日修沙盒共用 |
 | 2026-10-31 | E12 完成：PR 使用与 E11 同一套提交说明校验 |
+| 2026-11-01 | E13 完成：pre-commit 拦截暂存区硬编码口令、密钥、私钥与连接串 |
