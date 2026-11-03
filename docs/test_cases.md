@@ -32,6 +32,7 @@
 - **提交说明校验脚本共用 (E11)**：抽出可单独喂消息文件的校验脚本；`.githooks/commit-msg` 与 `scripts/automation/lib/git-sandbox.sh`（日修沙盒）共用同一入口。`feat` 四段、`refactor` 三段、轻量 type 须有非空正文；对齐 `docs/git-commit-convention.md`。单测见 §2.37 `UT-COMMIT-MSG-*`。**不做**：PR/CI（**E12**）；密钥扫描（**E13**）。**residual**：`COMMIT_MSG_GATE=off` 跳过保持。
 - **PR 提交说明与 E11 同脚本 (E12)**：PR 的 CI 对本次提交范围调用 E11 同一入口 `scripts/check-commit-msg.sh`（禁止第二套段落规则）；脚本非 0 → 该检查失败；豁免与钩子/E11 脚本相同（含 Merge）。单测见 §2.38 `UT-COMMIT-PR-*`。**不做**：改 E11 段落规则；在 `.githooks/pre-commit` 再跑一遍提交说明。**residual**：E11 未合入时不得另写一套规则；Merge 保持豁免。
 - **pre-commit 拦截暂存区硬编码口令/密钥 (E13)**：`.githooks/pre-commit` 在 `qa-report.sh` **之前**检查暂存 diff；只认三类明文（PEM 私钥块、带用户名密码的 URL、敏感变量名 + ≥8 引号字面量）；命中则非 0 并输出 `文件:行` + 改走环境变量提示；占位字面量与 `*.example` / `docs/**` / 测试文件 / `package-lock.json` 放行。用构造的 diff 文本单测命中与放行（§2.39 `UT-SECRET-SCAN-*`）。**不做**：并进 OSV / `vulnerability-report.yml`；扫 git 历史；升级依赖；让 `qa.yml` 因漏洞失败；改写已入库密钥。**residual**：混淆/编码秘密与历史中已有密钥本项不清除。
+- **qa-report 采集前后端行覆盖率 (E14)**：`scripts/qa-report.sh` 采集**行覆盖率**并写入 `docs/qa_report.md`。后端沿用 `npm run test:coverage`（`--test-coverage-include=src/**`，`--test-coverage-exclude=src/tests/**`）。前端 Vitest 行覆盖率只统计 `frontend/src`，**不含** e2e。报告须含后端、前端两个可解析百分比；**比例高低均不得**让门禁失败；采集命令本身跑不起来则失败。单测见 §2.40 `UT-QA-COV-*`。**不做**：因比例拦截（**E15/E16**）；为凑比例改业务代码；把 E2E 算进行覆盖率。**residual**：历史 ≥60% 与新增行 ≥80% 仍属 E15/E16，禁止周扫描提前改 `auto`。
 
 ---
 
@@ -922,6 +923,44 @@ C22 合入后 problems 关键字召回主路径改为 FTS（失败回退 LIKE）
 | UT-SECRET-SCAN-19 | 与 E11/E12 分界：本表不锁提交说明段落 | 前置：只读 §2.37 / §2.38 与 backlog E13。 | 1. PASS **不**要求改 `scripts/check-commit-msg.sh` 或 PR 提交说明 step；<br>2. `pre-commit` 仍**不**调用提交说明校验（E12 **不做**保持）；<br>3. 本表范围 = 暂存 diff 密钥扫描 + 钩子顺序 + 命中/放行 + 不做/residual。 |
 | UT-SECRET-SCAN-20 | 删除行（`-`）中的旧秘密不拦 | 前置：diff 仅含删除行 `-const API_SECRET = "abcdefghijklmnop";`，无 `+` 新增命中行；路径非放行表。 | 1. 退出码 `=== 0`；<br>2. 只扫暂存**新增**内容（`+` / 新文件），不因清理旧明文而失败；<br>3. 与「检查暂存 diff」防泄漏目标一致（拦的是入库增量）。 |
 | UT-SECRET-SCAN-21 | 规则注释点名 BEGIN 与 PRIVATE KEY 不拦 | 前置：非放行路径。A 整行 `#` 注释只点名这两个词、没有 `-----BEGIN`；B 非注释代码行同时含这两个词；C 整行 `#` 注释含 `-----BEGIN` 与 `PRIVATE KEY`。 | 1. A 退出码 `=== 0`；<br>2. B、C 退出码均 `!== 0`，且输出对应 `文件:行`；<br>3. 证明放行的是规则说明，不是注释里的私钥装甲头，也不是代码里的 PEM 标记。 |
+
+### 2.40 qa-report 采集前后端行覆盖率并写入报告、不因比例失败（E14）（`backend/src/tests/qa-report-coverage.test.js` → `scripts/qa-report.sh` + `scripts/format-qa-report.js` + `backend/package.json` `test:coverage` + 前端 Vitest coverage 配置）
+
+对应 **E14**（`docs/backlog.md` §E14；质量口径为**行覆盖率**）。现状：`scripts/qa-report.sh` 聚合 backend `npm test` / backend lint / frontend `npm test` / `verify-db.js`，经 `scripts/format-qa-report.js` 写入 `docs/qa_report.md` 并按套件 `status === 'FAIL'` 裁决 `GATE_CODE`；**未**采集前后端行覆盖率百分比。完成标准：**做**——采集并写入报告两端可解析行覆盖率百分比；比例高低不拦截；采集命令本身失败则门禁非 0。**不做**——因比例失败（E15/E16）；为凑比例改业务代码；把 E2E 算进覆盖率。
+
+**做**：
+
+1. `scripts/qa-report.sh` 在组装临时 `results.json` / 调用 `format-qa-report.js` **之前**（或同一次报告生成路径内）执行后端与前端行覆盖率采集，捕获 stdout/stderr 与退出码，并写入 JSON 载荷（字段名可为 `backendCoverageCode`/`backendCoverageOutput` + `frontendCoverageCode`/`frontendCoverageOutput`，或解析后的 `backendLineCoveragePct`/`frontendLineCoveragePct`；须与 `format-qa-report.js` 读取名一致）。
+2. **后端**：沿用 `backend/package.json` 的 `npm run test:coverage`（现网：`node --test --experimental-test-coverage --test-coverage-include=src/** --test-coverage-exclude=src/tests/** "src/tests/**/*.test.js"`）。覆盖范围 = `src/**`，**排除** `src/tests/**`；口径为**行**覆盖率（Node `--experimental-test-coverage` 的 line 汇总，或报告中显式标注「行 / line」）。
+3. **前端**：Vitest 行覆盖率（`coverage.provider` 为 `v8`/`istanbul` 均可），`coverage.include`（或等价）只统计 `frontend/src`（如 `src/**/*.{ts,tsx,vue,js}`）；**不得**把 `e2e/**`、Playwright 用例计入 coverage include；不得用 `frontend npm test`（含 Playwright）冒充覆盖率命令。
+4. `docs/qa_report.md` 生成结果中须同时出现**后端**与**前端**两个可解析的百分比数字（契约：各匹配可被正则抽出的 `N%` / `N.N%`，且上下文可区分 backend/frontend 或「后端/前端」标签；允许落在大盘表新列、独立「行覆盖率」小节或 JSON 旁路字段再渲染进 md）。
+5. **比例高低都不得让门禁失败**：当 BE/FE/lint/db 等既有套件均为 PASS（或 db SKIP），仅覆盖率百分比为任意合法值（含 `0%`、`<60%`、`≥80%`、`100%`）时，`format-qa-report.js` / `qa-report.sh` 最终退出码 `=== 0`（未设 `QA_GATE=off`）。覆盖率**不得**作为 `hasBlockingFailure` 的 FAIL 源。
+6. **采集命令本身跑不起来则失败**：后端 `test:coverage` 或前端 coverage 命令进程退出码 `!== 0`（命令缺失、配置错误、测试失败导致 coverage 未产出等），则对应套件记 `FAIL`，门禁退出码 `!== 0`（与现有测试 FAIL 裁决一致）。「比例低」≠「命令失败」。
+
+**不做**：因覆盖率比例拦截（属 **E15** 历史 ≥60%、**E16** PR 新增 ≥80%）；为凑比例修改业务生产代码或缩小 include；把 Playwright / `e2e/**` 算进行覆盖率。
+
+**residual**：历史行覆盖率前后端各 ≥60% 才拦截、PR 新增行 ≥80% 才失败——仍是 E15/E16；本表 PASS **不**要求、也**禁止**在 E14 实现里按比例 `exit 1`。禁止周扫描把 E15/E16 提前改成 `auto`（文档/队列操作，测码只锁「E14 门禁不读阈值」）。
+
+**测法**：`node:test`；建议 `backend/src/tests/qa-report-coverage.test.js`。① 静态读 `scripts/qa-report.sh`、`scripts/format-qa-report.js`、`backend/package.json`、`frontend/package.json` / `frontend/vitest.config.*`（或实现新增的 coverage 配置文件）；② 用临时 `results.json` stub 覆盖率输出/退出码，调用 `format-qa-report.js` 断言 `docs/qa_report.md` 含两端可解析 `%` 且低比例不 `exit 1`；③ 注入采集命令非 0，断言门禁非 0；④ 禁止依赖真实全量前端 E2E、禁止为绿改业务源码。`it()` 标题须包含下表 ID。
+
+| ID | 用例标题 | 场景描述 | 预期结果 |
+| :--- | :--- | :--- | :--- |
+| UT-QA-COV-01 | `qa-report.sh` 在报告链路中执行后端 `npm run test:coverage` | 前置：读取仓库根 `scripts/qa-report.sh` 全文；对照现有步骤（backend `npm test`、backend lint、frontend `npm test`、`verify-db`、写 `results.json`、调 `format-qa-report.js`）。 | 1. 脚本在调用 `format-qa-report.js` **之前**存在对后端覆盖率的调用，形如 `(cd "$PROJECT_ROOT/backend" && npm run test:coverage)`（或等价先 `cd backend` 再 `npm run test:coverage`），且捕获 stdout/stderr 与退出码；<br>2. 该调用**不是**注释死代码；<br>3. 写入 `results.json` 的 payload **包含**后端覆盖率退出码与输出（或已解析的行覆盖率百分比字段），字段名与 `format-qa-report.js` 读取名一致。 |
+| UT-QA-COV-02 | 后端 `test:coverage` 口径：`src/**` 含、`src/tests/**` 排除 | 前置：读取 `backend/package.json` 的 `scripts["test:coverage"]`（现网含 `--experimental-test-coverage --test-coverage-include=src/** --test-coverage-exclude=src/tests/**`）；若实现改走封装脚本，则静态读该脚本的 include/exclude。 | 1. 命令行或配置显式 include `src/**`（或规范化后等价覆盖 `backend/src` 业务文件）；<br>2. 显式 exclude `src/tests/**`（测试文件不计入覆盖分母/分子）；<br>3. FAIL：去掉 exclude 导致 `src/tests/**` 计入，或 include 缩到个别文件凑比例。 |
+| UT-QA-COV-03 | `qa-report.sh` 执行前端 Vitest 行覆盖率采集 | 前置：读取 `scripts/qa-report.sh`；对照 `frontend/package.json` scripts 与 Vitest coverage 配置（`vitest.config.*` 或实现新增的 coverage 专用 script，如 `test:coverage` / `vitest run --coverage`）。 | 1. 脚本在 `format-qa-report.js` 之前存在前端覆盖率调用（`cd frontend` + coverage 相关 npm script / `vitest … --coverage`），并捕获退出码与输出；<br>2. **不是**仅复用 `npm test`（`vitest run && playwright test`）而不开 coverage；<br>3. `results.json` 含前端覆盖率退出码/输出或已解析百分比字段，与 format 脚本字段名一致。 |
+| UT-QA-COV-04 | 前端覆盖范围只统计 `frontend/src`，不含 e2e | 前置：读取前端 Vitest coverage 配置（`coverage.include` / `coverage.exclude` / `test.exclude`）；对照目录 `frontend/src` 与 `frontend/e2e`（或仓库内 Playwright 用例目录）。 | 1. coverage include 限定在 `src/**`（相对 frontend 根）或等价只含 `frontend/src` 下源文件；<br>2. `e2e/**`（及 Playwright 规格文件）出现在 coverage exclude，或根本不在 include 内；<br>3. FAIL：`coverage.include` 含 `e2e/**`，或把 E2E 跑通率当成行覆盖率写入报告。 |
+| UT-QA-COV-05 | 报告写入后端与前端两个可解析的行覆盖率百分比 | 前置：构造临时 `results.json`：既有 BE/lint/FE/db 均为 PASS；注入可解析的覆盖率输出（或直接注入 `backendLineCoveragePct: 42.5`、`frontendLineCoveragePct: 37` 等）；调用 `format-qa-report.js`；读取生成的 `docs/qa_report.md`（或测试隔离写出的等价报告路径）。 | 1. 报告正文同时出现后端与前端两个百分比（各匹配 `/\d+(?:\.\d+)?%/`）；<br>2. 两端数字可被标签/表头区分（含「后端」/「frontend」/ `backend` 等可判定上下文，不得两行无法分辨归属）；<br>3. 文案或表头体现**行**覆盖率（「行覆盖率」/ `line` / `Lines` 之一），不得仅写分支/语句却声称满足 E14。 |
+| UT-QA-COV-06 | 行覆盖率低于 60% 时门禁仍为 0（不做 E15） | 前置：BE/lint/FE/db（或 db SKIP）均为 PASS；后端行覆盖率 stub 为 `12.3%`，前端为 `5%`（均 &lt; 60%）；未设 `QA_GATE=off`；调用 `format-qa-report.js`（或 stub 后的门禁段）。 | 1. 进程最终退出码 `=== 0`；<br>2. 覆盖率套件**不得**被标为 `status === 'FAIL'` 并进入 `hasBlockingFailure`；<br>3. 报告仍写出上述两个低百分比（可解析）；与 backlog「比例高低都不得让门禁失败」及 **不做** E15 一致。 |
+| UT-QA-COV-07 | 行覆盖率高于门槛时门禁仍只由既有套件裁决 | 前置：同 UT-QA-COV-06 结构；后端 stub `95%`、前端 stub `88%`；其它套件 PASS。 | 1. 退出码 `=== 0`；<br>2. **不得**因「比例高」额外改写准出逻辑或要求 E16 diff 门槛；<br>3. 证明高低比例对称：都不单独决定 GATE_CODE。 |
+| UT-QA-COV-08 | 后端覆盖率采集命令非 0 → 门禁失败 | 前置：其它套件 PASS；`backendCoverageCode`（或等价）`!== 0`，输出可为「command not found」/测试失败摘要；未设 `QA_GATE=off`；调用 format / 门禁段。 | 1. 最终退出码 `!== 0`；<br>2. 裁决将「后端覆盖率采集」标 `FAIL`（或并入可阻断套件列表）；<br>3. 报告/stderr 可区分是**采集失败**而非「比例过低」；证明「采集命令本身跑不起来则失败」。 |
+| UT-QA-COV-09 | 前端覆盖率采集命令非 0 → 门禁失败 | 前置：其它套件 PASS；前端 coverage 退出码 `!== 0`（缺 `@vitest/coverage-*`、配置非法、vitest 非 0 等）；调用 format / 门禁段。 | 1. 最终退出码 `!== 0`；<br>2. 前端覆盖率采集记 `FAIL` 并阻断；<br>3. 与 UT-QA-COV-08 对称；不得被 FE 单测 PASS 掩盖为整体 0。 |
+| UT-QA-COV-10 | 覆盖率输出缺失百分比但命令 exit 0 时的契约 | 前置：覆盖率命令退出码 `=== 0`，但 stdout 无法解析出 `N%`（空输出或无 line 汇总）；其它套件 PASS。 | 1. 实现须二选一且测码锁定：**A)** 视为采集失败 → 门禁非 0，报告注明无法解析；或 **B)** 仍 exit 0，但报告明确写出「未解析/N/A」且**不得**伪造 `0%` 冒充已采集成功却又按比例拦截；<br>2. 禁止静默当作「比例 0 → E15 失败」；<br>3. 选定分支须在断言注释写明，避免实现漂移。 |
+| UT-QA-COV-11 | 不做：不因比例拦截（E15/E16 分界） | 前置：只读本小节与 backlog E14/E15/E16；静态检索 `format-qa-report.js` / `qa-report.sh` 是否对覆盖率数值做 `< 60` / `< 80` 比较后 `exit 1`。 | 1. E14 实现路径**不**存在「历史行覆盖率 &lt; 60% → 非 0」或「新增行 &lt; 80% → 非 0」的必经裁决；<br>2. 本表 PASS **不**要求实现 E15/E16；<br>3. UT-QA-COV-06 与本行合取证明 **不做**「因覆盖率比例拦截」。 |
+| UT-QA-COV-12 | 不做：不把 E2E 算进行覆盖率 | 前置：对照 UT-QA-COV-04；读取 `qa-report.sh` 覆盖率命令行；确认未对 Playwright 报告做 line-rate 解析写入「前端行覆盖率」。 | 1. 前端行覆盖率数字来源为 Vitest coverage summary（或 v8/istanbul 报告），**不是** `playwright test` 的 passed/failed 比率；<br>2. 脚本**不得**要求先跑 E2E 才写出前端行覆盖率；<br>3. 与 backlog **不做**「把 E2E 算进行覆盖率」一致。 |
+| UT-QA-COV-13 | 不做：不为凑比例改业务代码 / 缩小 include | 前置：只读 backlog E14 **不做**；本表测码只断言脚本与配置，不修改 `backend/src` / `frontend/src` 业务文件。 | 1. PASS **不**以「删除难测模块 / 把 include 缩成单文件」为条件；<br>2. UT-QA-COV-02/04 的 include/exclude 与仓库约定一致即可；<br>3. 测码禁止借 E14 提交业务功能改动。 |
+| UT-QA-COV-14 | residual：不提前实现 E15/E16 的 auto 阈值门禁 | 前置：只读 backlog「E14 出数字前禁止改 auto」「E14 合入前禁止改 auto」；本表与队列状态无关的代码断言。 | 1. 本表 PASS **不**要求读取队列表把 E15/E16 改 `auto`；<br>2. **不**以「未在 CI 加 60%/80% 阈值」为 FAIL；<br>3. 与 residual「历史 ≥60% 与新增行 ≥80% 仍是 E15/E16」同向。 |
+| UT-QA-COV-15 | 与 A82 lint 门禁共存：覆盖率采集不取代 lint | 前置：静态读 `qa-report.sh`；对照 §2.16 `UT-QA-LINT-*`。 | 1. backend `npm run lint` 调用仍在；<br>2. 覆盖率步骤为**新增**采集，不删除 lint / 既有 `npm test` 门禁；<br>3. lint error → 非 0 的契约保持（可由 UT-QA-LINT-02 回归，本行只断言覆盖率未移除 lint）。 |
+| UT-QA-COV-16 | 既有测试 FAIL 时门禁仍非 0（覆盖率数字不放行） | 前置：`backendCode !== 0`（或 frontend/lint FAIL）；覆盖率两端均为 `99%` 且采集 exit 0；未设 `QA_GATE=off`。 | 1. 最终退出码 `!== 0`；<br>2. 高覆盖率**不得**掩盖测试/lint FAIL；<br>3. 证明覆盖率只写入报告，不改变既有 `hasBlockingFailure` 语义。 |
 
 ---
 

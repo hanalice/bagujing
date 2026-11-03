@@ -24,7 +24,7 @@ echo "🧪 [QA Automation] 开始执行全栈测试套件与质量校验..."
 echo "========================================================"
 
 # 1. 运行后端核心单测
-echo -n "⚙️ [1/4] 正在运行后端单元测试 (backend npm test)... "
+echo -n "⚙️ [1/6] 正在运行后端单元测试 (backend npm test)... "
 BE_OUT_FILE="$TEMP_DIR/be_out.txt"
 set +e
 (cd "$PROJECT_ROOT/backend" && npm test) > "$BE_OUT_FILE" 2>&1
@@ -38,7 +38,7 @@ else
 fi
 
 # 2. 运行后端 ESLint（仅 error 导致非 0；warning 不拦截）
-echo -n "🔍 [2/4] 正在运行后端静态检查 (backend npm run lint)... "
+echo -n "🔍 [2/6] 正在运行后端静态检查 (backend npm run lint)... "
 BE_LINT_OUT_FILE="$TEMP_DIR/be_lint_out.txt"
 set +e
 (cd "$PROJECT_ROOT/backend" && npm run lint) > "$BE_LINT_OUT_FILE" 2>&1
@@ -68,7 +68,7 @@ pin_playwright_browsers() {
 }
 
 # 3. 运行前端单元测试 + E2E
-echo -n "🎨 [3/4] 正在运行前端单元测试 (frontend npm test)... "
+echo -n "🎨 [3/6] 正在运行前端单元测试 (frontend npm test)... "
 FE_OUT_FILE="$TEMP_DIR/fe_out.txt"
 set +e
 pin_playwright_browsers
@@ -88,7 +88,7 @@ else
 fi
 
 # 4. 运行数据库完整性校验（CI 无本机 sqlite，跳过且不阻断门禁）
-echo -n "🗄️ [4/4] 正在运行 SQLite 数据库完整性排查... "
+echo -n "🗄️ [4/6] 正在运行 SQLite 数据库完整性排查... "
 DB_OUT_FILE="$TEMP_DIR/db_out.txt"
 if [ "${CI:-}" = "true" ]; then
   echo "QA_DB_VERIFY_SKIPPED" > "$DB_OUT_FILE"
@@ -107,7 +107,35 @@ else
   fi
 fi
 
-# 5. 组装临时 JSON 数据并调用生成器
+# 5. 采集后端行覆盖率（E14：比例高低不拦截；命令非 0 才失败）
+echo -n "📈 [5/6] 正在采集后端行覆盖率 (backend npm run test:coverage)... "
+BE_COV_OUT_FILE="$TEMP_DIR/be_cov_out.txt"
+set +e
+(cd "$PROJECT_ROOT/backend" && npm run test:coverage) > "$BE_COV_OUT_FILE" 2>&1
+BE_COV_CODE=$?
+set -e
+
+if [ $BE_COV_CODE -eq 0 ]; then
+  echo "✅ PASS"
+else
+  echo "❌ FAIL (退出码: $BE_COV_CODE)"
+fi
+
+# 6. 采集前端 Vitest 行覆盖率（不含 e2e；不复用 npm test）
+echo -n "📈 [6/6] 正在采集前端行覆盖率 (frontend npm run test:coverage)... "
+FE_COV_OUT_FILE="$TEMP_DIR/fe_cov_out.txt"
+set +e
+(cd "$PROJECT_ROOT/frontend" && npm run test:coverage) > "$FE_COV_OUT_FILE" 2>&1
+FE_COV_CODE=$?
+set -e
+
+if [ $FE_COV_CODE -eq 0 ]; then
+  echo "✅ PASS"
+else
+  echo "❌ FAIL (退出码: $FE_COV_CODE)"
+fi
+
+# 7. 组装临时 JSON 数据并调用生成器
 node -e "
 const fs = require('fs');
 const payload = {
@@ -119,11 +147,15 @@ const payload = {
   frontendOutput: fs.readFileSync('$FE_OUT_FILE', 'utf8'),
   dbCode: $DB_CODE,
   dbOutput: fs.readFileSync('$DB_OUT_FILE', 'utf8'),
+  backendCoverageCode: $BE_COV_CODE,
+  backendCoverageOutput: fs.readFileSync('$BE_COV_OUT_FILE', 'utf8'),
+  frontendCoverageCode: $FE_COV_CODE,
+  frontendCoverageOutput: fs.readFileSync('$FE_COV_OUT_FILE', 'utf8'),
 };
 fs.writeFileSync('$TEMP_JSON', JSON.stringify(payload));
 "
 
-# 6. 调用格式化解析器生成 docs/qa_report.md（其退出码即为质量门禁裁决）
+# 8. 调用格式化解析器生成 docs/qa_report.md（其退出码即为质量门禁裁决）
 set +e
 node "$PROJECT_ROOT/scripts/format-qa-report.js" "$TEMP_JSON"
 GATE_CODE=$?
