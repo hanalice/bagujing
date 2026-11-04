@@ -11,7 +11,11 @@ import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '..');
-const REPORT_PATH = path.join(PROJECT_ROOT, 'docs', 'qa_report.md');
+/** 允许测试经 QA_REPORT_PATH 隔离写出，避免并行单测争用 docs/qa_report.md */
+const REPORT_PATH =
+  process.env.QA_REPORT_PATH && process.env.QA_REPORT_PATH.trim()
+    ? path.resolve(process.env.QA_REPORT_PATH)
+    : path.join(PROJECT_ROOT, 'docs', 'qa_report.md');
 
 // 辅助：彻底剥离 ANSI 终端控制字符与颜色码
 function stripAnsi(str) {
@@ -215,6 +219,107 @@ function extractBackendLintFailures(rawOutput, stats) {
   return `> ❌ **后端 lint 失败（error 拦截）**：errorCount=${stats.errorCount}\n\n\`\`\`\n${clean}\n\`\`\``;
 }
 
+/**
+ * 从覆盖率命令输出中解析行覆盖率百分比。
+ * 支持 Node test coverage（all files | line %）与 Vitest text-summary（Lines : N%）。
+ * @param {string} rawOutput
+ * @returns {number|null} 解析成功返回数值，否则 null
+ */
+function extractLineCoveragePct(rawOutput) {
+  const clean = stripAnsi(rawOutput || '');
+  // Vitest text-summary：优先取 Lines 行
+  const vitestLines = clean.match(/Lines\s*:\s*([\d.]+)\s*%/i);
+  if (vitestLines) {
+    return parseFloat(vitestLines[1]);
+  }
+  // Node --experimental-test-coverage：all files 行的 line % 列（第二列）
+  const nodeAll = clean.match(/#\s*all files\s*\|\s*([\d.]+)\s*\|/i);
+  if (nodeAll) {
+    return parseFloat(nodeAll[1]);
+  }
+  // 兜底：覆盖率表 All files 行的 % Lines 列（第 5 列数值）
+  const tableAll = clean.match(
+    /All files\s*\|\s*[\d.]+\s*\|\s*[\d.]+\s*\|\s*[\d.]+\s*\|\s*([\d.]+)\s*\|/i,
+  );
+  if (tableAll) {
+    return parseFloat(tableAll[1]);
+  }
+  return null;
+}
+
+/**
+ * 解析覆盖率采集结果。
+ * 契约（E14 / UT-QA-COV-10 选 A）：命令非 0 → FAIL；exit 0 但无法解析百分比 → FAIL（采集失败）；
+ * 比例高低（含 0%、&lt;60%、≥80%）一律 PASS，不进入比例阈值裁决。
+ * @param {string} rawOutput
+ * @param {number} exitCode
+ * @param {number|null|undefined} preParsedPct 可选：results.json 直接注入的百分比
+ */
+function parseCoverageCollection(rawOutput, exitCode, preParsedPct) {
+  if (exitCode !== 0) {
+    return {
+      status: 'FAIL',
+      linePct: null,
+      display: '采集失败',
+      reason: 'command_failed',
+      total: 1,
+      pass: 0,
+      fail: 1,
+      duration: '-',
+    };
+  }
+
+  let linePct = null;
+  if (typeof preParsedPct === 'number' && Number.isFinite(preParsedPct)) {
+    linePct = preParsedPct;
+  } else {
+    linePct = extractLineCoveragePct(rawOutput);
+  }
+
+  if (linePct === null) {
+    // UT-QA-COV-10 分支 A：无法解析视为采集失败 → 门禁非 0，报告注明未解析
+    return {
+      status: 'FAIL',
+      linePct: null,
+      display: '未解析/N/A',
+      reason: 'unparseable',
+      total: 1,
+      pass: 0,
+      fail: 1,
+      duration: '-',
+    };
+  }
+
+  return {
+    status: 'PASS',
+    linePct,
+    display: `${linePct}%`,
+    reason: 'ok',
+    total: 1,
+    pass: 1,
+    fail: 0,
+    duration: '-',
+  };
+}
+
+/**
+ * 渲染覆盖率采集失败说明（区分「采集失败」与「比例过低」）。
+ * @param {string} label
+ * @param {string} rawOutput
+ * @param {{ status: string, display: string, reason: string }} stats
+ */
+function extractCoverageFailures(label, rawOutput, stats) {
+  if (stats.status === 'PASS') {
+    return `> ✅ **${label}行覆盖率采集成功**：${stats.display}（比例不参与门禁裁决）。`;
+  }
+  const clean = stripAnsi(rawOutput || '').trim();
+  const hint =
+    stats.reason === 'unparseable'
+      ? '退出码为 0 但无法解析出行覆盖率百分比'
+      : '覆盖率采集命令非 0（非比例过低）';
+  return `> ❌ **${label}覆盖率采集失败**：${hint}；显示=${stats.display}\n\n\`\`\`\n${clean || '(无输出)'}\n\`\`\``;
+}
+
 // 8. 渲染 Markdown 模板
 function renderMarkdownReport(data) {
   const {
@@ -225,9 +330,13 @@ function renderMarkdownReport(data) {
     backendLintStats,
     frontendStats,
     dbStats,
+    backendCoverageStats,
+    frontendCoverageStats,
     backendFailuresText,
     backendLintFailuresText,
     frontendFailuresText,
+    backendCoverageFailuresText,
+    frontendCoverageFailuresText,
     allPassed,
     hasBlockingFailure,
   } = data;
@@ -260,6 +369,17 @@ function renderMarkdownReport(data) {
 | **后端 lint** | \`cd backend && npm run lint\` | ${backendLintStats.total} | ${backendLintStats.pass} | ${backendLintStats.fail} | ${backendLintStats.duration} | ${renderStatusCell(backendLintStats.status)} |
 | **前端单元与 E2E 测试** | \`cd frontend && npm test\` | ${frontendStats.total} | ${frontendStats.pass} | ${frontendStats.fail} | ${frontendStats.duration} | ${renderStatusCell(frontendStats.status)} |
 | **数据库完整性排查** | \`node backend/scripts/verify-db.js\` | ${dbStats.items} | ${dbStats.status === 'PASS' ? dbStats.items : 0} | ${dbStats.status === 'FAIL' ? 1 : 0} | ${dbStats.duration || '-'} | ${renderStatusCell(dbStats.status)} |
+| **后端覆盖率采集** | \`cd backend && npm run test:coverage\` | ${backendCoverageStats.total} | ${backendCoverageStats.pass} | ${backendCoverageStats.fail} | ${backendCoverageStats.duration} | ${renderStatusCell(backendCoverageStats.status)} |
+| **前端覆盖率采集** | \`cd frontend && npm run test:coverage\` | ${frontendCoverageStats.total} | ${frontendCoverageStats.pass} | ${frontendCoverageStats.fail} | ${frontendCoverageStats.duration} | ${renderStatusCell(frontendCoverageStats.status)} |
+
+### 1.1 行覆盖率 (Line Coverage)
+
+| 端 | 行覆盖率 | 采集判定 |
+| :--- | :---: | :---: |
+| **后端 (backend)** | ${backendCoverageStats.display} | ${renderStatusCell(backendCoverageStats.status)} |
+| **前端 (frontend)** | ${frontendCoverageStats.display} | ${renderStatusCell(frontendCoverageStats.status)} |
+
+> 说明：本表仅记录历史全库**行覆盖率**数字；比例高低不拦截门禁（E15/E16 另项）。采集命令失败或无法解析百分比时判定为 FAIL。
 
 ---
 
@@ -274,6 +394,12 @@ ${backendLintFailuresText}
 ### 2.3 前端失败用例 (Frontend Failures)
 ${frontendFailuresText}
 
+### 2.4 后端覆盖率采集 (Backend Coverage Collection)
+${backendCoverageFailuresText}
+
+### 2.5 前端覆盖率采集 (Frontend Coverage Collection)
+${frontendCoverageFailuresText}
+
 ---
 
 ## 3. 上线准出门禁结论 (DoD Sign-off)
@@ -282,6 +408,8 @@ ${frontendFailuresText}
 - [${backendLintStats.status === 'PASS' ? 'x' : ' '}] **后端 lint 通过**：ESLint error 为 0（warning 不拦截门禁）。
 - [${frontendStats.status === 'PASS' ? 'x' : ' '}] **前端单测与 E2E 通过**：主路径鉴权与助教流式渲染自动化覆盖。
 - [${dbStats.status === 'PASS' ? 'x' : ' '}] **数据库完整性校验${dbStats.status === 'SKIP' ? '（CI 已跳过本机 sqlite）' : '通过'}**：AI Clients 与 AI Audit Logs 表结构与数据可读。
+- [${backendCoverageStats.status === 'PASS' ? 'x' : ' '}] **后端行覆盖率已采集**：${backendCoverageStats.display}（比例不拦截）。
+- [${frontendCoverageStats.status === 'PASS' ? 'x' : ' '}] **前端行覆盖率已采集**：${frontendCoverageStats.display}（比例不拦截）。
 - [${allPassed ? 'x' : ' '}] **最终交付裁决**：${goDecision}
 `;
 }
@@ -314,18 +442,84 @@ function main() {
   const backendLintStats = parseBackendLintOutput(lintOutput, lintCode);
   const frontendStats = parseFrontendOutput(rawData.frontendOutput || '', rawData.frontendCode);
   const dbStats = parseDbVerifyOutput(rawData.dbOutput || '', rawData.dbCode);
+
+  // E14：覆盖率采集；比例高低不拦截，仅命令失败 / 无法解析百分比阻断。
+  // 旧 payload（如 lint 门禁单测）未带覆盖率字段时记 SKIP，不阻断。
+  const hasBackendCoveragePayload =
+    typeof rawData.backendCoverageCode === 'number' ||
+    typeof rawData.backendCoverageOutput === 'string' ||
+    typeof rawData.backendLineCoveragePct === 'number';
+  const hasFrontendCoveragePayload =
+    typeof rawData.frontendCoverageCode === 'number' ||
+    typeof rawData.frontendCoverageOutput === 'string' ||
+    typeof rawData.frontendLineCoveragePct === 'number';
+  const backendCoverageOutput = rawData.backendCoverageOutput || '';
+  const frontendCoverageOutput = rawData.frontendCoverageOutput || '';
+  const backendCoverageStats = hasBackendCoveragePayload
+    ? parseCoverageCollection(
+        backendCoverageOutput,
+        typeof rawData.backendCoverageCode === 'number' ? rawData.backendCoverageCode : 0,
+        rawData.backendLineCoveragePct,
+      )
+    : {
+        status: 'SKIP',
+        linePct: null,
+        display: 'N/A',
+        reason: 'absent',
+        total: 0,
+        pass: 0,
+        fail: 0,
+        duration: '-',
+      };
+  const frontendCoverageStats = hasFrontendCoveragePayload
+    ? parseCoverageCollection(
+        frontendCoverageOutput,
+        typeof rawData.frontendCoverageCode === 'number' ? rawData.frontendCoverageCode : 0,
+        rawData.frontendLineCoveragePct,
+      )
+    : {
+        status: 'SKIP',
+        linePct: null,
+        display: 'N/A',
+        reason: 'absent',
+        total: 0,
+        pass: 0,
+        fail: 0,
+        duration: '-',
+      };
+
   const backendFailuresText = extractBackendFailures(rawData.backendOutput || '', backendStats);
   const backendLintFailuresText = extractBackendLintFailures(lintOutput, backendLintStats);
   const frontendFailuresText = extractFrontendFailures(rawData.frontendOutput || '', frontendStats);
+  const backendCoverageFailuresText = extractCoverageFailures(
+    '后端',
+    backendCoverageOutput,
+    backendCoverageStats,
+  );
+  const frontendCoverageFailuresText = extractCoverageFailures(
+    '前端',
+    frontendCoverageOutput,
+    frontendCoverageStats,
+  );
 
-  const allStats = [backendStats, backendLintStats, frontendStats, dbStats];
+  // 覆盖率套件仅在「采集失败」时 FAIL；绝不因比例数值标 FAIL
+  const allStats = [
+    backendStats,
+    backendLintStats,
+    frontendStats,
+    dbStats,
+    backendCoverageStats,
+    frontendCoverageStats,
+  ];
   const hasBlockingFailure = allStats.some((s) => s.status === 'FAIL');
-  // 后端单测+lint+前端通过即可准出；DB SKIP（CI）不降级为 CONDITIONAL GO，工具链 SKIP 仍走 PARTIAL
+  // 后端单测+lint+前端+覆盖率采集通过即可准出；DB/覆盖率 SKIP 不降级为 CONDITIONAL GO，工具链 SKIP 仍走 PARTIAL
   const allPassed =
     backendStats.status === 'PASS' &&
     backendLintStats.status === 'PASS' &&
     frontendStats.status === 'PASS' &&
-    (dbStats.status === 'PASS' || dbStats.status === 'SKIP');
+    (dbStats.status === 'PASS' || dbStats.status === 'SKIP') &&
+    (backendCoverageStats.status === 'PASS' || backendCoverageStats.status === 'SKIP') &&
+    (frontendCoverageStats.status === 'PASS' || frontendCoverageStats.status === 'SKIP');
 
   const reportMarkdown = renderMarkdownReport({
     version,
@@ -335,9 +529,13 @@ function main() {
     backendLintStats,
     frontendStats,
     dbStats,
+    backendCoverageStats,
+    frontendCoverageStats,
     backendFailuresText,
     backendLintFailuresText,
     frontendFailuresText,
+    backendCoverageFailuresText,
+    frontendCoverageFailuresText,
     allPassed,
     hasBlockingFailure,
   });

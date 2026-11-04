@@ -99,7 +99,7 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | E11 | feat | gate | auto | done | 提交说明脚本：feat 四段、refactor 三段、轻量 type 有正文；钩子与日修沙盒共用 |
 | E12 | feat | gate | auto | done | PR 使用与 E11 同一套提交说明校验 |
 | E13 | feat | gate | auto | done | pre-commit 拦截暂存区硬编码口令、密钥、私钥与连接串 |
-| E14 | feat | gate | auto | todo | qa-report 采集前后端行覆盖率并写入报告，不因比例失败 |
+| E14 | feat | gate | auto | done | qa-report 采集前后端行覆盖率并写入报告，不因比例失败 |
 | E15 | feat | gate | assist | todo | 历史行覆盖率前后端各 ≥60% 才拦截（E14 出数字前禁止改 auto） |
 | E16 | feat | gate | assist | todo | PR 新增行覆盖率 ≥80% 才失败（E14 合入前禁止改 auto） |
 | E17 | feat | gate | auto | todo | 部署文档 §3 环境变量名与代码及 .env.example 不一致则单测失败 |
@@ -406,3 +406,4 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | 2026-10-30 | E11 完成：提交说明脚本：feat 四段、refactor 三段、轻量 type 有正文；钩子与日修沙盒共用 |
 | 2026-10-31 | E12 完成：PR 使用与 E11 同一套提交说明校验 |
 | 2026-11-01 | E13 完成：pre-commit 拦截暂存区硬编码口令、密钥、私钥与连接串 |
+| 2026-11-03 | E14 完成：qa-report 采集前后端行覆盖率并写入报告，不因比例失败 |
