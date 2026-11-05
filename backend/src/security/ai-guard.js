@@ -663,11 +663,18 @@ export function createAiGuard({ dbPool = null, redis = null, jwtSecret = null } 
         const seen = await currentRedis.set(nonceKey, '1', 'PX', config.nonceTtlMs, 'NX');
         if (!seen) return reject({ req, res, status: 401, message: 'Replay request blocked', reason: 'replay_blocked', clientId, routeKey });
       } else {
+        // S12：无 Redis 时按时间戳惰性判定 TTL（`< nonceTtlMs` 拒重放 / `>=` 可再用），
+        // 并 setTimeout 删除对齐 exchangeToken 的 nonceCache，避免 Map 只增不减。
         const seenAt = nonces.get(nonce);
         if (seenAt && now - seenAt < config.nonceTtlMs) {
           return reject({ req, res, status: 401, message: 'Replay request blocked', reason: 'replay_blocked', clientId, routeKey });
         }
         nonces.set(nonce, now);
+        const evictAt = now;
+        const timer = setTimeout(() => {
+          if (nonces.get(nonce) === evictAt) nonces.delete(nonce);
+        }, config.nonceTtlMs);
+        if (typeof timer.unref === 'function') timer.unref();
       }
 
       const bodyText = JSON.stringify(req.body ?? {});
