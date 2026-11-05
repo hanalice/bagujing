@@ -2,9 +2,10 @@ import { ChatOpenAI } from "@langchain/openai";
 
 /**
  * 读取并清理模型环境变量，避免空白配置进入上游模型实例。
+ * 使用字面 `process.env.<名>`，便于部署文档 E17 静态扫描命中。
+ * @param {string | undefined | null} value
  */
-function getConfiguredModel(name) {
-  const value = process.env[name];
+function trimConfiguredModel(value) {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
 
@@ -12,12 +13,16 @@ function getConfiguredModel(name) {
  * D21：解析主 / 备 Base URL。
  * 主 = `OPENAI_BASE_URL`（缺省 `https://api.openai.com/v1`，与 UT-LLM-03/04 一致）；
  * 备 = `OPENAI_BASE_URL_FALLBACK`（未设、`''`、纯空白均视为未配置 → null）。
- * @param {NodeJS.ProcessEnv} [env]
+ * @param {NodeJS.ProcessEnv} [env] 可注入替身；省略时读真实 process.env（字面访问可被 E17 扫描）
  * @returns {{ primary: string, fallback: string|null }}
  */
-export function resolveUpstreamBaseUrls(env = process.env) {
-  const primary = env.OPENAI_BASE_URL || 'https://api.openai.com/v1';
-  const rawFallback = env.OPENAI_BASE_URL_FALLBACK;
+export function resolveUpstreamBaseUrls(env) {
+  const source = env ?? process.env;
+  // 默认路径保留 process.env.OPENAI_BASE_URL 字面形；注入 env 时仍读 source，不回落真实进程环境。
+  const primary = (env
+    ? source.OPENAI_BASE_URL
+    : process.env.OPENAI_BASE_URL) || 'https://api.openai.com/v1';
+  const rawFallback = env ? source.OPENAI_BASE_URL_FALLBACK : process.env.OPENAI_BASE_URL_FALLBACK;
   const fallback = typeof rawFallback === 'string' && rawFallback.trim()
     ? rawFallback.trim()
     : null;
@@ -26,9 +31,11 @@ export function resolveUpstreamBaseUrls(env = process.env) {
 
 export function buildLlmConfig(guardContext, defaultConfig = {}, role = 'generation') {
   // chat / generation 均按「路由专用 → OPENAI_MODEL → gpt-4o-mini」解析，避免空白专用变量漏回退。
-  const dedicatedEnv = role === 'chat' ? 'OPENAI_CHAT_MODEL' : 'OPENAI_GENERATION_MODEL';
-  const modelName = getConfiguredModel(dedicatedEnv)
-    || getConfiguredModel('OPENAI_MODEL')
+  const dedicatedRaw = role === 'chat'
+    ? process.env.OPENAI_CHAT_MODEL
+    : process.env.OPENAI_GENERATION_MODEL;
+  const modelName = trimConfiguredModel(dedicatedRaw)
+    || trimConfiguredModel(process.env.OPENAI_MODEL)
     || 'gpt-4o-mini';
 
   const { primary, fallback } = resolveUpstreamBaseUrls();

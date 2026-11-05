@@ -33,6 +33,7 @@
 - **PR 提交说明与 E11 同脚本 (E12)**：PR 的 CI 对本次提交范围调用 E11 同一入口 `scripts/check-commit-msg.sh`（禁止第二套段落规则）；脚本非 0 → 该检查失败；豁免与钩子/E11 脚本相同（含 Merge）。单测见 §2.38 `UT-COMMIT-PR-*`。**不做**：改 E11 段落规则；在 `.githooks/pre-commit` 再跑一遍提交说明。**residual**：E11 未合入时不得另写一套规则；Merge 保持豁免。
 - **pre-commit 拦截暂存区硬编码口令/密钥 (E13)**：`.githooks/pre-commit` 在 `qa-report.sh` **之前**检查暂存 diff；只认三类明文（PEM 私钥块、带用户名密码的 URL、敏感变量名 + ≥8 引号字面量）；命中则非 0 并输出 `文件:行` + 改走环境变量提示；占位字面量与 `*.example` / `docs/**` / 测试文件 / `package-lock.json` 放行。用构造的 diff 文本单测命中与放行（§2.39 `UT-SECRET-SCAN-*`）。**不做**：并进 OSV / `vulnerability-report.yml`；扫 git 历史；升级依赖；让 `qa.yml` 因漏洞失败；改写已入库密钥。**residual**：混淆/编码秘密与历史中已有密钥本项不清除。
 - **qa-report 采集前后端行覆盖率 (E14)**：`scripts/qa-report.sh` 采集**行覆盖率**并写入 `docs/qa_report.md`。后端沿用 `npm run test:coverage`（`--test-coverage-include=src/**`，`--test-coverage-exclude=src/tests/**`）。前端 Vitest 行覆盖率只统计 `frontend/src`，**不含** e2e。报告须含后端、前端两个可解析百分比；**比例高低均不得**让门禁失败；采集命令本身跑不起来则失败。单测见 §2.40 `UT-QA-COV-*`。**不做**：因比例拦截（**E15/E16**）；为凑比例改业务代码；把 E2E 算进行覆盖率。**residual**：历史 ≥60% 与新增行 ≥80% 仍属 E15/E16，禁止周扫描提前改 `auto`。
+- **部署文档 §3 环境变量名三方一致 (E17)**：单测锁 `docs/deployment-and-operations.md` **§3** 表格第一列环境变量名：表中每个名字须在后端 `process.env.<名>` 或前端 `import.meta.env.<名>` 出现（`VITE_` 只查前端）；`backend/.env.example` 与 `frontend/.env.example` 的键须出现在该节表中；缺任一侧则失败。允许补表或补 example 使绿，**不得**删掉代码仍在读的变量凑通过。单测见 §2.41 `UT-DOC-DEPLOY-*`。**不做**：改 `docs/security-ai-guard.md`（**S8/S11/S14**）；对齐散文 / 架构图 / Nginx 段；新增环境变量。**residual**：两份 `.env.example` 都没有的内部开关不要求进表。
 
 ---
 
@@ -961,6 +962,48 @@ C22 合入后 problems 关键字召回主路径改为 FTS（失败回退 LIKE）
 | UT-QA-COV-14 | residual：不提前实现 E15/E16 的 auto 阈值门禁 | 前置：只读 backlog「E14 出数字前禁止改 auto」「E14 合入前禁止改 auto」；本表与队列状态无关的代码断言。 | 1. 本表 PASS **不**要求读取队列表把 E15/E16 改 `auto`；<br>2. **不**以「未在 CI 加 60%/80% 阈值」为 FAIL；<br>3. 与 residual「历史 ≥60% 与新增行 ≥80% 仍是 E15/E16」同向。 |
 | UT-QA-COV-15 | 与 A82 lint 门禁共存：覆盖率采集不取代 lint | 前置：静态读 `qa-report.sh`；对照 §2.16 `UT-QA-LINT-*`。 | 1. backend `npm run lint` 调用仍在；<br>2. 覆盖率步骤为**新增**采集，不删除 lint / 既有 `npm test` 门禁；<br>3. lint error → 非 0 的契约保持（可由 UT-QA-LINT-02 回归，本行只断言覆盖率未移除 lint）。 |
 | UT-QA-COV-16 | 既有测试 FAIL 时门禁仍非 0（覆盖率数字不放行） | 前置：`backendCode !== 0`（或 frontend/lint FAIL）；覆盖率两端均为 `99%` 且采集 exit 0；未设 `QA_GATE=off`。 | 1. 最终退出码 `!== 0`；<br>2. 高覆盖率**不得**掩盖测试/lint FAIL；<br>3. 证明覆盖率只写入报告，不改变既有 `hasBlockingFailure` 语义。 |
+
+### 2.41 部署文档 §3 环境变量名与代码及 `.env.example` 三方一致（E17）（`backend/src/tests/deployment-env-doc.test.js` → 只读 `docs/deployment-and-operations.md` §3 + `backend/.env.example` + `frontend/.env.example` + 前后端源码 env 引用）
+
+对应 **E17**（`docs/backlog.md` §E17；E1「文档」只锁 `docs/deployment-and-operations.md` §3）。回归点：部署白皮书 §3「生产环境变量清单」表格第一列与运行时读取名、两端 `.env.example` 键漂移时，运维按文档配置会漏项或配错名，且门禁此前**无**单测拦截。完成标准：**做**——单测锁 §3 表第一列名字；表中每个名字必须在后端 `process.env.<名>` 或前端 `import.meta.env.<名>` 出现（`VITE_` 前缀**只查前端**）；`backend/.env.example` 与 `frontend/.env.example` 里的键必须出现在该节的表中；缺任一侧则测试失败；允许补表或补 example 使测试变绿，**不得**删掉代码里仍在读的变量来凑通过。**不做**——改 `docs/security-ai-guard.md`（**S8/S11/S14**）；对齐散文、架构图或 Nginx 段落；新增环境变量。**residual**——两份 `.env.example` 都没有的内部开关不要求进表。
+
+**做**：
+
+1. 按 ATX 切出 `docs/deployment-and-operations.md` 的 `## 3.`（标题含「生产环境变量」即可）至下一同级 `## `（现网为 `## 4.`）为 **§3 文本**；只在该切片内解析 Markdown 表格。
+2. **表 → 名**：§3 内每张表取**第一列**单元格；抽出形如 `` `PORT` `` / `` `VITE_API_BASE_URL` `` 的环境变量标识符（`[A-Z][A-Z0-9_]*`，允许 `VITE_` 前缀）；去重得到集合 `T`。表头行（「配置项」「环境变量」等）不计为名。
+3. **表 → 代码**：对 `T` 中每个名字 `N`：若 `N` 以 `VITE_` 开头，则须在 `frontend/src/**`（`.ts`/`.tsx`/`.vue`/`.js`）源码中出现 `import.meta.env.N`（或 `import.meta.env['N']` 等价字面）；**不得**仅因后端出现同名字符串而 PASS。若 `N` **不以** `VITE_` 开头，则须在后端业务源码（`backend/src/**`，**排除** `backend/src/tests/**`；可另含生产会读 env 的 `backend/scripts/**`，但测码注释须写明扫描根）出现 `process.env.N`（或 `process.env['N']` 等价字面）。缺任一名 → 该用例失败，失败信息须点名缺失的 `N`。
+4. **example → 表**：解析 `backend/.env.example` 与 `frontend/.env.example`：非空、非 `#` 注释行，取 `KEY=...` 的 `KEY`（`^[A-Z][A-Z0-9_]*`）；分别得集合 `B`、`F`。每个 `k ∈ B ∪ F` 必须属于 `T`；缺任一侧（example 有、表无）→ 失败，失败信息点名缺失键与来源文件。
+5. **缺任一侧则失败**：上述「表→代码」与「example→表」任一方向不满足，整组相关 `it()` 失败（与 backlog「缺任一侧则测试失败」字面一致）。
+6. **修法约束（断言向）**：本表 PASS **允许**实现阶段通过**补 §3 表行**或**补 `.env.example` 键**使绿；**禁止**以「删除/注释掉仍被业务读取的 `process.env.*` / `import.meta.env.*`」作为使测试变绿的手段——测码对「代码仍读取但被从表与 example 双侧抹掉」的情形，以 residual 与 UT-DOC-DEPLOY-12 分界，不得把删代码读当成合法修复路径写进预期。
+
+**不做**：改 `docs/security-ai-guard.md`；对齐 §1 架构图、§2/§4 Nginx、§5 PM2、§6 `static-server.js` 字典等非 §3 段落的散文措辞；为通过本表而在业务代码中**新增**此前不存在的环境变量读取。
+
+**residual**：仅出现在代码、但**两份** `.env.example` 都未列出的内部开关（如调试用 `AI_GUARD_DEBUG`）**不要求**进入 §3 表；本表不得以「代码有读、表无该名」单独判 FAIL（除非该名已在某张 `.env.example` 中，则走 example→表）。
+
+**测法**：`node:test`；建议文件 `backend/src/tests/deployment-env-doc.test.js`。① `fs.readFileSync` 仓库根 `docs/deployment-and-operations.md`、`backend/.env.example`、`frontend/.env.example`（UTF-8）；② 切 §3、解析表第一列与 example 键；③ 用 `fs`/`glob` 扫后端/前端源码字符串做 `process.env.` / `import.meta.env.` 子串或正则命中（禁止启动 Express / Vite / 连 Redis / 发 HTTP 作为本表 PASS）；④ 可用临时夹具字符串单测解析函数，但对仓库真实三文件的集成断言至少覆盖「现网 §3 ∩ example ∩ 代码」主路径。`it()` 标题须包含下表 ID。
+
+| ID | 用例标题 | 场景描述 | 预期结果 |
+| :--- | :--- | :--- | :--- |
+| UT-DOC-DEPLOY-01 | 部署文档存在且可切出 §3 | 前置：读取仓库根 `docs/deployment-and-operations.md`（UTF-8）；按 ATX 定位以 `## 3.` 开头且标题含「环境变量」的节，截取至下一同级 `## ` 之前。 | 1. 文件存在且非空；<br>2. §3 切片长度 &gt; 0，且**不**包含下一节标题行（现网不得把 `## 4.` Nginx 正文算进切片）；<br>3. 切片内至少出现一处 Markdown 表格分隔行（`\|` + `---`）。 |
+| UT-DOC-DEPLOY-02 | §3 表格第一列可解析出环境变量名集合 `T` | 前置：同 UT-DOC-DEPLOY-01 的 §3 切片；解析其中所有 Markdown 表；取每行第一列。 | 1. 第一列可抽出至少 1 个匹配 `/^[A-Z][A-Z0-9_]*$/` 的名字（现网后端表含 `PORT`、`OPENAI_API_KEY` 等）；<br>2. 表头「配置项」「环境变量」「必填」等中文/非标识符单元格**不**进入 `T`；<br>3. 名字去重；允许单元格带反引号 `` `NAME` ``，解析后为裸 `NAME`。 |
+| UT-DOC-DEPLOY-03 | 非 `VITE_` 表名须出现 `process.env.<名>` | 前置：由 UT-DOC-DEPLOY-02 得 `T`；过滤出不以 `VITE_` 开头的名字集合 `T_BE`；扫描 `backend/src/**`（排除 `backend/src/tests/**`）源码文本。 | 1. 对每个 `N ∈ T_BE`，至少一处出现 `process.env.N` 或 `process.env['N']` / `process.env["N"]`；<br>2. 若某 `N` 全库业务源码零命中 → 该 `it` 失败，断言消息含精确缺失名 `N`；<br>3. **不得**用注释里的口头提及（无 `process.env` 访问形）冒充命中——须匹配访问形。 |
+| UT-DOC-DEPLOY-04 | `VITE_` 表名只查前端 `import.meta.env.<名>` | 前置：`T_FE = { N ∈ T \| N 以 VITE_ 开头 }`；扫描 `frontend/src/**`（`.ts`/`.tsx`/`.vue`/`.js`）。 | 1. 若 `T_FE` 非空：每个 `N` 须出现 `import.meta.env.N` 或 `import.meta.env['N']` / `import.meta.env["N"]`；<br>2. 仅在后端字符串/文档中出现同名**不足以** PASS；<br>3. 若实现阶段 §3 尚无任何 `VITE_` 行：本行对「集合为空」不强制 FAIL，但与 UT-DOC-DEPLOY-07 合取——`frontend/.env.example` 键进表后本行必须开始生效。 |
+| UT-DOC-DEPLOY-05 | `backend/.env.example` 每个键 ∈ `T` | 前置：解析 `backend/.env.example`：跳过空行与整行 `#` 注释；对 `KEY=VALUE` 行取 `KEY`（`/^[A-Z][A-Z0-9_]*$/`）得集合 `B`；对照 `T`。 | 1. 每个 `k ∈ B` 满足 `k ∈ T`；<br>2. 若存在 `k ∈ B \ T` → 失败，消息含 `k` 与路径 `backend/.env.example`；<br>3. 证明 example→表方向；修法为补 §3 表（或从 example 移除该键，但不得违反「代码仍在读则不得删代码读」——删 example 键仅当确认非运维交付项，且 residual 允许其不进表）。 |
+| UT-DOC-DEPLOY-06 | `frontend/.env.example` 每个键 ∈ `T` | 前置：同 UT-DOC-DEPLOY-05 算法解析 `frontend/.env.example` 得 `F`；对照 `T`。 | 1. 每个 `k ∈ F` 满足 `k ∈ T`；<br>2. 若存在 `k ∈ F \ T` → 失败，消息含 `k` 与 `frontend/.env.example`；<br>3. 现网若 §3 仅有后端表而无前端 `VITE_*` 行，则本行应对现网 `F`（如 `VITE_API_BASE_URL`、`VITE_AI_CLIENT_SECRET` 等）报缺失，直到补表。 |
+| UT-DOC-DEPLOY-07 | example→表与表→代码同时满足（主路径合取） | 前置：一次性加载 §3、`B`、`F`、源码扫描结果；在仓库真实文件上跑完整校验函数（非仅夹具）。 | 1. `B ∪ F ⊆ T`；<br>2. `T` 中每个名字按 UT-DOC-DEPLOY-03/04 规则在对应端代码命中；<br>3. 任一侧失败则本 `it` 失败；与 backlog「缺任一侧则测试失败」一致。 |
+| UT-DOC-DEPLOY-08 | 夹具：表有名但代码无读 → 失败 | 前置：单元测解析/校验纯函数；构造 `T' = {'NOT_A_REAL_ENV_VAR_XYZ'}`（非 `VITE_`），源码扫描语料不含 `process.env.NOT_A_REAL_ENV_VAR_XYZ`；example 集合为空或子集。 | 1. 校验返回失败 / 抛断言；<br>2. 错误信息含 `NOT_A_REAL_ENV_VAR_XYZ`；<br>3. 证明表→代码缺侧可独立检出（不依赖真实仓库变红）。 |
+| UT-DOC-DEPLOY-09 | 夹具：example 有键但表无 → 失败 | 前置：构造 `T' = {'PORT'}`（或任意非空合法子集）；`B' = {'PORT','ORPHAN_EXAMPLE_KEY_XYZ'}`；代码语料对 `PORT` 命中。 | 1. 校验失败；<br>2. 错误信息含 `ORPHAN_EXAMPLE_KEY_XYZ`；<br>3. 证明 example→表缺侧可独立检出。 |
+| UT-DOC-DEPLOY-10 | 夹具：`VITE_` 名不得用后端 `process.env` 冒充 | 前置：`T' = {'VITE_FAKE_ONLY'}`；后端语料含 `process.env.VITE_FAKE_ONLY`；前端语料**无** `import.meta.env.VITE_FAKE_ONLY`。 | 1. 校验失败；<br>2. 不得因后端命中而 PASS；<br>3. 与契约「`VITE_` 前缀只查前端」字面一致。 |
+| UT-DOC-DEPLOY-11 | 扫描范围不含把测试文件当唯一命中源 | 前置：对某真实 `N ∈ T_BE`，若业务 `backend/src`（非 tests）已有 `process.env.N` 则本行作对照；另构造夹具：仅 `backend/src/tests/foo.test.js` 含 `process.env.ONLY_IN_TEST_ENV`，业务源码无。 | 1. `ONLY_IN_TEST_ENV` 若进入 `T` 则表→代码应失败（测试文件命中不算）；<br>2. 真实业务已读变量不因「tests 里也有」而重复计分要求；<br>3. 防止靠测试夹具字符串伪装生产配置契约。 |
+| UT-DOC-DEPLOY-12 | 修法：允许补表/补 example，禁止删代码读凑绿 | 前置：只读 backlog E17「允许补表或补 example…不得删掉代码里仍在读的变量」；本表预期与测码注释。 | 1. PASS **不**要求、也**不允许**把「删除业务源码中的 `process.env.N`」列为使本表变绿的合法步骤；<br>2. 合法修法仅：**补 §3 表第一列**、**补对应 `.env.example` 键**，或去掉 example 中确非交付的键（且代码若仍读该键则走 residual，不要求进表）；<br>3. 与「新增环境变量」**不做**分界：补的是文档/example 对齐，不是新造运行时开关。 |
+| UT-DOC-DEPLOY-13 | 不做：不改 `docs/security-ai-guard.md` | 前置：只读 backlog E17 **不做**；对照 §2.33 / §2.36；本表测码文件列表。 | 1. 本表读取文件集合**不包含** `docs/security-ai-guard.md` 作为必改/必断言对象；<br>2. PASS **不**要求改 S8/S11/S14 文档措辞；<br>3. 与 UT-DOC-GUARD-* / UT-DOC-QUOTA-* 分界：那些 ID 锁 AI 防护白皮书，本表只锁部署文档 §3。 |
+| UT-DOC-DEPLOY-14 | 不做：不对齐散文 / 架构图 / Nginx / §6 字典 | 前置：同文档中 `## 1.` / `## 2.` / `## 4.` / `## 6.` 切片；本表只解析 §3 表名。 | 1. PASS **不**要求 §1 架构图、§4 Nginx、§6 `static-server.js` 环境变量字典与代码一致；<br>2. §6 表中多出的名**不**自动并入 `T`，也**不**因未进 §3 而失败；<br>3. 本表**不**断言 §3 说明列散文、默认值示例字符串与代码默认值逐字相等（只锁**变量名**）。 |
+| UT-DOC-DEPLOY-15 | 不做：不要求业务代码新增环境变量 | 前置：只读 backlog E17 **不做**「新增环境变量」。 | 1. PASS **不**以「在 `ai-guard.js` / `llm.js` 等新增 `process.env.NEW_*` 读取」为条件；<br>2. 若表或 example 出现代码从未读取的名 → 应按表→代码失败，修法是改表/example 而非强行加读取（除非产品另开条目）；<br>3. 与「补 example」合取时：补进 example 的键必须已是代码在读或即将仅作文档暴露且同步补代码读——本项仍禁止无产品契约地新增。 |
+| UT-DOC-DEPLOY-16 | residual：两份 example 都没有的内部开关不要求进表 | 前置：选一代码中存在、但 `B ∪ F` 均不含的内部名（现网候选如 `AI_GUARD_DEBUG`，以扫描实值为准；若现网已进 example 则改用测码夹具名 `INTERNAL_ONLY_SWITCH`）；`T` 亦不含该名。 | 1. 完整校验（仓库主路径）**不得**仅因「代码有读、§3 无该名」而失败；<br>2. 一旦该名出现在任一 `.env.example`，则必须 ∈ `T`（回归 UT-DOC-DEPLOY-05/06）；<br>3. 与 residual 字面一致。 |
+| UT-DOC-DEPLOY-17 | `.env.example` 解析忽略注释与空行 | 前置：夹具文件内容含空行、`# PORT=ignore`、合法行 `PORT=3000`、无 `=` 的垃圾行。 | 1. 解析结果含 `PORT`，**不含**从纯注释行抽出的键；<br>2. 无 `=` 行不产生键；<br>3. 值中含 `#` 不影响键名（如 `JWT_SECRET=abc#def` → 键仍为 `JWT_SECRET`）。 |
+| UT-DOC-DEPLOY-18 | §3 范围：不得把 §4/§6 表误并入 `T` | 前置：完整文档含 §4 Nginx 与 §6 静态服变量表；校验函数仅吃 §3 切片。 | 1. `T` **不**因 §6「全量环境变量字典」而自动膨胀；<br>2. 人为把 §6 某名（若与 example 无关）排除在 §3 外时，只要其不在 `B ∪ F`，主路径不因「§6 有、§3 无」失败；<br>3. 证明锁约边界 = **仅 §3**。 |
+| UT-DOC-DEPLOY-19 | 与 E13/E14 分界：本表不锁密钥扫描或覆盖率门禁 | 前置：只读 §2.39 / §2.40 与 backlog E17。 | 1. PASS **不**要求改 `.githooks/pre-commit` 密钥规则或 `qa-report.sh` 覆盖率；<br>2. 本表范围 = 部署文档 §3 变量名 ↔ 代码 ↔ `.env.example`；<br>3. 不得以 E13/E14 的 PASS/FAIL 替代本表。 |
+| UT-DOC-DEPLOY-20 | 失败信息可判定：点名缺失侧与标识符 | 前置：触发 UT-DOC-DEPLOY-08 或 09 同类失败（夹具）。 | 1. 断言错误字符串同时可区分方向（「表中有但代码无」vs「example 有但表无」语义子串或枚举码）；<br>2. 含具体缺失标识符；<br>3. 便于下一阶段 `it()` 与 CI 日志无人值守定位。 |
 
 ---
 

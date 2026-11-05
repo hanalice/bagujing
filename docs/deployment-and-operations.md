@@ -73,20 +73,56 @@ cp frontend/.env.example frontend/.env.production
 
 ### 后端生产环境关键配置清单（`backend/.env`）
 
+本表第一列须与 `backend/.env.example` 键及后端 `process.env.<名>` 读取名一致（E17）。
+
 | 配置项 | 必填 | 默认值 / 示例 | 说明 |
 | :--- | :---: | :--- | :--- |
 | `PORT` | 否 | `3000` | 后端服务内部监听端口 |
-| `OPENAI_API_KEY` | **是** | `sk-xxxxxx` | 大模型服务商 API Key（如 DeepSeek 或 OpenAI） |
-| `OPENAI_BASE_URL` | 否 | `https://api.deepseek.com` | 大模型 API Base URL |
-| `OPENAI_CHAT_MODEL` | 否 | 回退 `OPENAI_MODEL` | 仅 `/api/chat` 的上游模型；空白则回退 |
-| `OPENAI_GENERATION_MODEL` | 否 | 回退 `OPENAI_MODEL` | 仅 `answer/generate` 触达上游时的模型；空白则回退 |
-| `OPENAI_MODEL` | 否 | `deepseek-chat` | chat 与解析的共用回退，不能覆盖已设置的路由专用变量 |
-| `AI_REQUIRE_SIGNED_HEADERS` | **是** | `true` | 生产强制 HMAC。PM2 的 `env` 与 `env_production` 已写入 `true`（B32）。代码未设该变量时仍回退 `false`，不要改 `ai-guard.js` 的 `?? 'false'` |
-| `AI_CLIENT_CREDENTIALS` | **是** | `web:strong_secret_token` | 客户端签名通信凭据，需与前端 `VITE_AI_CLIENT_SECRET` 保持一致 |
-| `AI_ALLOWED_ORIGINS` | 否 | `https://your-domain.com:*` | 允许访问 AI 接口的前端 Origin 白名单 |
 | `JWT_SECRET` | 否 | 随机强字符串 | 用户身份认证 Token 密钥（生产强烈建议修改） |
 | `ENABLE_SQLITE` | 否 | `true` | 是否启用 SQLite 本地数据库 |
+| `SQLITE_DB` | 否 | `./db/bagujing.dev.sqlite3` | SQLite 数据库文件路径（相对 backend 目录） |
 | `REDIS_URL` | 否 | `redis://localhost:6379` | Redis 连接地址（用于分布式限流与缓存） |
+| `OPENAI_API_KEY` | **是** | `sk-xxxxxx` | 大模型服务商 API Key（如 DeepSeek 或 OpenAI） |
+| `OPENAI_BASE_URL` | 否 | `https://api.deepseek.com` | 大模型 API Base URL |
+| `OPENAI_MODEL` | 否 | `deepseek-chat` | chat 与解析的共用回退，不能覆盖已设置的路由专用变量 |
+| `OPENAI_CHAT_MODEL` | 否 | 回退 `OPENAI_MODEL` | 仅 `/api/chat` 的上游模型；空白则回退 |
+| `OPENAI_GENERATION_MODEL` | 否 | 回退 `OPENAI_MODEL` | 仅 `answer/generate` 触达上游时的模型；空白则回退 |
+| `AI_GUARD_ENABLED` | 否 | `true` | 是否启用 AI 防护网关 |
+| `AI_REQUIRE_SIGNED_HEADERS` | **是** | `true` | 生产强制 HMAC。PM2 的 `env` 与 `env_production` 已写入 `true`（B32）。代码未设该变量时仍回退 `false`，不要改 `ai-guard.js` 的 `?? 'false'` |
+| `AI_DEFAULT_CLIENT_ID` | 否 | `web` | 默认客户端标识 |
+| `AI_ALLOWED_ORIGINS` | 否 | `https://your-domain.com:*` | 允许访问 AI 接口的前端 Origin 白名单 |
+| `AI_CLIENT_CREDENTIALS` | **是** | `web:strong_secret_token` | 客户端签名通信凭据，需与前端 `VITE_AI_CLIENT_SECRET` 保持一致 |
+| `AI_JWT_SECRET` | 否 | 随机强字符串 | AI 防护网关内部 JWT 签名密钥 |
+| `AI_MAX_INPUT_CHARS` | 否 | `1200` | 单次输入最大字符数 |
+| `AI_MAX_COMPLETION_TOKENS` | 否 | `800` | 模型单次回复最大 Token 数 |
+| `AI_UPSTREAM_TIMEOUT_MS` | 否 | `30000` | 上游大模型 API 响应超时（毫秒） |
+| `AI_SSE_IDLE_TIMEOUT_MS` | 否 | `20000` | SSE 流式输出空闲超时（毫秒） |
+| `AI_MAX_CLOCK_SKEW_MS` | 否 | `300000` | 签名允许的最大时钟偏差（毫秒） |
+| `AI_NONCE_TTL_MS` | 否 | `600000` | 请求 Nonce 防重放缓存有效期（毫秒） |
+| `AI_RATE_LIMIT_CLIENT_PER_MINUTE` | 否 | `10` | 单客户端每分钟最大请求次数 |
+| `AI_RATE_LIMIT_CLIENT_PER_HOUR` | 否 | `100` | 单客户端每小时最大请求次数 |
+| `AI_RATE_LIMIT_IP_PER_MINUTE` | 否 | `30` | 单 IP 每分钟最大请求次数 |
+| `AI_MAX_CONCURRENCY_PER_CLIENT` | 否 | `2` | 单客户端最大同时并发请求数 |
+| `AI_DAILY_REQUEST_LIMIT_PER_CLIENT` | 否 | `200` | 单客户端每日请求总次数上限 |
+| `AI_DAILY_TOKEN_LIMIT_PER_CLIENT` | 否 | `50000` | 单客户端每日消耗 Token 总数上限 |
+| `AI_GLOBAL_DAILY_REQUEST_LIMIT` | 否 | `5000` | 全局每日请求总次数上限 |
+| `AI_GLOBAL_DAILY_TOKEN_LIMIT` | 否 | `500000` | 全局每日消耗 Token 总数上限 |
+| `AI_AUDIT_FILE_PATH` | 否 | `data/ai-audit.ndjson` | AI 调用审计文件路径（相对 backend 目录） |
+
+### 前端生产构建配置清单（`frontend/.env.production`）
+
+本表第一列须与 `frontend/.env.example` 键及前端 `import.meta.env.<名>` 读取名一致（E17）。`VITE_` 前缀变量只在前端源码中检索。
+
+| 配置项 | 必填 | 默认值 / 示例 | 说明 |
+| :--- | :---: | :--- | :--- |
+| `VITE_API_BASE_URL` | 否 | `/api` | 后端 API 请求基地址 |
+| `VITE_AI_CLIENT_ID` | 否 | `web` | AI 网关签名客户端 ID |
+| `VITE_AI_CLIENT_SECRET` | **是** | （与后端凭据一致） | AI 网关签名客户端密钥 |
+| `VITE_SENTRY_DSN` | 否 | （空则禁用） | Sentry DSN |
+| `VITE_SENTRY_TRACES_SAMPLE_RATE` | 否 | `0.2` | Sentry 性能采样率 |
+| `VITE_MONITOR_API_SLOW_MS` | 否 | `1500` | 慢 API 告警阈值（毫秒） |
+| `VITE_RELEASE` | 否 | （发版号） | 前端发版版本号 |
+| `VITE_TRACE_PROPAGATION_TARGETS` | 否 | `localhost,/api` | Sentry 分布式追踪白名单 |
 
 ---
 
