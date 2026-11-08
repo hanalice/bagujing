@@ -74,8 +74,8 @@
 - **策略**（现状，与 `checkAndConsumeQuota` 一致）：
   - **全局 env 硬边界**：`AI_GLOBAL_DAILY_TOKEN_LIMIT` / `AI_GLOBAL_DAILY_REQUEST_LIMIT`，以及按 client 的 `AI_DAILY_TOKEN_LIMIT_PER_CLIENT` / `AI_DAILY_REQUEST_LIMIT_PER_CLIENT`。
   - **`ai_clients` 可选覆盖**：有 `dbPool` 时可读取 `daily_token_limit` / `daily_request_limit`；用量按 `ai_audit_logs` 按 `client_id` 汇总。
-  - 日/月配额计数仍为进程内 Map / SQLite `dbPool`，**尚未**迁到 Redis INCR。
-  - **没有**按登录用户主键或 `roles` 行覆盖日/月 Token 上限（用户级 / 角色级配额未实现）。
+  - **日配额计数**：有 Redis 时按 UTC `nowDayKey` 走 `q:greq:` / `q:gtok:` / `q:creq:` / `q:ctok:` INCR/INCRBY + TTL（**S13**）；无 Redis 时回退进程内 Map。有 `dbPool` 时 SQL 汇总校验保留。
+  - **没有**按登录用户主键或 `roles` 行覆盖日 Token 上限（用户级 / 角色级配额未实现）；月配额未落地。
 - **结果**：超限拒绝（`429`，如 `global_daily_token_limit` / `client_daily_token_limit`）；管控粒度止于全局与 client，而非具体用户。
 
 ### 4.6 事后不可追踪
@@ -183,7 +183,7 @@ sha256Hex(`${method}:${path}:${JSON.stringify(body)}`)
 - 强制验签：`AI_REQUIRE_SIGNED_HEADERS`（代码默认 `false`；未设则不强制验签；为 `true` 时有登录会话也验签，见 **B31**）
 - 允许来源：`AI_ALLOWED_ORIGINS`
 - 客户端凭证：`AI_CLIENT_CREDENTIALS`
-- **配额限额源**（现状）：全局 `AI_GLOBAL_DAILY_TOKEN_LIMIT` / `AI_GLOBAL_DAILY_REQUEST_LIMIT`，按 client 的 `AI_DAILY_TOKEN_LIMIT_PER_CLIENT` / `AI_DAILY_REQUEST_LIMIT_PER_CLIENT`；可选 `ai_clients.daily_token_limit` / `daily_request_limit`。计数仍进程内 Map / SQLite，未迁 Redis。**没有**从 `users` / `roles` 表下发或按 User > Role > Global 覆盖 Token 上限
+- **配额限额源**（现状）：全局 `AI_GLOBAL_DAILY_TOKEN_LIMIT` / `AI_GLOBAL_DAILY_REQUEST_LIMIT`，按 client 的 `AI_DAILY_TOKEN_LIMIT_PER_CLIENT` / `AI_DAILY_REQUEST_LIMIT_PER_CLIENT`；可选 `ai_clients.daily_token_limit` / `daily_request_limit`。有 Redis 时日计数走 `q:` 键（**S13**）；无 Redis 时进程内 Map；有 `dbPool` 时 SQL 汇总仍在。**没有**从 `users` / `roles` 表下发或按 User > Role > Global 覆盖 Token 上限；月配额未落地
 - 输入/输出限制：`AI_MAX_INPUT_CHARS`、`AI_MAX_COMPLETION_TOKENS`
 - 超时：`AI_UPSTREAM_TIMEOUT_MS`、`AI_SSE_IDLE_TIMEOUT_MS`
 - 限流：`AI_RATE_LIMIT_CLIENT_PER_MINUTE`、`AI_RATE_LIMIT_CLIENT_PER_HOUR`、`AI_RATE_LIMIT_IP_PER_MINUTE`（有 Redis 时 `rl:*` INCR，**B51**）
@@ -222,7 +222,8 @@ sha256Hex(`${method}:${path}:${JSON.stringify(body)}`)
 - [x] 持久化审计追踪（SQL 存储替代部分 NDJSON）
 - [x] 有 Redis 时限流走 Redis INCR（`rl:*`，**B51**）；无 Redis 回退内存 Map
 - [x] 有 Redis 时并发计数走 Redis INCR（`cc:`，**B52**）；无 Redis 回退内存 Map
-- [ ] 配额迁移到 Redis / 配额完全态（日/月 Token 配额仍进程内 Map / SQLite `dbPool`）
+- [x] 有 Redis 时日配额计数走 Redis（`q:` 日键，**S13**）；无 Redis 回退内存 Map
+- [ ] 配额完全态（用户/角色配额、月配额等仍未完成；日计数已见上条）
 - [ ] 接入 WAF / 网关层 Bot 防护与 IP 信誉库
 - [ ] 自动封禁与冷却机制（命中风控规则后自动拉黑）
 - [ ] 成本告警闭流（80% 预警，100% 熔断并通知）

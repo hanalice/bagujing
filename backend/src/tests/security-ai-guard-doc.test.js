@@ -201,25 +201,37 @@ describe('2.33 S8 对齐 security-ai-guard.md（签名默认 / 会话验签 / �
     );
   });
 
-  it('UT-DOC-GUARD-08: 清单：配额仍进程内/SQL，未标 Redis 完成', () => {
+  it('UT-DOC-GUARD-08: 清单：有 Redis 时日配额计数已完成（S13）；用户/角色/月配额未完成', () => {
     const lines = checklistLines(doc);
-    const quotaOpen = lines.some(
+    const dayQuotaDone = lines.some(
       (l) =>
-        /^-\s\[\s\]/.test(l) &&
-        (/配额/.test(l) || /quota/i.test(l) || /Token 上限/.test(l)),
+        /^-\s\[x\]/.test(l) &&
+        /日配额/.test(l) &&
+        (/Redis|q:|S13/.test(l)),
     );
-    const quotaBodyIncomplete =
-      /配额[\s\S]{0,80}(仍进程内|SQLite|dbPool|尚未.*Redis|未迁 Redis)/.test(doc);
-    assert.ok(
-      quotaOpen || quotaBodyIncomplete,
-      '配额迁移 Redis / 配额完全态须保持未完成',
-    );
+    assert.ok(dayQuotaDone, 'S13 合入后须将「有 Redis 时日配额计数」标为已完成');
 
     assert.equal(
-      /日\/月 Token 配额[\s\S]{0,40}已走 Redis INCR|配额写成已走 Redis INCR/.test(doc),
+      lines.some(
+        (l) =>
+          /^-\s\[x\]/.test(l) &&
+          (/用户级.*配额|角色级.*配额|月配额/.test(l)),
+      ),
       false,
-      '不得把日/月 Token 配额写成已走 Redis INCR',
+      '不得把用户/角色配额或月配额写成已落地',
     );
+
+    const fullStateOpen = lines.some(
+      (l) =>
+        /^-\s\[\s\]/.test(l) &&
+        (/完全态/.test(l) || (/配额/.test(l) && /用户|角色|月/.test(l))),
+    );
+    assert.ok(
+      fullStateOpen || !lines.some((l) => /完全态/.test(l) && /^-\s\[x\]/.test(l)),
+      '若保留「配额完全态」须标明未完成或仅覆盖日计数',
+    );
+
+    assert.ok(/q:/.test(doc) || /日配额/.test(doc), '须与 B51/B52 分界：日配额可用 q: 或日配额语义说明');
   });
 
   it('UT-DOC-GUARD-09: §5.3：换票 JWT 与 HMAC 六头（B33）分写，禁止「全面注入」', () => {
@@ -338,11 +350,13 @@ describe('2.36 S11 对齐 security-ai-guard.md（去掉未实现的用户/角色
   const doc = fs.readFileSync(DOC_PATH, 'utf8');
   const guardSrc = fs.readFileSync(GUARD_JS, 'utf8');
 
-  /** 从 checkAndConsumeQuota 起切一段源码，缩小 SQL 断言范围。 */
+  /** 从配额相关函数起切一段源码（含 checkClientSqlQuota / checkAndConsumeQuota），缩小 SQL 断言范围。 */
   function quotaFnSource(src) {
-    const start = src.indexOf('const checkAndConsumeQuota');
-    assert.ok(start >= 0, 'ai-guard.js 须含 checkAndConsumeQuota');
-    return src.slice(start, start + 2500);
+    const startSql = src.indexOf('const checkClientSqlQuota');
+    const startConsume = src.indexOf('const checkAndConsumeQuota');
+    const start = startSql >= 0 ? startSql : startConsume;
+    assert.ok(start >= 0, 'ai-guard.js 须含 checkAndConsumeQuota 或 checkClientSqlQuota');
+    return src.slice(start, start + 4500);
   }
 
   it('UT-DOC-QUOTA-01: §4.5 不得把「角色级配额」写成已落地策略', () => {
@@ -392,10 +406,13 @@ describe('2.36 S11 对齐 security-ai-guard.md（去掉未实现的用户/角色
     );
 
     const hasCounting =
-      /进程内/.test(sec45) ||
-      (/ai_audit_logs/.test(sec45) && /client_id/.test(sec45)) ||
-      /dbPool/.test(sec45);
-    assert.ok(hasCounting, '§4.5 须写明进程内 Map 与/或按 client_id 审计汇总');
+      (/进程内/.test(sec45) && /Redis/.test(sec45)) ||
+      (/Redis/.test(sec45) && (/nowDayKey|日键|日配额|q:/.test(sec45))) ||
+      (/ai_audit_logs/.test(sec45) && /client_id/.test(sec45));
+    assert.ok(
+      hasCounting,
+      '§4.5 须写明无 Redis 进程内 Map、有 Redis 日计数，及/或按 client_id 审计汇总',
+    );
 
     const deniesUserOrRole =
       /(没有|未|不).{0,40}(登录用户|用户主键|角色).{0,40}(配额|上限|覆盖)/.test(sec45) ||
@@ -459,8 +476,13 @@ describe('2.36 S11 对齐 security-ai-guard.md（去掉未实现的用户/角色
       '§7 须出现全局日限额 env 与 per-client env，或 ai_clients + 日限额列',
     );
     assert.ok(
-      /进程内|SQLite|未迁 Redis/.test(sec7),
-      '§7 须注明计数仍进程内 / SQLite（或未迁 Redis）',
+      /Redis/.test(sec7) && /进程内/.test(sec7),
+      '§7 须注明有 Redis 时日计数走 Redis、无 Redis 时进程内 Map',
+    );
+    assert.equal(
+      /日配额完全未迁 Redis|计数仍进程内 Map \/ SQLite，未迁 Redis/.test(sec7),
+      false,
+      '不得再写无限定的「日配额完全未迁 Redis」',
     );
     assert.equal(
       /\*\*动态配额\*\*[：:].*`users`[\s\S]{0,40}`roles`/.test(sec7),
@@ -502,15 +524,28 @@ describe('2.36 S11 对齐 security-ai-guard.md（去掉未实现的用户/角色
     }
   });
 
-  it('UT-DOC-QUOTA-08: 清单：配额 Redis / WAF / 封禁 / 告警 / 报表仍未完成', () => {
+  it('UT-DOC-QUOTA-08: 清单：有 Redis 日配额（S13）已完成；用户/角色/完全态与 WAF 等仍未完成', () => {
     const lines = checklistLines(doc);
-    const quotaRedisOpen = lines.some(
+    const dayQuotaDone = lines.some(
+      (l) =>
+        /^-\s\[x\]/.test(l) &&
+        /日配额/.test(l) &&
+        (/Redis|q:|S13/.test(l)),
+    );
+    assert.ok(dayQuotaDone, 'S13 合入后「有 Redis 时日配额计数」须为 [x]');
+
+    const fullStateOrUserOpen = lines.some(
       (l) =>
         /^-\s\[\s\]/.test(l) &&
-        /配额/.test(l) &&
-        (/Redis|完全态/.test(l)),
+        (/完全态/.test(l) || /用户级\/角色级\s*Token\s*配额/.test(l) || /月配额/.test(l)),
     );
-    assert.ok(quotaRedisOpen, '配额迁移到 Redis / 配额完全态须保持未完成');
+    assert.ok(fullStateOrUserOpen, '完全态/用户角色/月配额须仍为未完成');
+
+    assert.equal(
+      lines.some((l) => /^-\s\[x\]/.test(l) && (/用户级.*配额|月配额/.test(l))),
+      false,
+      '不得把用户/角色配额或月配额勾成已完成',
+    );
 
     const stillOpen = (kw) =>
       lines.some((l) => /^-\s\[\s\]/.test(l) && l.includes(kw));

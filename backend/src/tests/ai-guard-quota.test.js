@@ -146,7 +146,7 @@ describe('A4: quota conservative pre-debit & refund on failure', () => {
       let nextCalled = 0;
       await guard.middleware(http.req, http.res, () => { nextCalled += 1; });
       assert.equal(nextCalled, 1, `request ${i + 1} should be admitted after prior short settle`);
-      http.req.aiGuard.finalize({
+      await http.req.aiGuard.finalize({
         status: 'ok',
         reason: 'stream_done',
         completionText: shortReply,
@@ -173,7 +173,7 @@ describe('A4: quota conservative pre-debit & refund on failure', () => {
     let firstNext = 0;
     await guard.middleware(first.req, first.res, () => { firstNext += 1; });
     assert.equal(firstNext, 1);
-    first.req.aiGuard.finalize({
+    await first.req.aiGuard.finalize({
       status: 'error',
       reason: 'missing_api_key',
       upstreamReached: false,
@@ -207,7 +207,7 @@ describe('A4: quota conservative pre-debit & refund on failure', () => {
     let firstNext = 0;
     await guard.middleware(first.req, first.res, () => { firstNext += 1; });
     assert.equal(firstNext, 1);
-    first.req.aiGuard.finalize({
+    await first.req.aiGuard.finalize({
       status: 'error',
       reason: 'aborted_or_timeout',
       completionText: partialStream,
@@ -236,7 +236,7 @@ describe('A4: quota conservative pre-debit & refund on failure', () => {
 
     const aborted = mockHttp({ method: 'POST', path: '/api/chat', body: { message: 'hi' } });
     await guard.middleware(aborted.req, aborted.res, () => {});
-    aborted.req.aiGuard.finalize({
+    await aborted.req.aiGuard.finalize({
       status: 'error',
       reason: 'aborted_or_timeout',
       completionText: 'partial answer',
@@ -245,7 +245,7 @@ describe('A4: quota conservative pre-debit & refund on failure', () => {
 
     const rejected = mockHttp({ method: 'POST', path: '/api/chat', body: { message: 'hi' } });
     await guard.middleware(rejected.req, rejected.res, () => {});
-    rejected.req.aiGuard.finalize({
+    await rejected.req.aiGuard.finalize({
       status: 'error',
       reason: 'missing_api_key',
       upstreamReached: false,
@@ -300,7 +300,7 @@ describe('A7/P0-8: cached_answer does not consume quota (upstreamReached)', () =
     let firstNext = 0;
     await guard.middleware(first.req, first.res, () => { firstNext += 1; });
     assert.equal(firstNext, 1);
-    first.req.aiGuard.finalize({
+    await first.req.aiGuard.finalize({
       status: 'ok',
       reason: 'cached_answer',
       completionText: LONG_CACHED_HTML,
@@ -333,7 +333,7 @@ describe('A7/P0-8: cached_answer does not consume quota (upstreamReached)', () =
       await guard.middleware(http.req, http.res, () => { nextCalled += 1; });
       assert.equal(nextCalled, 1, `第 ${i + 1} 次缓存命中后仍应准入`);
       assert.notEqual(http.statusCode, 429);
-      http.req.aiGuard.finalize({
+      await http.req.aiGuard.finalize({
         status: 'ok',
         reason: 'cached_answer',
         completionText: LONG_CACHED_HTML,
@@ -365,7 +365,7 @@ describe('A7/P0-8: cached_answer does not consume quota (upstreamReached)', () =
       body: { force: true },
     });
     await guard.middleware(http.req, http.res, () => {});
-    http.req.aiGuard.finalize({
+    await http.req.aiGuard.finalize({
       status: 'ok',
       reason: 'generated_answer',
       completionText: shortJson,
@@ -392,7 +392,7 @@ describe('A7/P0-8: cached_answer does not consume quota (upstreamReached)', () =
     });
     await guard.middleware(http.req, http.res, () => {});
     // 故意省略 upstreamReached，依赖 Guard 默认 true——不计费不得仅靠 reason 字符串
-    http.req.aiGuard.finalize({
+    await http.req.aiGuard.finalize({
       status: 'ok',
       reason: 'cached_answer',
       completionText: LONG_CACHED_HTML,
@@ -419,7 +419,7 @@ describe('A7/P0-8: cached_answer does not consume quota (upstreamReached)', () =
       await guard.middleware(http.req, http.res, () => { nextCalled += 1; });
       assert.equal(nextCalled, 1);
       assert.notEqual(http.statusCode, 429, '全程无 HTTP 429');
-      http.req.aiGuard.finalize({
+      await http.req.aiGuard.finalize({
         status: 'ok',
         reason: 'cached_answer',
         completionText: LONG_CACHED_HTML,

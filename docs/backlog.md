@@ -104,7 +104,7 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | E16 | feat | gate | assist | todo | PR 新增行覆盖率 ≥80% 才失败（E14 合入前禁止改 auto） |
 | E17 | feat | gate | auto | done | 部署文档 §3 环境变量名与代码及 .env.example 不一致则单测失败 |
 | S12 | fix | scan | auto | done | 无 Redis 时 middleware 内存 nonce 按 TTL 过期淘汰 |
-| S13 | feat | scan | auto | todo | 有 Redis 时日配额预扣/回补走 Redis，否则内存 Map |
+| S13 | feat | scan | auto | done | 有 Redis 时日配额预扣/回补走 Redis，否则内存 Map |
 | S14 | fix | scan | auto | todo | 对齐 security-ai-guard.md：去掉「月配额」已落地暗示，只写日配额 |
 
 
@@ -409,3 +409,4 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | 2026-11-03 | E14 完成：qa-report 采集前后端行覆盖率并写入报告，不因比例失败 |
 | 2026-11-04 | E17 完成：部署文档 §3 环境变量名与代码及 .env.example 不一致则单测失败 |
 | 2026-11-05 | S12 完成：无 Redis 时 middleware 内存 nonce 按 TTL 过期淘汰 |
+| 2026-11-08 | S13 完成：有 Redis 时日配额预扣/回补走 Redis，否则内存 Map |
