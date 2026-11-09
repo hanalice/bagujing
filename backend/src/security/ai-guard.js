@@ -458,8 +458,9 @@ export function createAiGuard({ dbPool = null, redis = null, jwtSecret = null } 
               request_id, client_id, user_identifier, action_type, action_name,
               page_path, page_title, payload_preview, prompt_tokens,
               completion_tokens, total_tokens, status_code, decision,
-              reason, duration_ms, client_ip_hash, user_agent
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              reason, duration_ms, client_ip_hash, user_agent,
+              upstream_status, upstream_reached, token_source
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `, [
             payload.requestId ?? null,
             cid,
@@ -477,7 +478,10 @@ export function createAiGuard({ dbPool = null, redis = null, jwtSecret = null } 
             payload.reason ?? 'unknown',
             payload.durationMs ?? 0,
             payload.ipHash ?? null,
-            payload.userAgent ?? null
+            payload.userAgent ?? null,
+            typeof payload.upstreamStatus === 'number' ? payload.upstreamStatus : null,
+            payload.upstreamReached === true ? 1 : payload.upstreamReached === false ? 0 : null,
+            payload.token_source ?? null,
           ]);
           // S2：SQL 审计成功不再常开 console.log；需要时仅走 debug
           if (config.debug) {

@@ -34,6 +34,9 @@ const MAF_TABLE_SQL = `
     duration_ms INTEGER DEFAULT 0,
     client_ip_hash TEXT,
     user_agent TEXT,
+    upstream_status INTEGER,
+    upstream_reached INTEGER,
+    token_source TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
@@ -41,8 +44,31 @@ const MAF_TABLE_SQL = `
   CREATE INDEX IF NOT EXISTS idx_ai_audit_client_id ON ai_audit_logs(client_id);
 `;
 
+/** 已有库补列；新库 CREATE 已含这些列。不回填旧行。 */
+const AI_AUDIT_EXTRA_COLUMNS = [
+  ['upstream_status', 'INTEGER'],
+  ['upstream_reached', 'INTEGER'],
+  ['token_source', 'TEXT'],
+];
+
+/**
+ * 确保 ai_audit_logs 含排行所需的上游列。缺列才 ALTER，已有列跳过。
+ * @param {{ withConnection: (fn: (db: { all: Function, run: Function }) => Promise<void>) => Promise<void> }} pool
+ */
+export async function ensureAiAuditColumns(pool) {
+  await pool.withConnection(async (db) => {
+    const rows = await db.all('PRAGMA table_info(ai_audit_logs)');
+    const names = new Set((rows || []).map((row) => row.name));
+    for (const [name, type] of AI_AUDIT_EXTRA_COLUMNS) {
+      if (names.has(name)) continue;
+      await db.run(`ALTER TABLE ai_audit_logs ADD COLUMN ${name} ${type}`);
+    }
+  });
+}
+
 export async function initMafSchema(pool) {
-    await pool.withConnection((db) => db.exec(MAF_TABLE_SQL));
+  await pool.withConnection((db) => db.exec(MAF_TABLE_SQL));
+  await ensureAiAuditColumns(pool);
 }
 
 export async function createMissionAudit(pool, { missionId, goal }) {

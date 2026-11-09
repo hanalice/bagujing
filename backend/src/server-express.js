@@ -20,6 +20,7 @@ import {
 } from './rag-fts.js';
 import { createLlmModel, createLlmModelForBaseUrl } from './llm.js';
 import { invokeWithRetry } from './upstream-retry.js';
+import { classifyChatStreamFailure } from './chat-failure.js';
 import {
   getUpstreamCircuit,
   isCircuitOpenError,
@@ -1048,9 +1049,11 @@ app.post('/api/chat', authenticateToken, requirePermission('chat_ai'), aiGuard.m
     if (upstreamReached && !isCircuitOpenError(error)) {
       getUpstreamCircuit().recordFailure();
     }
+    const failure = classifyChatStreamFailure(error, { aborted: isAborted });
     await finalizeGuard({
       status: 'error',
-      reason: (isAborted || isTimeout) ? 'aborted_or_timeout' : 'server_error',
+      reason: failure.reason,
+      upstreamStatus: failure.upstreamStatus,
       completionText,
       upstreamReached,
       promptTokens,

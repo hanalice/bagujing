@@ -91,7 +91,7 @@
 
 | ID | 用例标题 | 场景描述 | 预期结果 |
 | :--- | :--- | :--- | :--- |
-| UT-STREAM-01 | 上游挂起触发空闲超时熔断 | 模拟大模型吐出首个 Chunk 后挂起超过 `sseIdleTimeoutMs`。 | 1. 立即中断流并结束响应 (`res.end`)；<br>2. 记录 `finalize({ status: 'error', reason: 'aborted_or_timeout' })`；<br>3. 向前端发送 `type: 'error'` SSE 事件；<br>4. 释放底层 Reader Lock。 |
+| UT-STREAM-01 | 上游挂起触发空闲超时熔断 | 模拟大模型吐出首个 Chunk 后挂起超过 `sseIdleTimeoutMs`。 | 1. 立即中断流并结束响应 (`res.end`)；<br>2. 记录 `finalize({ status: 'error', reason: 'sse_idle_timeout' })`（S18 起不再使用 `aborted_or_timeout`）；<br>3. 向前端发送 `type: 'error'` SSE 事件；<br>4. 释放底层 Reader Lock。 |
 | UT-STREAM-02 | 请求结束/中断并发计数回收（无 Redis / Map 路径） | 前置：不注入 `redis`、不设 `REDIS_URL`；`AI_MAX_CONCURRENCY_PER_CLIENT=2`；同一 `clientId` 经 Guard 准入后占用 Map 槽位；随后触发 `res` 的 `close` 或 `finish`（可再补一次重复事件）。有 Redis 时的 INCR/DECR 契约见 §2.21（B52）。 | 1. 触发 `releaseOnce`，进程内 `clientConcurrency` 对该 `clientId` 递减归零（`get` 为 0 或不存在）；<br>2. 同一请求上再次 `close`/`finish` 仍幂等，计数不为负、不二次递减；<br>3. 释放后同 client 可再次准入至上限内（不误报 `concurrency_limit`）。 |
 
 ### 2.6 解析生成调用与审计记账契约 (`backend/src/tests/llm.test.js`)
@@ -1094,6 +1094,16 @@ C22 合入后 problems 关键字召回主路径改为 FTS（失败回退 LIKE）
 | UT-QUOTA-REDIS-12 | 不做：不实现月配额 / 用户·角色配额 | 前置：只读本表与 backlog S13 **不做**；注入 mock；两次不同 `req.user.id` 的准入，配额按全局/client 计。 | 1. PASS **不**要求出现 `q:m*` 月键或按 `user.id` / role 分桶；<br>2. **不**要求 429 reason `user_daily_*` / `monthly_*`；<br>3. 与 residual / **S11**/**S14** 分界：用户级与月配额另条。 |
 | UT-QUOTA-REDIS-13 | 不做：不要求生产必须 Redis / 真集群压测 | 前置：只读 backlog S13 **不做**与 residual；本表测文件。 | 1. PASS **不**要求 `REDIS_URL` 连真实实例或 docker Redis；<br>2. **不**要求改 PM2/Nginx 或强制生产配 Redis；<br>3. UT-QUOTA-REDIS-07 无 Redis Map 路径必须保持可测绿。 |
 | UT-QUOTA-REDIS-14 | 可选文档：清单「有 Redis 时日配额计数」已完成 | 前置：S13 实现阶段同步改 `docs/security-ai-guard.md` 时；只读文末 checklist；对照 `UT-DOC-GUARD-08`。 | 1. 出现「有 Redis 时日配额」类已完成勾选（`- [x]`）或与 B51 并列的已落地说明；<br>2. 「用户/角色配额」不得 `[x]`；<br>3. 本行可与 §2.33/§2.36 合测；未改文档的纯代码 PR 可将本行与文档勾选同一 commit 交付。 |
+
+### 2.44 S18 审计行补齐失败原因与上游状态（`backend/src/tests/audit-failure-reason.test.js` → `chat-failure.js` / `maf-repo.js` / `ai-guard.js` `appendAudit`）
+
+对应 **S18**。chat 失败不再收成 `aborted_or_timeout`。`upstream_status`、`upstream_reached`、`token_source` 写入 `ai_audit_logs`，并与 NDJSON 同值。`it()` 标题须含下表 ID。
+
+| ID | 用例标题 | 场景描述 | 预期结果 |
+| :--- | :--- | :--- | :--- |
+| UT-AUDIT-REASON-01 | 空闲超时、客户端中断、熔断、上游 HTTP、其它错误分开 | 直接调用 `classifyChatStreamFailure`：`SSE idle timeout`、`aborted: true`、熔断错误、`status: 429`、普通 Error。中断与超时同时出现时以中断为准。 | 1. reason 依次为 `sse_idle_timeout`、`client_abort`、`circuit_open`、`upstream_http`、`server_error`；<br>2. 仅 `upstream_http` 的 `upstreamStatus === 429`，其余为 `null`；<br>3. 同时 aborted 且消息为超时 → `client_abort`。 |
+| UT-AUDIT-REASON-02 | 旧库补列且旧行保持空 | 临时 SQLite 先建不含三列的 `ai_audit_logs` 并插入一行；再 `initMafSchema`。 | 1. `PRAGMA table_info` 含 `upstream_status`、`upstream_reached`、`token_source`；<br>2. 旧行这三列仍为 `null`；<br>3. 再次初始化不抛「duplicate column」。 |
+| UT-AUDIT-REASON-03 | finalize 把三列写入 SQL 且与 NDJSON 一致 | 注入临时库（含 `ai_clients` 空表）；`createAiGuard({ dbPool })` 后 `finalize({ reason: 'upstream_http', upstreamStatus: 502, upstreamReached: true })`。 | 1. NDJSON 的 `reason`、`upstreamStatus`、`upstreamReached`、`token_source` 与 SQL 行对应；<br>2. SQL `upstream_reached` 为 `1`，`upstream_status` 为 `502`，`token_source` 为 `estimate` 或 `upstream`；<br>3. `reason === 'upstream_http'`。 |
 
 ---
 
