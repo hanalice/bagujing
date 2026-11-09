@@ -18,6 +18,8 @@
 
 **状态**：`todo` 可被选中（仅当分级为 auto） / `done` 已合入 / `split` 父项索引。
 
+**优先级**：正整数，越小越先做，步长 10。日修在 `auto` + `todo` 中取数字最小的一行；数字相同则保持表中的上下顺序。`done` / `split` 留空。调整优先级只改数字，不挪行。
+
 **类型**：`fix` 走缺陷三段式提交；`feat` 走特性四段式。分支分别为 `auto-fix/<id>-<日期>` 与 `auto-feat/<id>-<日期>`。
 
 ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫描单次最多追加 3 条 `auto`。
@@ -38,74 +40,74 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 ## 队列表
 
 
-| ID  | 类型 | 来源  | 分级   | 状态  | 任务 |
-| --- | -- | --- | ---- | --- | -- |
-| A1  | fix | P0-2 | auto | done | 修复 `answer/generate` 记账中 `upstream.status` 未定义 |
-| A2  | fix | P0-1 | auto | done | chat 循环接入 SSE 空闲超时与并发释放 |
-| A3  | fix | P0-3 | auto | done | 移除 Guard 精确哈希内存短接，chat 不再被 `res.json` |
-| A4  | fix | P0-4 | auto | done | 配额预扣改保守上限；失败/abort 回补预扣 token |
-| A5  | fix | P2-5 | auto | done | 缺 Key 或空消息时，chat 先发 `type:error` 事件再 end |
-| A6  | fix | P2-3 | auto | done | `ai-guard-debug` 调试日志降级，生产默认不输出 |
-| A7  | fix | P0-8 | auto | done | `cached_answer` 命中不计配额 |
-| A8  | fix | P2-6 | assist | split | 已拆为 A81 / A82 |
-| A81 | fix | P2-6 | auto | done | 后端 ESLint flat config，当前树 0 error |
-| A82 | fix | P2-6 | auto | done | `qa-report.sh` 纳入 backend lint，error 拦截 |
-| B1  | fix | P0-6 | auto | done | Prompt 分槽：3 条 message；只测结构不测模型听话 |
-| B2  | fix | P0-7 | assist | split | 已拆为 B21 / B22 |
-| B21 | fix | P0-7 | auto | done | 解析入库前服务端 HTML 白名单消毒 |
-| B22 | feat | P0-7 | auto | done | 助教 system 不再要求仅 HTML 输出 |
-| B3  | fix | P0-5 | manual | split | 已拆为 B31 / B33；生产开签名仍为 B32 |
-| B31 | fix | P0-5 | auto | done | 签名开关打开时，有会话也验签 |
-| B32 | fix | P0-5 | manual | done | 生产打开签名开关（运维，禁止改代码默认值） |
-| B33 | fix | P0-5 | auto | done | 登录态的 chat 与 generate 补齐 HMAC 签名头 |
-| B4  | fix | P2-1 | auto | done | CORS `allowedHeaders` 补 `Authorization` |
-| B5  | feat | P1-7 | manual | split | 已拆为 B51 / B52 |
-| B51 | feat | P1-7 | auto | done | 有 Redis 时限流走 Redis，否则内存 Map |
-| B52 | feat | P1-7 | auto | done | 有 Redis 时并发计数走 Redis，否则内存 Map |
-| C1  | feat | P1-3 | auto | done | Prompt 预算：合法 maxChars 硬上限；非法配置不截题面 |
-| C2  | feat | P1-2 | manual | split | 已拆为 C21 / C22 |
-| C21 | feat | P1-2 | auto | done | LIKE 召回后规则打分，指定 id 置顶 |
-| C22 | feat | P1-2 | auto | done | FTS5 虚表查询，失败回退 LIKE |
-| C3  | feat | P1-1 | assist | split | 已拆为 C31 |
-| C31 | feat | P1-1 | auto | done | chat 接收最近 6 轮 messages，绑定当前题面 |
-| C4  | feat | P1-4 | manual | split | 已拆为 C41 / C42 |
-| C41 | feat | P1-4 | auto | done | 解析生成返回 JSON 三字段，失败不入库 |
-| C42 | feat | P1-4 | auto | done | 前端按三字段渲染，不再整篇模型 HTML |
-| C5  | fix | P1-6 | assist | split | 已拆为 C51 |
-| C51 | fix | P1-6 | auto | done | 有上游 usage 则回写审计，否则标记估算 |
-| C6  | feat | P1-8 | auto | done | 模型分层：chat 与解析可分别配置模型 |
-| C61 | fix | P1-8 | auto | done | chat 路由选模补齐 OPENAI_MODEL 向下兼容回退 |
-| D1  | feat | P1-5 | assist | split | 已拆为 D11 / D12 |
-| D11 | feat | P1-5 | auto | done | 同步生成路径对 429/5xx 有限重试 |
-| D12 | feat | P1-5 | auto | done | 进程内连续失败熔断 |
-| D2  | feat | P1-5 | manual | split | 已拆为 D21 |
-| D21 | feat | P1-5 | auto | done | 主 URL 在发出首字节前失败则切备用 URL |
-| D3  | feat | P1-2 | manual | todo | 向量检索与 FTS 混合 rerank（需先拆契约） |
-| D4  | feat | P1-2 | manual | todo | 非个性化解析的近似缓存（需先拆契约） |
-| D5  | fix | P2-2 | manual | split | 已拆为 D51 |
-| D51 | fix | P2-2 | auto | done | 新注册 bcryptjs；登录懒迁移旧哈希 |
-| S1  | fix | scan | auto | done | 机调换票 JWT 与登录票权限面隔离 |
-| S2  | fix | scan | auto | done | Guard 非 debug 路径去掉常开 console.log |
-| S3  | feat | scan | auto | done | 助教前端回传最近 6 轮 messages（对齐 C31） |
-| S4  | feat | scan | assist | split | 已判定助教 Markdown；实现见 S6 |
-| S5  | fix | scan | assist | split | 已拆为 S8 |
-| S6  | feat | scan | auto | done | 助教助手气泡 Markdown + DOMPurify，用户气泡纯文本 |
-| S7  | fix | scan | auto | done | 换票 fetch URL 与签名 path 对齐为 `/api/auth/token` |
-| S8  | fix | scan | auto | done | 对齐 security-ai-guard.md 与签名默认/会话验签/前端 env 名 |
-| S9  | fix | scan | auto | done | 登录态审计 user_identifier 取会话用户主键，忽略客户端 x-user-id 覆盖 |
-| S10 | feat | scan | auto | done | cached_answer 命中且库内为三字段 JSON 时响应顶层带回 summary/keyPoints/nextStep |
-| S11 | fix | scan | auto | done | 对齐 security-ai-guard.md：去掉未实现的用户/角色配额表述 |
-| E1  | feat | gate | assist | split | 已拆为 E11–E17；月报与现有测试/ESLint 门禁不另开实现项 |
-| E11 | feat | gate | auto | done | 提交说明脚本：feat 四段、refactor 三段、轻量 type 有正文；钩子与日修沙盒共用 |
-| E12 | feat | gate | auto | done | PR 使用与 E11 同一套提交说明校验 |
-| E13 | feat | gate | auto | done | pre-commit 拦截暂存区硬编码口令、密钥、私钥与连接串 |
-| E14 | feat | gate | auto | done | qa-report 采集前后端行覆盖率并写入报告，不因比例失败 |
-| E15 | feat | gate | assist | todo | 历史行覆盖率前后端各 ≥60% 才拦截（E14 出数字前禁止改 auto） |
-| E16 | feat | gate | assist | todo | PR 新增行覆盖率 ≥80% 才失败（E14 合入前禁止改 auto） |
-| E17 | feat | gate | auto | done | 部署文档 §3 环境变量名与代码及 .env.example 不一致则单测失败 |
-| S12 | fix | scan | auto | done | 无 Redis 时 middleware 内存 nonce 按 TTL 过期淘汰 |
-| S13 | feat | scan | auto | todo | 有 Redis 时日配额预扣/回补走 Redis，否则内存 Map |
-| S14 | fix | scan | auto | todo | 对齐 security-ai-guard.md：去掉「月配额」已落地暗示，只写日配额 |
+| ID  | 类型 | 来源  | 分级   | 状态  | 优先级 | 任务 |
+| --- | -- | --- | ---- | --- | --- | -- |
+| A1 | fix | P0-2 | auto | done |  | 修复 `answer/generate` 记账中 `upstream.status` 未定义 |
+| A2 | fix | P0-1 | auto | done |  | chat 循环接入 SSE 空闲超时与并发释放 |
+| A3 | fix | P0-3 | auto | done |  | 移除 Guard 精确哈希内存短接，chat 不再被 `res.json` |
+| A4 | fix | P0-4 | auto | done |  | 配额预扣改保守上限；失败/abort 回补预扣 token |
+| A5 | fix | P2-5 | auto | done |  | 缺 Key 或空消息时，chat 先发 `type:error` 事件再 end |
+| A6 | fix | P2-3 | auto | done |  | `ai-guard-debug` 调试日志降级，生产默认不输出 |
+| A7 | fix | P0-8 | auto | done |  | `cached_answer` 命中不计配额 |
+| A8 | fix | P2-6 | assist | split |  | 已拆为 A81 / A82 |
+| A81 | fix | P2-6 | auto | done |  | 后端 ESLint flat config，当前树 0 error |
+| A82 | fix | P2-6 | auto | done |  | `qa-report.sh` 纳入 backend lint，error 拦截 |
+| B1 | fix | P0-6 | auto | done |  | Prompt 分槽：3 条 message；只测结构不测模型听话 |
+| B2 | fix | P0-7 | assist | split |  | 已拆为 B21 / B22 |
+| B21 | fix | P0-7 | auto | done |  | 解析入库前服务端 HTML 白名单消毒 |
+| B22 | feat | P0-7 | auto | done |  | 助教 system 不再要求仅 HTML 输出 |
+| B3 | fix | P0-5 | manual | split |  | 已拆为 B31 / B33；生产开签名仍为 B32 |
+| B31 | fix | P0-5 | auto | done |  | 签名开关打开时，有会话也验签 |
+| B32 | fix | P0-5 | manual | done |  | 生产打开签名开关（运维，禁止改代码默认值） |
+| B33 | fix | P0-5 | auto | done |  | 登录态的 chat 与 generate 补齐 HMAC 签名头 |
+| B4 | fix | P2-1 | auto | done |  | CORS `allowedHeaders` 补 `Authorization` |
+| B5 | feat | P1-7 | manual | split |  | 已拆为 B51 / B52 |
+| B51 | feat | P1-7 | auto | done |  | 有 Redis 时限流走 Redis，否则内存 Map |
+| B52 | feat | P1-7 | auto | done |  | 有 Redis 时并发计数走 Redis，否则内存 Map |
+| C1 | feat | P1-3 | auto | done |  | Prompt 预算：合法 maxChars 硬上限；非法配置不截题面 |
+| C2 | feat | P1-2 | manual | split |  | 已拆为 C21 / C22 |
+| C21 | feat | P1-2 | auto | done |  | LIKE 召回后规则打分，指定 id 置顶 |
+| C22 | feat | P1-2 | auto | done |  | FTS5 虚表查询，失败回退 LIKE |
+| C3 | feat | P1-1 | assist | split |  | 已拆为 C31 |
+| C31 | feat | P1-1 | auto | done |  | chat 接收最近 6 轮 messages，绑定当前题面 |
+| C4 | feat | P1-4 | manual | split |  | 已拆为 C41 / C42 |
+| C41 | feat | P1-4 | auto | done |  | 解析生成返回 JSON 三字段，失败不入库 |
+| C42 | feat | P1-4 | auto | done |  | 前端按三字段渲染，不再整篇模型 HTML |
+| C5 | fix | P1-6 | assist | split |  | 已拆为 C51 |
+| C51 | fix | P1-6 | auto | done |  | 有上游 usage 则回写审计，否则标记估算 |
+| C6 | feat | P1-8 | auto | done |  | 模型分层：chat 与解析可分别配置模型 |
+| C61 | fix | P1-8 | auto | done |  | chat 路由选模补齐 OPENAI_MODEL 向下兼容回退 |
+| D1 | feat | P1-5 | assist | split |  | 已拆为 D11 / D12 |
+| D11 | feat | P1-5 | auto | done |  | 同步生成路径对 429/5xx 有限重试 |
+| D12 | feat | P1-5 | auto | done |  | 进程内连续失败熔断 |
+| D2 | feat | P1-5 | manual | split |  | 已拆为 D21 |
+| D21 | feat | P1-5 | auto | done |  | 主 URL 在发出首字节前失败则切备用 URL |
+| D3 | feat | P1-2 | manual | todo | 60 | 向量检索与 FTS 混合 rerank（需先拆契约） |
+| D4 | feat | P1-2 | manual | todo | 70 | 非个性化解析的近似缓存（需先拆契约） |
+| D5 | fix | P2-2 | manual | split |  | 已拆为 D51 |
+| D51 | fix | P2-2 | auto | done |  | 新注册 bcryptjs；登录懒迁移旧哈希 |
+| S1 | fix | scan | auto | done |  | 机调换票 JWT 与登录票权限面隔离 |
+| S2 | fix | scan | auto | done |  | Guard 非 debug 路径去掉常开 console.log |
+| S3 | feat | scan | auto | done |  | 助教前端回传最近 6 轮 messages（对齐 C31） |
+| S4 | feat | scan | assist | split |  | 已判定助教 Markdown；实现见 S6 |
+| S5 | fix | scan | assist | split |  | 已拆为 S8 |
+| S6 | feat | scan | auto | done |  | 助教助手气泡 Markdown + DOMPurify，用户气泡纯文本 |
+| S7 | fix | scan | auto | done |  | 换票 fetch URL 与签名 path 对齐为 `/api/auth/token` |
+| S8 | fix | scan | auto | done |  | 对齐 security-ai-guard.md 与签名默认/会话验签/前端 env 名 |
+| S9 | fix | scan | auto | done |  | 登录态审计 user_identifier 取会话用户主键，忽略客户端 x-user-id 覆盖 |
+| S10 | feat | scan | auto | done |  | cached_answer 命中且库内为三字段 JSON 时响应顶层带回 summary/keyPoints/nextStep |
+| S11 | fix | scan | auto | done |  | 对齐 security-ai-guard.md：去掉未实现的用户/角色配额表述 |
+| E1 | feat | gate | assist | split |  | 已拆为 E11–E17；月报与现有测试/ESLint 门禁不另开实现项 |
+| E11 | feat | gate | auto | done |  | 提交说明脚本：feat 四段、refactor 三段、轻量 type 有正文；钩子与日修沙盒共用 |
+| E12 | feat | gate | auto | done |  | PR 使用与 E11 同一套提交说明校验 |
+| E13 | feat | gate | auto | done |  | pre-commit 拦截暂存区硬编码口令、密钥、私钥与连接串 |
+| E14 | feat | gate | auto | done |  | qa-report 采集前后端行覆盖率并写入报告，不因比例失败 |
+| E15 | feat | gate | assist | todo | 80 | 历史行覆盖率前后端各 ≥60% 才拦截（E14 出数字前禁止改 auto） |
+| E16 | feat | gate | assist | todo | 90 | PR 新增行覆盖率 ≥80% 才失败（E14 合入前禁止改 auto） |
+| E17 | feat | gate | auto | done |  | 部署文档 §3 环境变量名与代码及 .env.example 不一致则单测失败 |
+| S12 | fix | scan | auto | done |  | 无 Redis 时 middleware 内存 nonce 按 TTL 过期淘汰 |
+| S13 | feat | scan | auto | todo | 10 | 有 Redis 时日配额预扣/回补走 Redis，否则内存 Map |
+| S14 | fix | scan | auto | todo | 20 | 对齐 security-ai-guard.md：去掉「月配额」已落地暗示，只写日配额 |
 
 
 ---
@@ -409,3 +411,4 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | 2026-11-03 | E14 完成：qa-report 采集前后端行覆盖率并写入报告，不因比例失败 |
 | 2026-11-04 | E17 完成：部署文档 §3 环境变量名与代码及 .env.example 不一致则单测失败 |
 | 2026-11-05 | S12 完成：无 Redis 时 middleware 内存 nonce 按 TTL 过期淘汰 |
+| 2026-11-09 | 队列表增加优先级数字：越小越先做；日修按数字挑选，不再靠挪行 |
