@@ -111,6 +111,7 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | S15 | fix | scan | auto | todo | 20 | 无效 client token 风控计数按 clientId 聚合，达到阈值才 403 |
 | S16 | fix | scan | auto | todo | 30 | 配置 AI_METRICS_TOKEN 时 /api/metrics 须校验令牌，未配置保持可匿名 |
 | S17 | fix | scan | auto | todo | 40 | 无 Redis 时限流内存 Map 淘汰已过期窗口键 |
+| S18 | feat | audit | auto | todo | 5 | 审计行补齐失败原因与上游状态，供日后按 reason 排行 |
 
 
 ---
@@ -323,6 +324,12 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 - **不做**：改默认限流数字；改 Redis 键格式；引入真 Redis 集成测；扩大为通用 LRU 框架。
 - **residual**：无 Redis 时限流仍单进程有效。公开表不写刷量步骤。
 
+### S18
+
+- **做**：每次经过 AI Guard 的调用在 `ai_audit_logs` 留下可排行的一行。`chat` 失败的 `reason` 拆开，至少区分 `sse_idle_timeout`、`client_abort`、`upstream_http`、`circuit_open`；对不上的才用 `server_error`。`upstream_http` 必须同时写入上游 HTTP 状态码。表增加可空列 `upstream_status`、`upstream_reached`、`token_source`，`appendAudit` 写入；已有库用 `ADD COLUMN` 补齐，不回填旧行。成功路径仍使用 `stream_done`、`generated_answer`、`cached_answer`。单测锁上述 reason 与三列（NDJSON 与 SQL 一致）。
+- **不做**：不算拒绝率或失败率；不做报表、看板或 Grafana；不改周扫描；不自动改 backlog 优先级；不把 `/api/metrics` 当作排行来源；不把熔断改成跨进程共享；不改已有拒绝类 `reason` 的名字。
+- **residual**：上线前的旧行没有新列。放行路径的 `status_code` 仍可能是 `ok` / `error`，排行以 `reason` 为准。按 `reason` 改优先级的定时任务不在本项：须本项部署且审计攒满至少一天后再开；该任务必须自己读审计日志，决定这一天要不要改优先级，而不是看见最高失败就改数字。
+
 ### E1
 
 已由人拆为 E11–E17。周扫描不得把本父项改回 `todo`，不得把 E15/E16 改成 `auto`，不得把 OSV 接进 `qa.yml` 或让扫描器改本队列。
@@ -435,3 +442,4 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | 2026-11-08 | S13 完成：有 Redis 时日配额预扣/回补走 Redis，否则内存 Map |
 | 2026-11-08 | 周扫描：新增 auto S15（无效 token 风控按 clientId 聚合）、S16（AI_METRICS_TOKEN 可选保护 /api/metrics）、S17（无 Redis 限流 Map 过期键淘汰）；无逾期待决；待决表仍空；D3/D4/E15/E16 未拆 |
 | 2026-11-09 | 队列表增加优先级数字：越小越先做；日修按数字挑选，不再靠挪行 |
+| 2026-11-09 | 登记 auto S18（优先级 5）：审计行补齐失败原因与上游状态；按 reason 改优先级的定时任务不在本项 |
