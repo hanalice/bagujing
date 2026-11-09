@@ -679,10 +679,10 @@ app.post('/api/problems/:id/answer/generate', authenticateToken, requirePermissi
   let finalized = false;
   let upstreamReached = false;
   let promptTokens;
-  const finalizeGuard = (payload) => {
+  const finalizeGuard = async (payload) => {
     if (!guardContext || finalized) return;
     finalized = true;
-    guardContext.finalize(payload);
+    await guardContext.finalize(payload);
   };
 
   try {
@@ -691,14 +691,14 @@ app.post('/api/problems/:id/answer/generate', authenticateToken, requirePermissi
     const pool = await getSqlitePool();
 
     if (!pool) {
-      finalizeGuard({ status: 'error', reason: 'sqlite_required', upstreamReached: false });
+      await finalizeGuard({ status: 'error', reason: 'sqlite_required', upstreamReached: false });
       return res.status(400).json({ code: 400, message: 'SQLite mode is required' });
     }
 
     const detail = await getProblemDetailById(pool, id);
     const problem = await getProblemById(pool, id);
     if (!problem) {
-      finalizeGuard({ status: 'error', reason: 'problem_not_found', upstreamReached: false });
+      await finalizeGuard({ status: 'error', reason: 'problem_not_found', upstreamReached: false });
       return res.status(404).json({ code: 404, message: 'Problem not found' });
     }
 
@@ -724,7 +724,7 @@ app.post('/api/problems/:id/answer/generate', authenticateToken, requirePermissi
       });
 
       // 业务缓存命中未触达上游：沿用 A4 upstreamReached 判据，不计配额、全额回补预扣
-      finalizeGuard({
+      await finalizeGuard({
         status: 'ok',
         reason: 'cached_answer',
         completionText: detail.answer,
@@ -758,7 +758,7 @@ app.post('/api/problems/:id/answer/generate', authenticateToken, requirePermissi
 
     const model = getLlmModel(guardContext, 'generation');
     if (!model) {
-      finalizeGuard({ status: 'error', reason: 'missing_api_key', upstreamReached: false });
+      await finalizeGuard({ status: 'error', reason: 'missing_api_key', upstreamReached: false });
       return res.status(400).json({ code: 400, message: 'OPENAI_API_KEY is required' });
     }
 
@@ -781,7 +781,7 @@ app.post('/api/problems/:id/answer/generate', authenticateToken, requirePermissi
     });
     promptTokens = promptMessages.promptTokens;
     if (promptMessages.budgetError === PROMPT_BUDGET_ERROR_RESERVED) {
-      finalizeGuard({
+      await finalizeGuard({
         status: 'error',
         reason: 'prompt_budget_reserved_exceeds_max',
         upstreamReached: false,
@@ -812,7 +812,7 @@ app.post('/api/problems/:id/answer/generate', authenticateToken, requirePermissi
       });
     } catch (error) {
       if (isCircuitOpenError(error)) {
-        finalizeGuard({
+        await finalizeGuard({
           status: 'error',
           reason: 'circuit_open',
           upstreamReached: false,
@@ -837,7 +837,7 @@ app.post('/api/problems/:id/answer/generate', authenticateToken, requirePermissi
 
     const parsed = parseGeneratedAnswerJson(answerRaw);
     if (!parsed.ok) {
-      finalizeGuard({
+      await finalizeGuard({
         status: 'error',
         reason: 'invalid_structured_answer',
         promptTokens,
@@ -862,7 +862,7 @@ app.post('/api/problems/:id/answer/generate', authenticateToken, requirePermissi
       years,
     });
 
-    finalizeGuard({
+    await finalizeGuard({
       status: 'ok',
       reason: 'generated_answer',
       completionText: answerJson,
@@ -884,7 +884,7 @@ app.post('/api/problems/:id/answer/generate', authenticateToken, requirePermissi
       message: 'success',
     });
   } catch (error) {
-    finalizeGuard({ status: 'error', reason: 'server_error', upstreamReached, promptTokens });
+    await finalizeGuard({ status: 'error', reason: 'server_error', upstreamReached, promptTokens });
     return res.status(500).json({ code: 500, message: error.message });
   }
 }));
@@ -895,10 +895,10 @@ app.post('/api/chat', authenticateToken, requirePermission('chat_ai'), aiGuard.m
   let upstreamReached = false;
   let completionText = '';
   let promptTokens;
-  const finalizeGuard = (payload) => {
+  const finalizeGuard = async (payload) => {
     if (!guardContext || finalized) return;
     finalized = true;
-    guardContext.finalize(payload);
+    await guardContext.finalize(payload);
   };
 
   res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
@@ -908,7 +908,7 @@ app.post('/api/chat', authenticateToken, requirePermission('chat_ai'), aiGuard.m
   const model = getLlmModel(guardContext, 'chat');
   if (!model) {
     sendSSE(res, { type: 'error', message: 'OPENAI_API_KEY is required' });
-    finalizeGuard({ status: 'error', reason: 'missing_api_key', upstreamReached: false });
+    await finalizeGuard({ status: 'error', reason: 'missing_api_key', upstreamReached: false });
     return res.end();
   }
 
@@ -918,7 +918,7 @@ app.post('/api/chat', authenticateToken, requirePermission('chat_ai'), aiGuard.m
 
   if (!message.trim()) {
     sendSSE(res, { type: 'error', message: 'Empty message' });
-    finalizeGuard({ status: 'error', reason: 'empty_message', upstreamReached: false });
+    await finalizeGuard({ status: 'error', reason: 'empty_message', upstreamReached: false });
     return res.end();
   }
 
@@ -954,7 +954,7 @@ app.post('/api/chat', authenticateToken, requirePermission('chat_ai'), aiGuard.m
     promptTokens = promptMessages.promptTokens;
     if (promptMessages.budgetError === PROMPT_BUDGET_ERROR_RESERVED) {
       sendSSE(res, { type: 'error', message: 'Prompt budget maxChars is smaller than system and question reserved length' });
-      finalizeGuard({
+      await finalizeGuard({
         status: 'error',
         reason: 'prompt_budget_reserved_exceeds_max',
         upstreamReached: false,
@@ -970,7 +970,7 @@ app.post('/api/chat', authenticateToken, requirePermission('chat_ai'), aiGuard.m
     } catch (error) {
       if (isCircuitOpenError(error)) {
         sendSSE(res, { type: 'error', message: error.message || 'Upstream circuit is open', reason: 'circuit_open' });
-        finalizeGuard({
+        await finalizeGuard({
           status: 'error',
           reason: 'circuit_open',
           upstreamReached: false,
@@ -1033,7 +1033,7 @@ app.post('/api/chat', authenticateToken, requirePermission('chat_ai'), aiGuard.m
     });
 
     getUpstreamCircuit().recordSuccess();
-    finalizeGuard({
+    await finalizeGuard({
       status: 'ok',
       reason: 'stream_done',
       completionText,
@@ -1048,7 +1048,7 @@ app.post('/api/chat', authenticateToken, requirePermission('chat_ai'), aiGuard.m
     if (upstreamReached && !isCircuitOpenError(error)) {
       getUpstreamCircuit().recordFailure();
     }
-    finalizeGuard({
+    await finalizeGuard({
       status: 'error',
       reason: (isAborted || isTimeout) ? 'aborted_or_timeout' : 'server_error',
       completionText,
