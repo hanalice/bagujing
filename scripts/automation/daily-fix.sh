@@ -3,7 +3,7 @@
 # 脚本名称: daily-fix.sh
 # 脚本作用: 从 docs/backlog.md 取一项 auto/todo，驱动编码 agent 完成并开 PR
 # 使用方式:
-#   ./scripts/automation/daily-fix.sh                 # 取队列中第一个 auto/todo 项，提交前人工确认
+#   ./scripts/automation/daily-fix.sh                 # 取优先级最小的 auto/todo 项，提交前人工确认
 #   ./scripts/automation/daily-fix.sh --task A81      # 指定任务号
 #   ./scripts/automation/daily-fix.sh --dry-run       # 只打印规格阶段 + 编码阶段将要下发的 prompt
 #   ./scripts/automation/daily-fix.sh --yes --push    # 无人值守：提交、推送并用 gh 开 PR

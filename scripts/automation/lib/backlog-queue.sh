@@ -9,31 +9,46 @@ fi
 BACKLOG_PATH="${BACKLOG_PATH:-$PROJECT_ROOT/docs/backlog.md}"
 HLD_PATH="${HLD_PATH:-$PROJECT_ROOT/docs/internal/HLD-llm-call-pipeline.md}"
 
-# 队列表行：| ID | 类型 | 来源 | 分级 | 状态 | 任务 |
+# 队列表行：| ID | 类型 | 来源 | 分级 | 状态 | 优先级 | 任务 |
 # 输出：ID \t TYPE \t SOURCE \t LEVEL \t STATUS \t TASK
+# 未指定 ID 时，在分级匹配且状态为 todo 的行里取优先级最小者；同号保持表中顺序。
 backlog_read_row() {
   local want_id="$1"
   local want_level="$2"
   awk -F'|' -v want_id="$want_id" -v want_level="$want_level" '
+    function trim(s) {
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", s)
+      return s
+    }
     /^##[[:space:]]/ { in_queue = ($0 ~ /队列表/) }
     !in_queue { next }
-    NF < 8 { next }
+    NF < 9 { next }
     /^\|[[:space:]]*[A-Z][0-9]+[[:space:]]*\|/ {
-      gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2)
-      gsub(/^[[:space:]]+|[[:space:]]+$/, "", $3)
-      gsub(/^[[:space:]]+|[[:space:]]+$/, "", $4)
-      gsub(/^[[:space:]]+|[[:space:]]+$/, "", $5)
-      gsub(/^[[:space:]]+|[[:space:]]+$/, "", $6)
-      gsub(/^[[:space:]]+|[[:space:]]+$/, "", $7)
+      id = trim($2)
+      typ = trim($3)
+      src = trim($4)
+      lvl = trim($5)
+      st = trim($6)
+      pri = trim($7)
+      task = trim($8)
       if (want_id != "") {
-        if ($2 == want_id) {
-          print $2 "\t" $3 "\t" $4 "\t" $5 "\t" $6 "\t" $7
+        if (id == want_id) {
+          print id "\t" typ "\t" src "\t" lvl "\t" st "\t" task
           exit
         }
-      } else if ($5 == want_level && $6 == "todo") {
-        print $2 "\t" $3 "\t" $4 "\t" $5 "\t" $6 "\t" $7
-        exit
+        next
       }
+      if (lvl != want_level || st != "todo") next
+      seq++
+      n = (pri ~ /^[0-9]+$/) ? pri + 0 : 1000000000
+      if (!chosen || n < best || (n == best && seq < best_seq)) {
+        best = n
+        best_seq = seq
+        chosen = id "\t" typ "\t" src "\t" lvl "\t" st "\t" task
+      }
+    }
+    END {
+      if (want_id == "" && chosen != "") print chosen
     }
   ' "$BACKLOG_PATH"
 }
