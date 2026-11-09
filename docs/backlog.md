@@ -111,7 +111,7 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | S15 | fix | scan | auto | todo | 20 | 无效 client token 风控计数按 clientId 聚合，达到阈值才 403 |
 | S16 | fix | scan | auto | todo | 30 | 配置 AI_METRICS_TOKEN 时 /api/metrics 须校验令牌，未配置保持可匿名 |
 | S17 | fix | scan | auto | todo | 40 | 无 Redis 时限流内存 Map 淘汰已过期窗口键 |
-| S18 | feat | audit | auto | todo | 5 | 审计行补齐失败原因与上游状态，供日后按 reason 排行 |
+| S18 | feat | audit | auto | done |  | 审计行补齐失败原因与上游状态，供日后按 reason 排行 |
 
 
 ---
@@ -443,3 +443,4 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | 2026-11-08 | 周扫描：新增 auto S15（无效 token 风控按 clientId 聚合）、S16（AI_METRICS_TOKEN 可选保护 /api/metrics）、S17（无 Redis 限流 Map 过期键淘汰）；无逾期待决；待决表仍空；D3/D4/E15/E16 未拆 |
 | 2026-11-09 | 队列表增加优先级数字：越小越先做；日修按数字挑选，不再靠挪行 |
 | 2026-11-09 | 登记 auto S18（优先级 5）：审计行补齐失败原因与上游状态；按 reason 改优先级的定时任务不在本项 |
+| 2026-11-09 | S18 完成：审计行补齐失败原因与上游状态，供日后按 reason 排行 |

@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import { ChatOpenAI } from '@langchain/openai';
 import { buildLlmConfig, createLlmModel } from '../llm.js';
 import { readStreamChunkWithTimeout } from '../security/ai-guard.js';
+import { classifyChatStreamFailure } from '../chat-failure.js';
 
 const ENV_KEYS = ['OPENAI_API_KEY', 'OPENAI_BASE_URL', 'OPENAI_MODEL'];
 
@@ -237,7 +238,7 @@ describe('readStreamChunkWithTimeout (A2 timeout helper)', () => {
 });
 
 describe('Chat stream consumption loop (idle timeout & resource cleanup)', () => {
-  it('hung stream terminates on idle timeout, invokes finalize(aborted_or_timeout), and sends SSE error', async () => {
+  it('hung stream terminates on idle timeout, invokes finalize(sse_idle_timeout), and sends SSE error', async () => {
     // 模拟挂起的 stream：发送首个 chunk 之后后续挂起超过 sseIdleTimeoutMs
     let chunkCount = 0;
     const hungReader = {
@@ -310,10 +311,11 @@ describe('Chat stream consumption loop (idle timeout & resource cleanup)', () =>
       mockRes.end();
     } catch (error) {
       const isTimeout = error?.message === 'SSE idle timeout';
-      const isAborted = abortController.signal.aborted;
+      const failure = classifyChatStreamFailure(error, { aborted: abortController.signal.aborted });
       guardContext.finalize({
         status: 'error',
-        reason: (isAborted || isTimeout) ? 'aborted_or_timeout' : 'server_error',
+        reason: failure.reason,
+        upstreamStatus: failure.upstreamStatus,
       });
       const errorMsg = isTimeout ? 'Stream idle timeout' : (error?.message || String(error));
       if (!mockRes.writableEnded) {
@@ -324,10 +326,11 @@ describe('Chat stream consumption loop (idle timeout & resource cleanup)', () =>
 
     // 门禁断言 1: 超时必定断开并结束响应
     assert.equal(responseEnded, true, 'response must be ended upon timeout');
-    // 门禁断言 2: finalize 状态为 error 且 reason 为 aborted_or_timeout
+    // 门禁断言 2: 空闲超时单独成 reason，不再与客户端中断合桶
     assert.deepEqual(finalizePayload, {
       status: 'error',
-      reason: 'aborted_or_timeout',
+      reason: 'sse_idle_timeout',
+      upstreamStatus: null,
     });
     // 门禁断言 3: SSE 包含首个 chunk 的 delta 与超时 error 事件
     const hasDelta = sseEvents.some((e) => e.includes('Initial chunk'));
