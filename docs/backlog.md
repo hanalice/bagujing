@@ -106,6 +106,9 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | S12 | fix | scan | auto | done | 无 Redis 时 middleware 内存 nonce 按 TTL 过期淘汰 |
 | S13 | feat | scan | auto | done | 有 Redis 时日配额预扣/回补走 Redis，否则内存 Map |
 | S14 | fix | scan | auto | todo | 对齐 security-ai-guard.md：去掉「月配额」已落地暗示，只写日配额 |
+| S15 | fix | scan | auto | todo | 无效 client token 风控计数按 clientId 聚合，达到阈值才 403 |
+| S16 | fix | scan | auto | todo | 配置 AI_METRICS_TOKEN 时 /api/metrics 须校验令牌，未配置保持可匿名 |
+| S17 | fix | scan | auto | todo | 无 Redis 时限流内存 Map 淘汰已过期窗口键 |
 
 
 ---
@@ -300,6 +303,24 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 - **不做**：改 `ai-guard.js` 或任何运行时代码；实现月配额或用户/角色配额；打开签名默认值；抢做 S13 的 Redis 配额实现。
 - **residual**：真要做月限额或用户级配额需另开条目（含产品口径与 schema）。S13 负责 Redis 日计数代码切片。
 
+### S15
+
+- **做**：`backend/src/security/ai-guard.js` 在强制验签路径上，无效 `x-client-token` 的失败计数按 **`clientId`** 聚合（不得把每次请求可变的 `signature` 并入分桶键）；同一 `clientId` 累计达到现有阈值（代码现为 6，单测可注入）后返回 HTTP **403**，审计 `reason === 'client_token_bruteforce'`。单测 `it()` 标题含用例 ID：连续多次失败且每次签名头不同，仍应累计并在阈值触发 403；未达阈值仍为 401 / `invalid_client_token`。
+- **不做**：实现文末清单「自动封禁与冷却」完全态（拉黑名单、跨进程共享、改默认阈值数字）；改 HMAC 算法或六头集合；打开 `AI_REQUIRE_SIGNED_HEADERS` 默认值。
+- **residual**：无 Redis 时计数仍单进程；日切 `refreshDailyStateIfNeeded` 清空 `riskEvents` 可保留。完整封禁/冷却另条。
+
+### S16
+
+- **做**：新增可选 env `AI_METRICS_TOKEN`：当其非空时，`GET /api/metrics` 必须携带与之匹配的令牌（`Authorization: Bearer <token>` 或等价约定头），否则 HTTP **401** 且不返回指标正文；未设置或空字符串时行为与现网一致（可匿名拉取，既有 `MON-01` 仍过）。单测锁「未配置可匿名 / 已配置缺令牌 401 / 令牌正确 200 且含 `ai_guard_requests_total`」。可同步 `backend/.env.example`、部署文档 §3 与 `docs/security-ai-guard.md` 一句现状（满足 E17 三方一致）。
+- **不做**：把未配置时的默认改成强制鉴权；改指标字段名或语义；要求生产必须配置该变量（运维自行决定）；引入真 Prometheus 集群。
+- **residual**：生产是否设置令牌、网络层隔离属运维，不改代码默认开放行为。
+
+### S17
+
+- **做**：`ai-guard.js` 在**无 Redis** 走 `takeFixedWindow` 的三条内存限流 Map（`routeClientMinute` / `routeClientHour` / `routeIpMinute`）上，已过期窗口键必须被淘汰（访问时删除重建，并惰性扫掉其它 `now >= resetAt` 的条目，或在 `resetAt` 用 `setTimeout` 删除该键，二选一即可）。单测 `it()` 标题含用例 ID：注入假时钟后，过期键不再留在 Map 内（即使不再 take 同一 key）。有 Redis 时仍只走现有 `INCR`+TTL，本项不改。
+- **不做**：改默认限流数字；改 Redis 键格式；引入真 Redis 集成测；扩大为通用 LRU 框架。
+- **residual**：无 Redis 时限流仍单进程有效。公开表不写刷量步骤。
+
 ### E1
 
 已由人拆为 E11–E17。周扫描不得把本父项改回 `todo`，不得把 E15/E16 改成 `auto`，不得把 OSV 接进 `qa.yml` 或让扫描器改本队列。
@@ -410,3 +431,4 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | 2026-11-04 | E17 完成：部署文档 §3 环境变量名与代码及 .env.example 不一致则单测失败 |
 | 2026-11-05 | S12 完成：无 Redis 时 middleware 内存 nonce 按 TTL 过期淘汰 |
 | 2026-11-08 | S13 完成：有 Redis 时日配额预扣/回补走 Redis，否则内存 Map |
+| 2026-11-08 | 周扫描：新增 auto S15（无效 token 风控按 clientId 聚合）、S16（AI_METRICS_TOKEN 可选保护 /api/metrics）、S17（无 Redis 限流 Map 过期键淘汰）；无逾期待决；待决表仍空；D3/D4/E15/E16 未拆 |
