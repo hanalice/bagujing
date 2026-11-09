@@ -271,6 +271,89 @@ const takeRedisFixedWindow = async (redis, key, windowMs, limit) => {
   };
 };
 
+/** 距下一 UTC 日切的毫秒数；日配额键 TTL 须至少覆盖到次日 00:00Z。 */
+const msUntilNextUtcMidnight = (now = Date.now()) => {
+  const d = new Date(now);
+  const next = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1);
+  return Math.max(1, next - now);
+};
+
+/** 日配额 TTL 小缓冲（文档允许 ± 小缓冲），避免边界时钟漂移导致键早于次日 00:00Z 过期。 */
+const QUOTA_DAY_TTL_PAD_MS = 1000;
+
+/** 日配额键 TTL：覆盖到次日 UTC 边界（含小缓冲），且不超过约 48h。 */
+const quotaDayTtlMs = (now = Date.now()) =>
+  Math.min(48 * 3600 * 1000, msUntilNextUtcMidnight(now) + QUOTA_DAY_TTL_PAD_MS);
+
+/**
+ * Redis 日配额加减：优先 INCRBY；±1 可用 INCR/DECR；否则 GET+SET 或循环 INCR/DECR（兼容仅实现固定窗口的旧 mock）。
+ * 职责：回补 / delta 结算与超限回滚共用；结果钳制 ≥0。
+ */
+const redisQuotaAdjust = async (redis, key, delta) => {
+  const amount = Number(delta) || 0;
+  if (amount === 0) return 0;
+  let count;
+  if (amount === 1 && typeof redis.incr === 'function') {
+    count = Number(await redis.incr(key));
+  } else if (amount === -1 && typeof redis.decr === 'function') {
+    count = Number(await redis.decr(key));
+  } else if (typeof redis.incrby === 'function') {
+    count = Number(await redis.incrby(key, amount));
+  } else if (typeof redis.get === 'function' && typeof redis.set === 'function') {
+    const current = Number(await redis.get(key)) || 0;
+    count = current + amount;
+    await redis.set(key, String(Math.max(0, count)));
+    return Math.max(0, count);
+  } else if (amount > 0 && typeof redis.incr === 'function') {
+    count = 0;
+    for (let i = 0; i < amount; i += 1) {
+      count = Number(await redis.incr(key));
+    }
+  } else if (amount < 0 && typeof redis.decr === 'function') {
+    count = 0;
+    for (let i = 0; i < -amount; i += 1) {
+      count = Number(await redis.decr(key));
+    }
+  } else {
+    throw new Error('redis quota adjust requires incr/incrby/decr or get+set');
+  }
+  if (!Number.isFinite(count)) count = 0;
+  if (count < 0) {
+    if (typeof redis.set === 'function') {
+      await redis.set(key, '0');
+    } else if (typeof redis.incrby === 'function') {
+      await redis.incrby(key, -count);
+    } else if (typeof redis.incr === 'function') {
+      while (count < 0) {
+        count = Number(await redis.incr(key));
+      }
+    }
+    return 0;
+  }
+  return count;
+};
+
+/**
+ * Redis 日配额预扣：原子递增后设 TTL；超限则回滚本次增量。
+ * 职责：对齐内存路径「先检查再计入」的最终语义（失败不留幽灵计数）。
+ */
+const redisQuotaBump = async (redis, key, delta, limit, ttlMs) => {
+  const amount = Number(delta) || 0;
+  if (amount <= 0) {
+    return { ok: true, count: 0 };
+  }
+  const count = await redisQuotaAdjust(redis, key, amount);
+  // 首次从空键写入（计数恰等于本次增量）时设定覆盖到次日的 TTL
+  if (count === amount && typeof redis.pexpire === 'function') {
+    await redis.pexpire(key, ttlMs);
+  }
+  if (Number.isFinite(limit) && count > limit) {
+    await redisQuotaAdjust(redis, key, -amount);
+    return { ok: false, count };
+  }
+  return { ok: true, count };
+};
+
 export function createAiGuard({ dbPool = null, redis = null, jwtSecret = null } = {}) {
   const JWT_SECRET = jwtSecret || process.env.AI_JWT_SECRET || 'change_me_jwt_secret';
   const credentials = parseClientCredentials(process.env.AI_CLIENT_CREDENTIALS || 'web:change_me');
@@ -501,8 +584,84 @@ export function createAiGuard({ dbPool = null, redis = null, jwtSecret = null } 
     return res.status(status).json({ code: status, message });
   };
 
+  /** 有 dbPool 时按 ai_clients + ai_audit_logs 校验 client 日限额（与计数后端无关）。 */
+  const checkClientSqlQuota = async ({ clientId, projectedTokens, now }) => {
+    if (!currentDbPool) return { ok: true };
+    const quota = await currentDbPool.withConnection(async (db) => {
+      const today = nowDayKey(now);
+      const row = await db.get(`
+          SELECT 
+            COUNT(*) as request_count, 
+            SUM(total_tokens) as token_sum 
+          FROM ai_audit_logs 
+          WHERE client_id = ? AND date(created_at) = date(?)
+        `, [clientId, today]);
+
+      const client = await db.get(`SELECT daily_token_limit, daily_request_limit FROM ai_clients WHERE client_id = ?`, [clientId]);
+      const reqLimit = client?.daily_request_limit ?? config.dailyRequestLimitPerClient;
+      const tokenLimit = client?.daily_token_limit ?? config.dailyTokenLimitPerClient;
+
+      return {
+        requests: row?.request_count || 0,
+        tokens: row?.token_sum || 0,
+        reqLimit,
+        tokenLimit,
+      };
+    });
+
+    if (quota.requests + 1 > quota.reqLimit) return { ok: false, reason: 'client_daily_request_limit' };
+    if (quota.tokens + projectedTokens > quota.tokenLimit) return { ok: false, reason: 'client_daily_token_limit' };
+    return { ok: true };
+  };
+
   const checkAndConsumeQuota = async ({ clientId, projectedTokens, now }) => {
     refreshDailyStateIfNeeded(now);
+    const dayKey = nowDayKey(now);
+
+    // S13：有 Redis 时日配额权威计数走 q:* 键；无 Redis 时保持进程内 Map。
+    if (currentRedis) {
+      const ttlMs = quotaDayTtlMs(now);
+      const greqKey = `q:greq:${dayKey}`;
+      const gtokKey = `q:gtok:${dayKey}`;
+      const creqKey = `q:creq:${dayKey}:${clientId}`;
+      const ctokKey = `q:ctok:${dayKey}:${clientId}`;
+
+      const greq = await redisQuotaBump(
+        currentRedis,
+        greqKey,
+        1,
+        config.globalDailyRequestLimit,
+        ttlMs,
+      );
+      if (!greq.ok) return { ok: false, reason: 'global_daily_request_limit' };
+
+      const gtok = await redisQuotaBump(
+        currentRedis,
+        gtokKey,
+        projectedTokens,
+        config.globalDailyTokenLimit,
+        ttlMs,
+      );
+      if (!gtok.ok) {
+        await redisQuotaAdjust(currentRedis, greqKey, -1);
+        return { ok: false, reason: 'global_daily_token_limit' };
+      }
+
+      // client 侧请求/token 同步预扣（无 db 时不据此 429，仅共享计数；有 db 时 SQL 仍另行校验）
+      await redisQuotaBump(currentRedis, creqKey, 1, Number.POSITIVE_INFINITY, ttlMs);
+      await redisQuotaBump(currentRedis, ctokKey, projectedTokens, Number.POSITIVE_INFINITY, ttlMs);
+
+      const sqlResult = await checkClientSqlQuota({ clientId, projectedTokens, now });
+      if (!sqlResult.ok) {
+        await redisQuotaAdjust(currentRedis, greqKey, -1);
+        await redisQuotaAdjust(currentRedis, gtokKey, -projectedTokens);
+        await redisQuotaAdjust(currentRedis, creqKey, -1);
+        await redisQuotaAdjust(currentRedis, ctokKey, -projectedTokens);
+        return sqlResult;
+      }
+
+      return { ok: true };
+    }
 
     // 1. Memory checks (Global)
     const nextGlobalRequests = usage.globalRequests + 1;
@@ -516,33 +675,8 @@ export function createAiGuard({ dbPool = null, redis = null, jwtSecret = null } 
     }
 
     // 2. SQL Persistent checks (Client-specific)
-    if (currentDbPool) {
-      const quota = await currentDbPool.withConnection(async (db) => {
-        // Get today's usage from audit logs
-        const today = nowDayKey(now);
-        const row = await db.get(`
-          SELECT 
-            COUNT(*) as request_count, 
-            SUM(total_tokens) as token_sum 
-          FROM ai_audit_logs 
-          WHERE client_id = ? AND date(created_at) = date(?)
-        `, [clientId, today]);
-
-        const client = await db.get(`SELECT daily_token_limit, daily_request_limit FROM ai_clients WHERE client_id = ?`, [clientId]);
-        const reqLimit = client?.daily_request_limit ?? config.dailyRequestLimitPerClient;
-        const tokenLimit = client?.daily_token_limit ?? config.dailyTokenLimitPerClient;
-
-        return {
-          requests: row.request_count || 0,
-          tokens: row.token_sum || 0,
-          reqLimit,
-          tokenLimit
-        };
-      });
-
-      if (quota.requests + 1 > quota.reqLimit) return { ok: false, reason: 'client_daily_request_limit' };
-      if (quota.tokens + projectedTokens > quota.tokenLimit) return { ok: false, reason: 'client_daily_token_limit' };
-    }
+    const sqlResult = await checkClientSqlQuota({ clientId, projectedTokens, now });
+    if (!sqlResult.ok) return sqlResult;
 
     // 3. Fallback/Sync Memory State
     const clientUsage = getClientUsage(clientId);
@@ -555,8 +689,25 @@ export function createAiGuard({ dbPool = null, redis = null, jwtSecret = null } 
   };
 
   /** Refund pre-debit (failure/abort) or settle to estimated/actual usage (success). */
-  const adjustQuotaTokens = ({ clientId, projectedTokens, actualTokens, refund }) => {
-    refreshDailyStateIfNeeded(Date.now());
+  const adjustQuotaTokens = async ({ clientId, projectedTokens, actualTokens, refund }) => {
+    const now = Date.now();
+    refreshDailyStateIfNeeded(now);
+
+    if (currentRedis) {
+      const dayKey = nowDayKey(now);
+      const gtokKey = `q:gtok:${dayKey}`;
+      const ctokKey = `q:ctok:${dayKey}:${clientId}`;
+      if (refund) {
+        await redisQuotaAdjust(currentRedis, gtokKey, -projectedTokens);
+        await redisQuotaAdjust(currentRedis, ctokKey, -projectedTokens);
+        return;
+      }
+      const delta = actualTokens - projectedTokens;
+      await redisQuotaAdjust(currentRedis, gtokKey, delta);
+      await redisQuotaAdjust(currentRedis, ctokKey, delta);
+      return;
+    }
+
     const clientUsage = getClientUsage(clientId);
     if (refund) {
       usage.globalTokens = Math.max(0, usage.globalTokens - projectedTokens);
@@ -815,7 +966,8 @@ export function createAiGuard({ dbPool = null, redis = null, jwtSecret = null } 
       maxCompletionTokens: config.maxCompletionTokens,
       upstreamTimeoutMs: config.upstreamTimeoutMs,
       sseIdleTimeoutMs: config.sseIdleTimeoutMs,
-      finalize: ({ completionText = '', status = 'ok', reason = 'completed', upstreamStatus = null, upstreamReached = true, promptTokens: reportedPromptTokens, usage } = {}) => {
+      // S13：Redis 路径结算为 async；调用方应 await，保证回补/delta 完成后再做后续准入。
+      finalize: async ({ completionText = '', status = 'ok', reason = 'completed', upstreamStatus = null, upstreamReached = true, promptTokens: reportedPromptTokens, usage } = {}) => {
         metrics.totalRequests += 1;
         const duration = Date.now() - startedAt;
         if (duration < 1000) metrics.latencyBuckets[0]++;
@@ -849,7 +1001,7 @@ export function createAiGuard({ dbPool = null, redis = null, jwtSecret = null } 
 
         if (!quotaFinalized) {
           quotaFinalized = true;
-          adjustQuotaTokens({
+          await adjustQuotaTokens({
             clientId,
             projectedTokens,
             actualTokens: totalTokens,
@@ -866,7 +1018,8 @@ export function createAiGuard({ dbPool = null, redis = null, jwtSecret = null } 
           });
         }
 
-        appendAudit({
+        // 审计入队并等到本次落盘，避免调用方结束后的补写盖住下一条用例的文件。
+        await appendAudit({
           ts: new Date().toISOString(),
           requestId,
           decision: 'allow',
