@@ -354,7 +354,13 @@ const redisQuotaBump = async (redis, key, delta, limit, ttlMs) => {
   return { ok: true, count };
 };
 
-export function createAiGuard({ dbPool = null, redis = null, jwtSecret = null } = {}) {
+export function createAiGuard({
+  dbPool = null,
+  redis = null,
+  jwtSecret = null,
+  /** 单测可注入；生产默认 6。无效 client token 按 clientId 累计到此阈值后 403。 */
+  clientTokenBruteThreshold = undefined,
+} = {}) {
   const JWT_SECRET = jwtSecret || process.env.AI_JWT_SECRET || 'change_me_jwt_secret';
   const credentials = parseClientCredentials(process.env.AI_CLIENT_CREDENTIALS || 'web:change_me');
   const allowedOriginValues = [...parseCsvSet(process.env.AI_ALLOWED_ORIGINS || 'http://127.0.0.1,http://localhost')];
@@ -363,6 +369,11 @@ export function createAiGuard({ dbPool = null, redis = null, jwtSecret = null } 
   // Support dynamic updates for dependencies
   let currentDbPool = dbPool;
   let currentRedis = redis || (process.env.REDIS_URL ? new Redis(process.env.REDIS_URL) : null);
+
+  const injectedBrute =
+    clientTokenBruteThreshold === undefined || clientTokenBruteThreshold === null
+      ? NaN
+      : Number(clientTokenBruteThreshold);
 
   const config = {
     enabled: String(process.env.AI_GUARD_ENABLED ?? 'true').toLowerCase() !== 'false',
@@ -385,6 +396,9 @@ export function createAiGuard({ dbPool = null, redis = null, jwtSecret = null } 
     dailyTokenLimitPerClient: parseIntSafe(process.env.AI_DAILY_TOKEN_LIMIT_PER_CLIENT, 50000),
     globalDailyRequestLimit: parseIntSafe(process.env.AI_GLOBAL_DAILY_REQUEST_LIMIT, 5000),
     globalDailyTokenLimit: parseIntSafe(process.env.AI_GLOBAL_DAILY_TOKEN_LIMIT, 500000),
+    // S15：按 clientId 聚合；默认 6，单测可通过 createAiGuard({ clientTokenBruteThreshold }) 注入
+    clientTokenBruteThreshold:
+      Number.isFinite(injectedBrute) && injectedBrute >= 1 ? Math.trunc(injectedBrute) : 6,
     auditFilePath: process.env.AI_AUDIT_FILE_PATH
       ? path.resolve(process.cwd(), process.env.AI_AUDIT_FILE_PATH)
       : path.resolve(process.cwd(), 'data/ai-audit.ndjson'),
@@ -723,8 +737,9 @@ export function createAiGuard({ dbPool = null, redis = null, jwtSecret = null } 
     clientUsage.tokens = Math.max(0, clientUsage.tokens + delta);
   };
 
-  const trackRisk = ({ clientId, signature }) => {
-    const key = `${clientId}:${signature}`;
+  // S15：无效 client token 计数只按 clientId 聚合，不得把每次请求可变的 signature 并入键。
+  const trackRisk = ({ clientId }) => {
+    const key = String(clientId || '');
     const prev = riskEvents.get(key) || 0;
     const next = prev + 1;
     riskEvents.set(key, next);
@@ -801,8 +816,8 @@ export function createAiGuard({ dbPool = null, redis = null, jwtSecret = null } 
       }
 
       if (!safeEqualText(clientToken, secret)) {
-        const attempts = trackRisk({ clientId, signature });
-        if (attempts >= 6) {
+        const attempts = trackRisk({ clientId });
+        if (attempts >= config.clientTokenBruteThreshold) {
           return reject({ req, res, status: 403, message: 'Client temporarily blocked', reason: 'client_token_bruteforce', clientId, routeKey });
         }
         return reject({ req, res, status: 401, message: 'Invalid client token', reason: 'invalid_client_token', clientId, routeKey });

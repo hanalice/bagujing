@@ -108,7 +108,7 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | S12 | fix | scan | auto | done |  | 无 Redis 时 middleware 内存 nonce 按 TTL 过期淘汰 |
 | S13 | feat | scan | auto | done |  | 有 Redis 时日配额预扣/回补走 Redis，否则内存 Map |
 | S14 | fix | scan | auto | done | 10 | 对齐 security-ai-guard.md：去掉「月配额」已落地暗示，只写日配额 |
-| S15 | fix | scan | auto | todo | 20 | 无效 client token 风控计数按 clientId 聚合，达到阈值才 403 |
+| S15 | fix | scan | auto | done | 20 | 无效 client token 风控计数按 clientId 聚合，达到阈值才 403 |
 | S16 | fix | scan | auto | todo | 30 | 配置 AI_METRICS_TOKEN 时 /api/metrics 须校验令牌，未配置保持可匿名 |
 | S17 | fix | scan | auto | todo | 40 | 无 Redis 时限流内存 Map 淘汰已过期窗口键 |
 | S18 | feat | audit | auto | done |  | 审计行补齐失败原因与上游状态，供日后按 reason 排行 |
@@ -445,3 +445,4 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | 2026-11-09 | 登记 auto S18（优先级 5）：审计行补齐失败原因与上游状态；按 reason 改优先级的定时任务不在本项 |
 | 2026-11-09 | S18 完成：审计行补齐失败原因与上游状态，供日后按 reason 排行 |
 | 2026-11-10 | S14 完成：对齐 security-ai-guard.md：去掉「月配额」已落地暗示，只写日配额 |
+| 2026-11-11 | S15 完成：无效 client token 风控计数按 clientId 聚合，达到阈值才 403 |
