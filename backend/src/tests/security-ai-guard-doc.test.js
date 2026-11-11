@@ -1,7 +1,8 @@
 /**
- * S8 / S11：对齐 docs/security-ai-guard.md。
+ * S8 / S11 / S14：对齐 docs/security-ai-guard.md。
  * S8（§2.33）：签名默认 / 会话验签 / 前端 env 名。
  * S11（§2.36）：去掉未实现的用户/角色配额表述。
+ * S14（§2.45）：去掉「月配额」已落地暗示，只写日配额。
  * 只读 Markdown + 对照源码，不发 HTTP / 不连 Redis / 不调 createAiGuard().middleware。
  */
 import { describe, it } from 'node:test';
@@ -636,6 +637,277 @@ describe('2.36 S11 对齐 security-ai-guard.md（去掉未实现的用户/角色
       /FROM\s+users\b[\s\S]{0,80}daily_token_limit/i.test(guardSrc),
       false,
       '本阶段不得以文档对齐为由实现 users 表配额 SQL',
+    );
+  });
+});
+
+describe('2.45 S14 对齐 security-ai-guard.md（去掉月配额已落地暗示，只写日配额）', () => {
+  const doc = fs.readFileSync(DOC_PATH, 'utf8');
+  const guardSrc = fs.readFileSync(GUARD_JS, 'utf8');
+
+  /** 句内或紧邻是否带「未落地 / 未实现 / 另开 / 仍未 / 未来」等否定限定。 */
+  function hasMonthNegation(snippet) {
+    return /未落地|未实现|另开|仍未|尚未|未来|未完成/.test(snippet);
+  }
+
+  it('UT-DOC-MONTH-01: 全文禁止无限定「日/月配额」暗示月已计数', () => {
+    // 无限定「日/月配额」「日/月 Token 上限」不得作为现行能力
+    const dayMonthHits = [...doc.matchAll(/日[/·]月\s*(配额|Token\s*上限|限额)/g)];
+    for (const m of dayMonthHits) {
+      const around = doc.slice(Math.max(0, m.index - 40), m.index + m[0].length + 40);
+      assert.ok(
+        hasMonthNegation(around),
+        `「日/月…」须带未落地限定，当前上下文：${around}`,
+      );
+    }
+    // 允许 residual / 完全态未完成条写「月配额…仍未完成」
+    if (/月配额/.test(doc)) {
+      assert.ok(
+        /月配额[\s\S]{0,30}(未落地|未实现|仍未|未完成|另开)/.test(doc) ||
+          /(未落地|未实现|仍未|未完成|另开)[\s\S]{0,30}月配额/.test(doc),
+        '若出现「月配额」须在 residual/未完成语境',
+      );
+    }
+  });
+
+  it('UT-DOC-MONTH-02: §4.5 现状只写日配额（nowDayKey / 日键）', () => {
+    const sec45 = sectionBetween(doc, '### 4.5');
+    const namesDay =
+      /nowDayKey/.test(sec45) ||
+      /UTC\s*日键|日键/.test(sec45) ||
+      /q:/.test(sec45) ||
+      /日配额/.test(sec45);
+    assert.ok(namesDay, '§4.5 须写明按日计数（nowDayKey / 日键 / q: / 日配额）');
+
+    assert.equal(
+      /按自然月累计|月配额已落地|启用月计数/.test(sec45),
+      false,
+      '不得把月配额写成现行策略或已启用计数窗口',
+    );
+
+    if (/月配额/.test(sec45)) {
+      assert.ok(
+        /月配额[\s\S]{0,20}(未落地|未实现|另开)/.test(sec45) ||
+          /(未落地|未实现|另开)[\s\S]{0,20}月配额/.test(sec45),
+        '若出现「月配额」须同句/紧邻含未落地类否定',
+      );
+    }
+  });
+
+  it('UT-DOC-MONTH-03: §4.5 / §7 不得把月限额 env 写成已存在配置', () => {
+    const sec45 = sectionBetween(doc, '### 4.5');
+    const sec7 = sectionBetween(doc, '## 7.');
+    const combined = `${sec45}\n${sec7}`;
+
+    assert.equal(
+      /AI_GLOBAL_MONTHLY_|AI_MONTHLY_|monthly_token_limit|monthly_request_limit/.test(combined),
+      false,
+      '不得把月限额 env / 月列写成已落地配置项',
+    );
+
+    const hasDailyEnv =
+      /AI_GLOBAL_DAILY_TOKEN_LIMIT/.test(combined) ||
+      /AI_GLOBAL_DAILY_REQUEST_LIMIT/.test(combined) ||
+      /AI_DAILY_TOKEN_LIMIT_PER_CLIENT/.test(combined) ||
+      /AI_DAILY_REQUEST_LIMIT_PER_CLIENT/.test(combined);
+    const hasAiClientsDaily =
+      /ai_clients/.test(combined) &&
+      (/daily_token_limit/.test(combined) || /daily_request_limit/.test(combined));
+    assert.ok(
+      hasDailyEnv || hasAiClientsDaily,
+      '现状配额配置源只应出现日限额 env 与/或 ai_clients.daily_*',
+    );
+
+    assert.equal(
+      /已配置月\s*Token\s*上限|月列与日列并列/.test(combined),
+      false,
+      '不得宣称已配置月 Token 上限 env',
+    );
+  });
+
+  it('UT-DOC-MONTH-04: §7 配额基线条目只描述日计数路径', () => {
+    const sec7 = sectionBetween(doc, '## 7.');
+    const quotaBullet =
+      sec7.split('\n').find((l) => /配额限额源|配额/.test(l) && /AI_GLOBAL_DAILY|ai_clients/.test(l)) ||
+      '';
+    assert.ok(quotaBullet.length > 0 || /配额限额源/.test(sec7), '§7 须有配额相关条目');
+
+    const quotaScope = /配额限额源[\s\S]{0,500}/.exec(sec7)?.[0] || sec7;
+    assert.ok(
+      (/日计数|日配额|q:/.test(quotaScope) && /Redis/.test(quotaScope) && /进程内/.test(quotaScope)) ||
+        (/日/.test(quotaScope) && /Redis/.test(quotaScope)),
+      '§7 配额条目须描述日计数路径（Redis 日键 / 进程内 Map）',
+    );
+
+    assert.equal(
+      /日[/·]月配额迁移到 Redis|月计数走 Redis/.test(sec7),
+      false,
+      '不得写无限定的「日/月配额迁移到 Redis」或「月计数走 Redis」',
+    );
+
+    // 月不得混入已落地路径：若出现月配额须带未落地
+    if (/月配额/.test(quotaScope)) {
+      assert.ok(hasMonthNegation(quotaScope), '§7 配额段若提月配额须标明未落地');
+    }
+  });
+
+  it('UT-DOC-MONTH-05: 文末清单：原「日/月」Redis/完全态改为日配额语义', () => {
+    const lines = checklistLines(doc);
+
+    assert.equal(
+      lines.some(
+        (l) =>
+          /日[/·]月/.test(l) &&
+          (/Redis|迁移/.test(l) || /^-\s\[x\]/.test(l)),
+      ),
+      false,
+      '不得存在无限定将「日/月」捆在一起并标为已迁 Redis / 已完成的条目',
+    );
+
+    const dayDone = lines.some(
+      (l) =>
+        /^-\s\[x\]/.test(l) &&
+        (/日配额/.test(l) || (/日键/.test(l) && /q:/.test(l)) || (/q:/.test(l) && /日/.test(l))),
+    );
+    assert.ok(dayDone, '日计数条（S13）正文须写日配额或日键 / q:');
+
+    const fullState = lines.filter((l) => /完全态/.test(l));
+    for (const line of fullState) {
+      if (/月配额/.test(line)) {
+        assert.ok(
+          /^-\s\[\s\]/.test(line) && hasMonthNegation(line),
+          `完全态若提及月配额须为未完成语境：${line}`,
+        );
+      }
+    }
+  });
+
+  it('UT-DOC-MONTH-06: 文末清单：月配额不得标为已完成', () => {
+    const lines = checklistLines(doc);
+    const withMonth = lines.filter((l) => /月配额|monthly/.test(l));
+    for (const line of withMonth) {
+      assert.ok(
+        /^-\s\[\s\]/.test(line),
+        `含月配额语义的清单项必须未完成：${line}`,
+      );
+    }
+
+    assert.equal(
+      lines.some(
+        (l) =>
+          /^-\s\[x\]/.test(l) &&
+          /月配额/.test(l) &&
+          !/未落地|未实现|仍未|未完成/.test(l),
+      ),
+      false,
+      '同一 [x] 行不得把月配额写成已完成',
+    );
+
+    // S13 日配额 [x] 允许
+    assert.ok(
+      lines.some((l) => /^-\s\[x\]/.test(l) && /日配额/.test(l)),
+      '允许 - [x] …日配额…',
+    );
+  });
+
+  it('UT-DOC-MONTH-07: §8 验收只锁日配额 429，不写月配额已验收', () => {
+    const sec8 = sectionBetween(doc, '## 8.');
+    assert.ok(
+      /日配额|全局配额/.test(sec8) && /429/.test(sec8),
+      '允许保留达到日配额或全局配额后 429',
+    );
+    assert.equal(
+      /月配额已实现|达到月限额被拒绝|月配额.*429|monthly_/.test(sec8),
+      false,
+      '§8 不得出现月配额已验收类条目或 monthly_* reason',
+    );
+    assert.equal(
+      /global_daily_token_limit|client_daily_token_limit|日配额/.test(sec8) ||
+        /429/.test(sec8),
+      true,
+      '与运行时 *_daily_* reason 同向（允许仅写日配额 429）',
+    );
+  });
+
+  it('UT-DOC-MONTH-08: 对照代码：无月配额 env / 无 monthly 配额键', () => {
+    const envReads = [...guardSrc.matchAll(/parseIntSafe\(\s*process\.env\.([A-Z0-9_]+)/g)].map(
+      (m) => m[1],
+    );
+    const quotaEnv = envReads.filter((n) => /TOKEN_LIMIT|REQUEST_LIMIT|DAILY|MONTH/.test(n));
+    for (const name of quotaEnv) {
+      assert.equal(
+        /MONTH|MONTHLY/i.test(name),
+        false,
+        `配额相关 env 不得含 MONTH：${name}`,
+      );
+      if (/LIMIT/.test(name)) {
+        assert.ok(/DAILY/.test(name), `限额 env 须为日限额：${name}`);
+      }
+    }
+
+    assert.ok(
+      /nowDayKey/.test(guardSrc) && /toISOString\(\)\.slice\(0,\s*10\)/.test(guardSrc),
+      '日切键须使用 nowDayKey（UTC 日）',
+    );
+    assert.ok(
+      /q:greq:|q:gtok:|q:creq:|q:ctok:/.test(guardSrc),
+      'Redis 配额键前缀语义为日键 q:greq:/gtok:/creq:/ctok:',
+    );
+    assert.equal(
+      /q:m(req|tok|onth)/.test(guardSrc) || /`q:m/.test(guardSrc),
+      false,
+      '不得把 q:m* 月键约定为现行实现',
+    );
+  });
+
+  it('UT-DOC-MONTH-09: 不做：不改运行时 / 不实现月或用户角色配额 / 不抢 S13', () => {
+    assert.ok(
+      guardSrc.includes(REQUIRE_SIGNED_DEFAULT),
+      'ai-guard.js 默认解析式仍为 ?? false（本表不要求改成 true）',
+    );
+    assert.equal(
+      /monthly_token_limit|monthly_request_limit|user_daily_token_limit/.test(guardSrc),
+      false,
+      '本表不要求实现 monthly_* / user_daily_* reason',
+    );
+    // 不强制 S13：仅要求文档不得暗示月已落地（不论日 Redis 是否勾选）
+    assert.ok(
+      /月配额[\s\S]{0,30}(未落地|未实现|仍未|未完成)/.test(doc) ||
+        !/月配额/.test(doc),
+      '仍不得暗示月配额已落地',
+    );
+  });
+
+  it('UT-DOC-MONTH-10: residual：月限额另条；公开文档无利用步骤', () => {
+    const exploitHints = [
+      /openssl\s+[^\n]+HMAC/i,
+      /node\s+-e[\s\S]{0,200}X-Signature/,
+      /curl[\s\S]{0,300}X-Signature[\s\S]{0,200}http/,
+    ];
+    for (const re of exploitHints) {
+      assert.equal(re.test(doc), false, `不得给出可复现伪造 HMAC 配方：${re}`);
+    }
+    assert.ok(/HMAC-SHA256/.test(doc), '允许保留 HMAC-SHA256');
+    assert.equal(
+      /AI_GLOBAL_MONTHLY_|monthly_token_limit/.test(guardSrc),
+      false,
+      '不得以文档未实现月配额为由本阶段改代码加月限额',
+    );
+  });
+
+  it('UT-DOC-MONTH-11: 与 S8/S11/S13 分界：本表只锁月 vs 日文档措辞', () => {
+    // 本表范围 = 白皮书月 vs 日措辞；不以签名默认 / 前端 env / 用户·角色表下发为唯一断言
+    assert.ok(/日配额/.test(doc), '须锁日配额措辞（非 S8 签名默认）');
+    assert.ok(
+      /月配额未落地|月配额等仍未完成|月配额[\s\S]{0,20}(未落地|未实现|仍未|未完成)/.test(doc),
+      '须锁月配额未落地（非 S11 用户/角色表下发）',
+    );
+    // PASS 不要求本表发 mock Redis 预扣（属 S13）：本文件未 import createAiGuard
+    const thisSrc = fs.readFileSync(fileURLToPath(import.meta.url), 'utf8');
+    assert.equal(
+      /from\s+['"].*ai-guard\.js['"]/.test(thisSrc),
+      false,
+      '本表不 import ai-guard 运行时（S13 才发 mock Redis 预扣）',
     );
   });
 });
