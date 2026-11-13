@@ -2,7 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, timingSafeEqual } from 'node:crypto';
 import 'dotenv/config';
 import { createAiGuard, extractUpstreamUsage, readStreamChunkWithTimeout } from './security/ai-guard.js';
 import fs from 'node:fs/promises';
@@ -281,8 +281,39 @@ app.post('/api/auth/token', asyncHandler(async (req, res) => {
   return aiGuard.exchangeToken(req, res);
 }));
 
-// Metrics: Prometheus Export
+/**
+ * 常时比较两段文本（长度不等直接 false），供 metrics 令牌校验使用。
+ * @param {string} left
+ * @param {string} right
+ * @returns {boolean}
+ */
+function safeEqualText(left, right) {
+  const leftBuf = Buffer.from(String(left ?? ''));
+  const rightBuf = Buffer.from(String(right ?? ''));
+  if (leftBuf.length !== rightBuf.length) return false;
+  return timingSafeEqual(leftBuf, rightBuf);
+}
+
+/**
+ * 从 Authorization 头提取 Bearer 令牌字面；缺头或不合法时返回空串。
+ * @param {import('express').Request} req
+ * @returns {string}
+ */
+function extractBearerToken(req) {
+  const authHeader = req.headers?.authorization ?? req.headers?.Authorization ?? '';
+  const match = /^Bearer\s+(\S+)\s*$/i.exec(String(authHeader));
+  return match ? match[1] : '';
+}
+
+// Metrics: Prometheus Export（AI_METRICS_TOKEN 非空时须 Bearer 匹配，否则可匿名）
 app.get('/api/metrics', asyncHandler(async (req, res) => {
+  const expected = process.env.AI_METRICS_TOKEN;
+  if (expected) {
+    const provided = extractBearerToken(req);
+    if (!safeEqualText(provided, expected)) {
+      return res.status(401).json({ code: 401, message: 'Metrics token required' });
+    }
+  }
   res.set('Content-Type', 'text/plain');
   res.send(aiGuard.getMetrics());
 }));
