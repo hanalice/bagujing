@@ -1137,6 +1137,23 @@ C22 合入后 problems 关键字召回主路径改为 FTS（失败回退 LIKE）
 | UT-DOC-MONTH-10 | residual：月限额另条；公开文档无利用步骤 | 前置：只读 backlog S14 residual；扫描文档代码块（合取 `UT-DOC-GUARD-11`）。 | 1. 本表 PASS **不**要求在 backlog 外实现月限额 schema / 产品口径；<br>2. **不得**以「文档未实现月配额」为由要求本阶段改代码；<br>3. 文档仍**不得**给出可复现伪造 HMAC/重放配方（允许算法名与头名列表）。 |
 | UT-DOC-MONTH-11 | 与 S8/S11/S13 分界：本表只锁月 vs 日文档措辞 | 前置：只读 §2.33 / §2.36 / §2.43 与 backlog S14。 | 1. PASS **不**重复以签名默认 / 前端 env / 用户·角色表下发为唯一断言（那些属 S8/S11）；<br>2. PASS **不**要求本表发 mock Redis 预扣请求（属 S13 `UT-QUOTA-REDIS-*`）；<br>3. 本表范围 = 白皮书去掉月已落地暗示 + 只写日配额 + 清单「日/月」收口 + 不做/residual。 |
 
+### 2.46 S15 无效 client token 风控按 clientId 聚合（`backend/src/tests/ai-guard-token-bruteforce.test.js` → `ai-guard.js` `trackRisk`）
+
+对应 **S15**（`docs/backlog.md` §S15）。回归点：强制验签路径上无效 `x-client-token` 的失败计数若把每次请求可变的 `signature` 并入分桶键（旧式 `` `${clientId}:${signature}` ``），则攻击者每次换签名即可永远达不到阈值，**403 / `client_token_bruteforce` 永不触发**。
+
+**做**：计数按 **`clientId`** 聚合；同一 `clientId` 累计达到阈值（代码默认 **6**，单测可通过 `createAiGuard({ clientTokenBruteThreshold })` 注入）后 HTTP **403**，审计 `reason === 'client_token_bruteforce'`；未达阈值仍为 **401** / `invalid_client_token`。连续失败且每次 `x-signature` 不同也必须累计。
+
+**不做**：自动封禁/冷却完全态（拉黑名单、跨进程共享、改生产默认阈值数字）；改 HMAC 算法或六头集合；把 `AI_REQUIRE_SIGNED_HEADERS` 默认改为 `true`。
+
+**residual**：无 Redis 时计数仍单进程；日切 `refreshDailyStateIfNeeded` 清空 `riskEvents` 可保留。`it()` 标题须含下表 ID。
+
+| ID | 用例标题 | 场景描述 | 预期结果 |
+| :--- | :--- | :--- | :--- |
+| UT-TOKEN-BRUTE-01 | 未达阈值：每次仍 401，即使签名各不相同 | 前置：`AI_REQUIRE_SIGNED_HEADERS=true`；credentials `web:change_me`；`createAiGuard({ clientTokenBruteThreshold: 3 })`；白名单 Origin；连续 **2** 次六元组齐全但 `x-client-token` 错误，且每次 `x-signature` **不同**。 | 1. 两次均 **不** `next()`；HTTP **401**，JSON `{ code: 401, message: 'Invalid client token' }`；<br>2. 审计两行 `decision: 'reject'` 且 `reason === 'invalid_client_token'`；<br>3. **不得**出现 403 / `client_token_bruteforce`。 |
+| UT-TOKEN-BRUTE-02 | 达阈值：不同签名仍累计并 403 | 前置：同 UT-TOKEN-BRUTE-01，阈值注入为 3；连续 **3** 次错误 token，三次 `x-signature` 均不同。 | 1. 前两次 HTTP **401** / `invalid_client_token`；<br>2. 第三次 HTTP **403**，审计 `reason === 'client_token_bruteforce'`；<br>3. 证明分桶键**不含** signature（否则第三次仍会 401）。 |
+| UT-TOKEN-BRUTE-03 | 403 响应文案为 Client temporarily blocked | 前置：同 UT-TOKEN-BRUTE-02 触发阈值。 | 1. 末次 JSON 精确为 `{ code: 403, message: 'Client temporarily blocked' }`；<br>2. 三次均不调用 `next()`。 |
+| UT-TOKEN-BRUTE-04 | 不做边界：默认阈值 6；签名默认仍 false | 前置：A) `createAiGuard()` **不**传 `clientTokenBruteThreshold`，连续 6 次错误 token（签名各异）；B) 删除 `AI_REQUIRE_SIGNED_HEADERS` 后有会话无签名头探针。 | 1. A：前 5 次 401，第 6 次 403（默认阈值仍为 6，本项**不**改生产默认数字）；<br>2. B：未设置 env 时有会话可 `next()`（不把验签默认改 true）；<br>3. PASS **不**要求 Redis 共享 `riskEvents` 或拉黑名单。 |
+
 ---
 
 ## 3. 安全防护与集成测试用例 (Security & Integration)
