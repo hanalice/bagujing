@@ -28,6 +28,7 @@
 - **有 Redis 时日配额预扣/回补走 Redis (S13)**：`checkAndConsumeQuota` / `adjustQuotaTokens` 在存在 Redis 客户端时，把进程内 `usage.globalRequests` / `usage.globalTokens` / `usage.clients` 日计数改为 Redis 键（按 UTC `nowDayKey` 切分，TTL 覆盖到次日）；预扣、失败/abort 回补、成功按 delta 调整的语义与现内存路径一致。无 Redis 时保持现有 Map。有 `dbPool` 时对 `ai_clients` 限额与 `ai_audit_logs` 按日汇总的校验**保留**。单测注入 mock Redis（风格对齐 **B51/B52**；§2.43 `UT-QUOTA-REDIS-*` / §3.24 `SEC-QUOTA-REDIS-*`）。可同步 `docs/security-ai-guard.md` 清单：将「有 Redis 时日配额计数」标为已完成；「用户/角色配额」仍未完成。**不做**：改默认限额数字；实现月配额；实现用户/角色配额；要求生产必须配置 Redis；真集群压测或改 PM2/Nginx。**residual**：无 Redis 时文档「单进程有效」仍成立；生产是否配 Redis 属运维，不改代码默认连库行为。
 - **对齐 security-ai-guard 月配额措辞 (S14)**：只改公开文档 `docs/security-ai-guard.md`（及锁文档的只读单测，风格对齐 **S8/S11**）：凡「日/月配额」等暗示**月**配额已计数或已有月限额 env 的措辞，改为与代码一致——仅有按 UTC `nowDayKey` 的**日**配额（全局 env + `ai_clients` / 审计汇总）；不得写月限额已落地；文末「配额迁移到 Redis / 配额完全态」若仍含「日/月」字样须改为「日配额」（S13 合入后日计数可 `[x]`，月配额仍未完成）。静态读文档锁约见 §2.45 `UT-DOC-MONTH-*`。**不做**：改 `ai-guard.js` 或任何运行时代码；实现月配额或用户/角色配额；打开签名默认值；抢做 S13 的 Redis 配额实现。**residual**：真要做月限额或用户级配额需另开条目（含产品口径与 schema）；公开文档不写利用步骤。
 - **可选 AI_METRICS_TOKEN 保护 /api/metrics (S16)**：新增可选 env `AI_METRICS_TOKEN`；**非空**时 `GET /api/metrics` 必须携带匹配令牌（`Authorization: Bearer <token>`，或实现选定的等价约定头），否则 HTTP **401** 且响应正文**不得**含 `ai_guard_requests_total` 等指标行；**未设置或空字符串**时保持现网可匿名拉取（既有 `qa-verify.js` **MON-01** 仍过）。单测锁「未配置可匿名 / 已配置缺令牌 401 / 令牌正确 200 且含 `ai_guard_requests_total`」（§2.47 `UT-METRICS-*` / §3.25 `SEC-METRICS-*`）。可同步 `backend/.env.example`、部署文档 §3 与 `docs/security-ai-guard.md` 一句现状（满足 **E17** 三方一致）。**不做**：把未配置时的默认改成强制鉴权；改指标字段名或语义；要求生产必须配置该变量；引入真 Prometheus 集群。**residual**：生产是否设令牌、网络层隔离属运维，不改代码默认开放行为。
+- **无 Redis 时限流内存 Map 淘汰已过期窗口键 (S17)**：`backend/src/security/ai-guard.js` 在**无 Redis** 走 `takeFixedWindow` 的三条内存限流 Map（`routeClientMinute` / `routeClientHour` / `routeIpMinute`）上，已过期窗口键必须被淘汰——访问时删除重建，并惰性扫掉其它 `now >= resetAt` 的条目，**或**在 `resetAt` 用 `setTimeout` 删除该键（二选一即可）。单测注入假时钟后，过期键不再留在 Map 内（**即使不再 take 同一 key**）（§2.48 `UT-RATE-TTL-*` / §3.26 `SEC-RATE-TTL-*`）。有 Redis 时仍只走现有 `INCR`+TTL（**B51**），本项不改。**不做**：改默认限流数字；改 Redis 键格式；引入真 Redis 集成测；扩大为通用 LRU 框架。**residual**：无 Redis 时限流仍单进程有效；公开表不写刷量步骤。
 - **前端多层级质量保障体系 (Frontend QA Strategy)**：
   - **端到端测试 (Frontend E2E - Playwright)**：覆盖核心用户链路（Main Path / Happy Path），利用 `page.route` 对大模型流式 SSE 接口进行轻量 Mock，保障真实路由鉴权、题目浏览及 AI 交互界面的稳定可用；**C42** 另锁解析面板三字段可见性与无整篇 `v-html`；**S6** 另锁助教助手气泡安全 Markdown（§4.1 `E2E-MAIN-04` / `E2E-CHAT-MD-*`）。
   - **状态机与单元测试 (Frontend UT/IT - Vitest)**：针对 Pinia Store（`user`、`settings`、`breadcrumb`）、题目解析归一化/渲染辅助及工具函数，快速验证状态迁移、本地持久化与边界容错；**B33** 另锁登录态 `chat` / `answer/generate` 的 HMAC 六头注入（§4.5 `UT-FE-SIG-*`）；**S3** 另锁助教 `POST /api/chat` 请求体 `messages[]` 尾窗与截断（§4.6 `UT-FE-CHAT-HIST-*`）；**S6** 另锁助手气泡 Markdown→DOMPurify 与用户气泡纯文本（§4.7 `UT-FE-CHAT-MD-*`）；**S7** 另锁换票 `fetch` URL 与签名 path 均为 `/api/auth/token`（§4.8 `UT-FE-TOKEN-URL-*`）。**S8** / **S11** / **S14** 只锁公开文档（§2.33 / §2.36 / §2.45），本层不新增前端测码。
@@ -286,7 +287,7 @@
 
 ### 2.20 有 Redis 时限流走 Redis INCR+TTL（B51 / P1-7）(`backend/src/tests/ai-guard-rate-redis.test.js`)
 
-对应 **B51 / P1-7**：分钟/小时限流目前只用进程内 Map，多实例无法共享窗口。完成标准：**做**——注入 Redis 客户端时，client 分钟、client 小时、ip 分钟三窗口用 `INCR` + TTL（首次 `INCR` 后 `PEXPIRE`）；无 Redis 时保持原 Map。单测注入 mock Redis。**不做**：真集群压测、改默认限流数字（`AI_RATE_LIMIT_*` 代码默认仍为 10/100/30）。**residual**：无 Redis 时仍单进程有效。并发计数属 B52，本项不得改 `clientConcurrency`。`it()` 标题须包含下表 ID。
+对应 **B51 / P1-7**：分钟/小时限流目前只用进程内 Map，多实例无法共享窗口。完成标准：**做**——注入 Redis 客户端时，client 分钟、client 小时、ip 分钟三窗口用 `INCR` + TTL（首次 `INCR` 后 `PEXPIRE`）；无 Redis 时保持原 Map。单测注入 mock Redis。**不做**：真集群压测、改默认限流数字（`AI_RATE_LIMIT_*` 代码默认仍为 10/100/30）。**residual**：无 Redis 时仍单进程有效。并发计数属 B52，本项不得改 `clientConcurrency`。无 Redis 时**过期窗口键淘汰**属 **S17**（§2.48），本表只锁 Redis/Map 分支选择与默认数字，不锁 Map 内存回收。`it()` 标题须包含下表 ID。
 
 | ID | 用例标题 | 场景描述 | 预期结果 |
 | :--- | :--- | :--- | :--- |
@@ -1179,6 +1180,47 @@ C22 合入后 problems 关键字召回主路径改为 FTS（失败回退 LIKE）
 | UT-METRICS-08 | 可同步：env 名进入 example / 部署 §3（E17 方向） | 前置：实现合入后只读 `backend/.env.example` 与 `docs/deployment-and-operations.md` §3 表；对照源码出现 `process.env.AI_METRICS_TOKEN`（或等价读取）。 | 1. `.env.example` 出现键名 **`AI_METRICS_TOKEN`**（可为注释说明「可选」）；<br>2. 部署文档 §3 表第一列含同名（满足 **E17** 与 backlog「可同步」）；<br>3. 本行**不**要求生产非空；缺文档/example 任一侧则本行 FAIL（允许补表/example 使绿，不得删代码读变量凑过）。 |
 | UT-METRICS-09 | residual：公开文档可不写利用步骤；默认仍开放 | 前置：只读 backlog S16 residual；可选扫 `docs/security-ai-guard.md` 若已补「一句现状」。 | 1. 若文档提及 `AI_METRICS_TOKEN`，须写明**可选**／未设可匿名，**不得**写成「生产必须配置」；<br>2. 公开文档**不**给可复现的绕过令牌步骤；<br>3. 承认网络层隔离属运维，代码未配置时默认开放行为保持。 |
 
+### 2.48 S17 无 Redis 时限流内存 Map 淘汰已过期窗口键（`backend/src/tests/ai-guard-rate-map-ttl.test.js` → `ai-guard.js` `takeFixedWindow` / `routeClientMinute` · `routeClientHour` · `routeIpMinute`）
+
+对应 **S17**（`docs/backlog.md` §S17）。回归点：无 Redis 时 middleware 经 `takeFixedWindow(store, key, now, windowMs, limit)` 写入三条进程内 Map——`routeClientMinute`（client 分钟，`windowMs=60_000`）、`routeClientHour`（client 小时，`windowMs=3_600_000`）、`routeIpMinute`（ip 分钟，`windowMs=60_000`）。现网对**同一 key** 在 `now >= resetAt` 时会 `store.set` 重建条目，但**其它已过期 key** 若从不被再次 take，则长期残留（Map 只增不减）。完成标准要求已过期窗口键必须被淘汰，且单测在假时钟下证明：**即使不再 take 同一 key**，过期键也不再留在 Map 内。
+
+**做**：
+
+1. **无 Redis**（不注入 `redis`、删除/不设 `REDIS_URL`，且不得实例化真实 ioredis）时，三条限流 Map 上的条目在窗口结束后必须淘汰。实现二选一即可：**(A)** 访问时对当前 key 删除/重建，并惰性扫掉该 Map 内其它 `now >= resetAt` 的条目；**(B)** 写入时按 `resetAt - now`（或 `windowMs`）`setTimeout` 删除该键。无论 A/B，过期后 `Map.has(expiredKey) === false`（或等价：可观测 size 不再计入该键），**不得**依赖「再次 take 同一 key 时覆写」才算清理。
+2. 窗口**内**限流语义不变：同一 key 计数超过 limit → middleware **不** `next()`，HTTP **429**，`Retry-After` 为剩余秒数，审计 `reason` 分别为 `rate_client_minute` / `rate_client_hour` / `rate_ip_minute`（与 **B51** / 现网一致）。
+3. 窗口**外**（`now >= resetAt`）再 take 同一 key：计数从 1 重新起算，可再次准入至 limit；不得因旧 `count` 残留误杀。
+4. 单测须**注入假时钟**（stub 模块时间源 / 注入 `nowFn` / 可控 `Date.now`，或对导出的 `takeFixedWindow` 直接传入 `now`）推进到 `resetAt`；禁止依赖真实 60s/3600s 睡眠。若选 **(B)**，可用假 `setTimeout`（如 `node:timers/promises` + fake timers）断言到期后键已删且**中间无第二次 take**。
+5. **可观测性**：实现阶段须让测码能读到三条 Map（推荐 `getRateLimitMapsForTests()` / 导出 `takeFixedWindow` 并对注入的 `Map` 断言，或等价测试钩子）；禁止以「行为上好像重置了」代替「键已从 Map 移除」——backlog 字面要求过期键**不再留在 Map 内**。
+6. **有 Redis**（`createAiGuard({ redis: mock })`）时：三窗口仍只走 `INCR` + 首次 `PEXPIRE`（key 前缀 `rl:cmin:` / `rl:chour:` / `rl:imin:`，TTL 60000 / 3600000 / 60000）；本项**不**改 Redis 路径与键格式；测码只做对照，不要求真 Redis。
+
+**不做**：改 `AI_RATE_LIMIT_CLIENT_PER_MINUTE` / `AI_RATE_LIMIT_CLIENT_PER_HOUR` / `AI_RATE_LIMIT_IP_PER_MINUTE` 代码默认（仍 **10 / 100 / 30**，对齐 §2.20 `UT-RATE-REDIS-05`）；改 Redis 限流键格式；引入连真实 Redis 的集成测；把限流/并发/配额/nonce Map 扩大为通用 LRU 框架。
+
+**residual**：无 Redis 时限流仍**单进程有效**（cluster 每 worker 一份）。公开用例与测码注释**不写**可复现的刷量/打满窗口攻击配方（完整脚本 + 生产 URL）；允许写 `reason`、窗口毫秒、假时钟步骤与 Map 键形态（如 `` `${routeKey}:${clientId}:${ip}` `` / `` `${routeKey}:${ip}` ``）。
+
+**协议 / 时序**（下一阶段 `it()` 须对齐；与 middleware 限流段一致）：
+
+1. 前置：`AI_REQUIRE_SIGNED_HEADERS=false`（避免签名噪声）；不注入 `redis`、不设 `REDIS_URL`；白名单 Origin；`req.user.clientId`（或 `x-client-id`）固定；配额/并发限额足够大以免误杀；按场景把目标窗口 limit 设小（如 `AI_RATE_LIMIT_CLIENT_PER_MINUTE=2`），其余 `AI_RATE_LIMIT_*` 设很大。
+2. 调用序（Origin 通过且非强制验签或验签已过）：`takeRateWindow(routeClientMinute, limitKey, rl:cmin:…, 60_000, minuteLimit)` → `takeRateWindow(routeClientHour, …, 3_600_000, …)` → `takeRateWindow(routeIpMinute, \`${routeKey}:${ip}\`, rl:imin:…, 60_000, …)` → 并发槽 → 配额 → `next()`。无 Redis 时三步均落到 `takeFixedWindow`。
+3. 淘汰断言时序（核心）：`t0` 对 keyA take 至少一次写入 Map → 推进到 `now' >= resetAt(keyA)` → **不**再 take keyA；若实现选 (A)，可对**另一** keyB 做一次 take 触发惰性扫；若选 (B)，仅推进假时钟/触发到期 timer → 断言 `routeClientMinute.has(keyA) === false`（hour/ip Map 同理）。
+4. 与 **B51** 分界：§2.20 锁「有 Redis 走 INCR / 无 Redis 走 Map / 默认数字」；本表锁「无 Redis Map **过期键回收**」。与 **S12** 分界：S12 只锁 `nonces` TTL；本表不得要求改 nonce/并发/配额 Map 才 PASS。
+
+**测法**：优先 `backend/src/tests/ai-guard-rate-map-ttl.test.js`；`mockHttp` 手法对齐 `ai-guard-rate-redis.test.js` / `ai-guard-cache.test.js`。可直接单测导出的 `takeFixedWindow(store, key, now, windowMs, limit)`（注入普通 `Map` + 假 `now`），再补至少一条经 `createAiGuard(...).middleware` 的端到端探针覆盖三条 store 挂载点。禁止连真实 Redis / 外网。`it()` 标题须包含下表 ID。
+
+| ID | 用例标题 | 场景描述 | 预期结果 |
+| :--- | :--- | :--- | :--- |
+| UT-RATE-TTL-01 | 无 Redis：窗口内超限仍 429 rate_client_minute | 前置：不注入 `redis`、删除 `REDIS_URL`；`AI_REQUIRE_SIGNED_HEADERS=false`；`AI_RATE_LIMIT_CLIENT_PER_MINUTE=2`，小时与 IP 限额足够大；同一 `clientId`/`ip` 连续 3 次 `POST /api/chat`（白名单 Origin），假时钟停在同一分钟窗口内。 | 1. 前两次 middleware 调用 `next()`；第三次 **不** `next()`；HTTP **429**，`Retry-After` 为 ≥1 的秒数字符串；<br>2. 审计 `decision: 'reject'` 且 `reason === 'rate_client_minute'`，`message` 含 `Too many requests (client per minute)`；<br>3. 不实例化真实 ioredis；证明 Map 路径限流语义未因本项被削弱。 |
+| UT-RATE-TTL-02 | 无 Redis：窗口外同 key 计数重建可再准入 | 前置：同 UT-RATE-TTL-01 完成 2 次 take（count=2、已触顶）；注入假时钟使 `now' >= 该 key 的 resetAt`；第 3、4 次仍同一 client/ip。 | 1. 第 3、4 次均 `next()`（新窗口从 count=1 起算，limit=2 内放行）；<br>2. **不得**仍返回 429 `rate_client_minute`；<br>3. 证明 `now >= resetAt` 时删除重建（或等价重置），旧 count 不跨窗口残留。 |
+| UT-RATE-TTL-03 | 核心：假时钟过期后键不在 Map（不再 take 同一 key） | 前置：无 Redis；对可观测的 `routeClientMinute`（或注入 Map 的 `takeFixedWindow`）在 `t0` 写入 keyA=`chat:web:127.0.0.1`（或实现实际 `createRateLimitKey` 形态），`resetAt=t0+60_000`；推进到 `now' >= resetAt`；**禁止**再对 keyA 调用 take。若实现选惰性扫 (A)：另对 keyB 调用一次 take 触发清理；若选 setTimeout (B)：仅推进假 timer 至到期。 | 1. 断言 `store.has(keyA) === false`（过期键已删除，而非仅「下次 take 时覆写」）；<br>2. 过程中**零次**对 keyA 的 take（测码注释写明）；<br>3. 与 backlog「即使不再 take 同一 key」字面一致——本行 FAIL 条件含「仅靠同 key 覆写、过期键仍 has===true」。 |
+| UT-RATE-TTL-04 | 惰性扫：take 其它 key 时清掉已过期条目 | 前置：无 Redis；实现若选 (A) 则本行为主路径，若选 (B) 可作为补充或与 UT-RATE-TTL-03 合并注明跳过理由；`t0` 写入 keyA 与未过期 keyC；`now' >= resetAt(A)` 且 `now' < resetAt(C)`；对 keyB 执行一次 `takeFixedWindow`。 | 1. 触发后 `has(keyA) === false`；<br>2. `has(keyC) === true` 且 count/resetAt 未被误删；<br>3. keyB 写入成功（`ok: true`，count 从 1 起）。 |
+| UT-RATE-TTL-05 | setTimeout 路径：到期删除且无需二次 take（若选 B） | 前置：无 Redis；实现若选 (B)：`t0` take 写入 keyA 后注册删除定时器；用假 timers 推进 `windowMs`（或至 `resetAt`）；期间不对 keyA take。若实现选 (A)，本行注明「N/A，见 UT-RATE-TTL-03/04」并断言 (A) 已覆盖同等「无二次 take 即消失」。 | 1. 定时器触发后 `has(keyA) === false`；<br>2. 推进过程无真实 60s/3600s sleep；<br>3. 不得要求引入通用 LRU 才 PASS。 |
+| UT-RATE-TTL-06 | routeClientHour：过期键同样淘汰 | 前置：无 Redis；`AI_RATE_LIMIT_CLIENT_PER_HOUR=2`，分钟/IP 限额很大；对 `routeClientHour`（或 middleware 连打至写入 hour Map）在 `t0` 留下 keyA；假时钟推进 `>= 3_600_000` ms（或该条目 `resetAt`）；按 UT-RATE-TTL-03 的 (A)/(B) 手法**不再 take keyA**。 | 1. `routeClientHour.has(keyA) === false`；<br>2. 窗口外再打同 client 时不应因旧 hour count 直接 429 `rate_client_hour`（新窗口可再 take 至 limit）；<br>3. 证明三条 Map 中的 hour 窗口也在本项范围，不得只修 minute。 |
+| UT-RATE-TTL-07 | routeIpMinute：过期键同样淘汰 | 前置：无 Redis；`AI_RATE_LIMIT_IP_PER_MINUTE=2`，client 限额很大；请求带固定 `x-forwarded-for`（或测码固定 `getIpFromRequest` 结果）；ip Map 键为 `` `${routeKey}:${ip}` ``；`t0` 写入后推进 `>= 60_000`，不再 take 该 ip 键。 | 1. `routeIpMinute.has(ipKey) === false`；<br>2. 窗口外同 IP 可再准入；超限时 reason 仍为 `rate_ip_minute`（窗口内回归可另步）；<br>3. 与 client 分钟 Map 隔离：不得误清未过期的 `routeClientMinute` 条目。 |
+| UT-RATE-TTL-08 | 假时钟边界：resetAt 前仍计数、到达后淘汰 | 前置：无 Redis；对注入 Map 调用 `takeFixedWindow`；`t0` 写入，`resetAt=t0+100`（测码可用短 `windowMs=100` 直测函数，或 stub 分钟窗）；序列：`t0+99` 观察 → `t0+100`（或实现对齐的 `>= resetAt`）淘汰。 | 1. `t0+99`：`has(key)===true` 且 count 保持；同 key 再 take 仍累加（未过期）；<br>2. `t0+100`：按 (A)/(B) 后 `has(key)===false` 或同 key take 重建为 count=1；<br>3. 测码注释写明与实现「`now >= resetAt`」开区间一致。 |
+| UT-RATE-TTL-09 | 有 Redis：仍走 INCR+TTL，本项不改键格式 | 前置：`createAiGuard({ redis: mock })`；`AI_RATE_LIMIT_CLIENT_PER_MINUTE=2`；连续 chat。 | 1. mock `incr` key 含 `rl:cmin:`；首次返回 1 时 `pexpire` TTL=60000；hour/ip 对照可抽检 `rl:chour:`/`rl:imin:`；<br>2. **不**要求对内存三 Map 做淘汰断言（Redis 路径不走 `takeFixedWindow`）；<br>3. 本行**不**连接真实 Redis；证明 S17 **不做**改 Redis 路径/键格式。 |
+| UT-RATE-TTL-10 | 不做：不改默认限流数字 | 前置：删除三个 `AI_RATE_LIMIT_*` 后 `createAiGuard()`；对照 §2.20 UT-RATE-REDIS-05。 | 1. `config.minuteLimitPerClient === 10`；<br>2. `config.hourLimitPerClient === 100`；<br>3. `config.minuteLimitPerIp === 30`；PASS **不**要求改这些默认。 |
+| UT-RATE-TTL-11 | 不做：不引入真 Redis 集成测 / 不扩成通用 LRU | 前置：只读本表测文件与 backlog S17 **不做**。 | 1. 本表 PASS **不**要求 `REDIS_URL` 连真实实例或 docker Redis；<br>2. **不**要求把 nonce/并发/配额 Map 改造成统一 LRU 框架；<br>3. 仅锁限流三 Map 的过期键淘汰与 Redis 对照。 |
+| UT-RATE-TTL-12 | residual：无 Redis 时单进程有效；公开断言不写刷量步骤 | 前置：只读 backlog S17 residual；本表仅单 Guard 实例；扫本小节与测码注释。 | 1. PASS **不**要求跨 worker 共享内存限流 Map；<br>2. 不得以「未接 Redis 即 FAIL」否定无 Redis 路径；<br>3. 用例/注释可含 reason、窗口 ms、假时钟与键形态；**不得**附带可直接打通的刷量脚本（循环打满 + 生产 URL 配方）。 |
+
 ---
 
 ## 3. 安全防护与集成测试用例 (Security & Integration)
@@ -1491,6 +1533,19 @@ Prompt 内容来自数据库，不能只依赖客户端 `AI_MAX_INPUT_CHARS` 防
 | SEC-METRICS-03 | 已配置：正确 Bearer → 200 含计数器 | 前置：`Authorization: Bearer <与 AI_METRICS_TOKEN 相同的字面>`。 | 1. HTTP **200**；<br>2. `Content-Type` 含 `text/plain`；<br>3. 正文含 `ai_guard_requests_total`（字段名未改）。 |
 | IT-METRICS-01 | 登录 JWT 不能充当 metrics 令牌 | 前置：`AI_METRICS_TOKEN` 非空；仅带登录签发的 `Authorization: Bearer <user-jwt>` 访问 `GET /api/metrics`。 | 1. HTTP **401**；<br>2. 无指标正文；<br>3. 与 UT-METRICS-06 合取：门禁不是普通 `authenticateToken`。 |
 | IT-METRICS-02 | 不做 / residual 边界 | 前置：只读 backlog S16 **不做**与 residual。 | 1. PASS **不**要求未配置时强制鉴权、改指标字段名、生产强制设变量、引入真 Prometheus 集群；<br>2. 承认生产是否设令牌与网络隔离属运维；<br>3. 公开用例不写绕过令牌的利用步骤。 |
+
+### 3.26 S17 无 Redis 限流 Map 过期键淘汰与 429 窗口安全回归（`backend/src/tests/ai-guard-rate-map-ttl-integration.test.js` 或扩展 §2.48 同文件）
+
+对应 **S17** 在 middleware 路径上的集成与安全回归：无 Redis 时三窗口 Map（`routeClientMinute` / `routeClientHour` / `routeIpMinute`）过期键必须淘汰；窗口内超限仍 **429** + 既有 `rate_*` reason；假时钟推进后过期键不再滞留（即使不再 take 同一 key）。单元细节与可观测钩子见 §2.48；本表锁可判定的状态码、`Retry-After`、审计 reason、与「不做/residual」边界。**禁止**以真 Redis 集群、改默认限流数字或通用 LRU 为 PASS。公开用例不写刷量利用步骤。`it()` 标题须包含下表 ID。
+
+| ID | 用例标题 | 场景描述 | 预期结果 |
+| :--- | :--- | :--- | :--- |
+| SEC-RATE-TTL-01 | 无 Redis：窗口内打满 → 429 rate_client_minute | 前置：不注入 `redis`、不设 `REDIS_URL`；`AI_REQUIRE_SIGNED_HEADERS=false`；`AI_RATE_LIMIT_CLIENT_PER_MINUTE=2`；同一 client/ip 连续 3 次经 Guard 的 `POST /api/chat`（白名单 Origin）；假时钟同窗。 | 1. 第三次 HTTP **429**；响应头 `Retry-After` 为 ≥1 秒；<br>2. 审计 `reason === 'rate_client_minute'`；JSON/`message` 含 `Too many requests (client per minute)`（或与现网全等）；<br>3. 第三次不得建立 SSE / 不得触达上游 LLM。 |
+| SEC-RATE-TTL-02 | 无 Redis：窗口外同维度可再准入 | 前置：同 SEC-RATE-TTL-01 已触顶；推进假时钟至 `>= resetAt`；再发 1～2 次同 client/ip chat。 | 1. 新窗口内请求 HTTP 不再是 429 `rate_client_minute`（middleware 探针则须 `next()`）；<br>2. 审计无该次 `rate_client_minute` 拒答行（或 decision 非该 reason）；<br>3. 与 §2.48 UT-RATE-TTL-02 合取。 |
+| SEC-RATE-TTL-03 | 过期键不滞留 Map（不再 take 同一 key） | 前置：无 Redis；经 middleware 或测试钩子在 `t0` 写入限流键；推进至过期；按实现 (A) 触发另 key take 或 (B) 触发到期 timer；**不**再 take 原 key；读取 `getRateLimitMapsForTests()`（或等价）对应 Map。 | 1. 对应 Map 上原 key `has === false`；<br>2. 证明淘汰不依赖「再次 take 同一 key 覆写」；<br>3. 与 UT-RATE-TTL-03 合取；本行不得以「仅行为重置、键仍在」为 PASS。 |
+| IT-RATE-TTL-01 | hour / ip 窗口挂载点回归 | 前置：无 Redis；分别将 `AI_RATE_LIMIT_CLIENT_PER_HOUR=2`（分钟/IP 很大）与 `AI_RATE_LIMIT_IP_PER_MINUTE=2`（client 限额很大）跑触顶 + 过期淘汰各一条（可复用 §2.48 UT-RATE-TTL-06/07 时序）。 | 1. 窗口内超限 reason 分别为 `rate_client_hour` / `rate_ip_minute`，HTTP **429**；<br>2. 过期后对应 Map 键已删除（同 SEC-RATE-TTL-03 观测法）；<br>3. 证明三条 store 均挂到 middleware，而非只测纯函数 Map。 |
+| IT-RATE-TTL-02 | 有 Redis 对照：仍 INCR+TTL，不测内存淘汰 | 前置：`createAiGuard({ redis: mock })`；client 分钟 limit=2；连续 3 次 chat。 | 1. 第三次 429 `rate_client_minute`；mock `incr`/`pexpire` 符合 §2.20（`rl:cmin:` + 60000）；<br>2. **不**断言内存三 Map 淘汰；<br>3. 不连真实 Redis。 |
+| IT-RATE-TTL-03 | 不做 / residual 边界 | 前置：只读 backlog S17 **不做**与 residual。 | 1. PASS **不**要求改默认 10/100/30、改 Redis 键格式、真 Redis 集成、通用 LRU；<br>2. 承认无 Redis 时仅单进程有效；<br>3. 公开用例不写刷量利用步骤。 |
 
 ---
 

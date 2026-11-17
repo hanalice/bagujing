@@ -110,7 +110,7 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | S14 | fix | scan | auto | done | 10 | 对齐 security-ai-guard.md：去掉「月配额」已落地暗示，只写日配额 |
 | S15 | fix | scan | auto | done | 20 | 无效 client token 风控计数按 clientId 聚合，达到阈值才 403 |
 | S16 | fix | scan | auto | done | 30 | 配置 AI_METRICS_TOKEN 时 /api/metrics 须校验令牌，未配置保持可匿名 |
-| S17 | fix | scan | auto | todo | 40 | 无 Redis 时限流内存 Map 淘汰已过期窗口键 |
+| S17 | fix | scan | auto | done | 40 | 无 Redis 时限流内存 Map 淘汰已过期窗口键 |
 | S18 | feat | audit | auto | done |  | 审计行补齐失败原因与上游状态，供日后按 reason 排行 |
 
 
@@ -447,3 +447,4 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | 2026-11-10 | S14 完成：对齐 security-ai-guard.md：去掉「月配额」已落地暗示，只写日配额 |
 | 2026-11-11 | S15 完成：无效 client token 风控计数按 clientId 聚合，达到阈值才 403 |
 | 2026-11-13 | S16 完成：配置 AI_METRICS_TOKEN 时 /api/metrics 须校验令牌，未配置保持可匿名 |
+| 2026-11-17 | S17 完成：无 Redis 时限流内存 Map 淘汰已过期窗口键 |
