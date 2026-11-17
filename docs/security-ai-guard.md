@@ -189,6 +189,7 @@ sha256Hex(`${method}:${path}:${JSON.stringify(body)}`)
 - 限流：`AI_RATE_LIMIT_CLIENT_PER_MINUTE`、`AI_RATE_LIMIT_CLIENT_PER_HOUR`、`AI_RATE_LIMIT_IP_PER_MINUTE`（有 Redis 时 `rl:*` INCR，**B51**）
 - 并发：`AI_MAX_CONCURRENCY_PER_CLIENT`（有 Redis 时 `cc:` INCR，**B52**）
 - 审计记录：同时记录 `requestId`、`clientId`、`userId` 及其关联行动标识。
+- 指标导出：`GET /api/metrics` 默认可匿名拉取 Prometheus 文本；可选配置 `AI_METRICS_TOKEN`（非空时须 `Authorization: Bearer <同值>`，未设或空串行为不变）。生产是否设令牌与网络层隔离属运维，不强制。
 
 ---
 

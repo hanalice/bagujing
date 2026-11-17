@@ -108,6 +108,7 @@ cp frontend/.env.example frontend/.env.production
 | `AI_GLOBAL_DAILY_REQUEST_LIMIT` | 否 | `5000` | 全局每日请求总次数上限 |
 | `AI_GLOBAL_DAILY_TOKEN_LIMIT` | 否 | `500000` | 全局每日消耗 Token 总数上限 |
 | `AI_AUDIT_FILE_PATH` | 否 | `data/ai-audit.ndjson` | AI 调用审计文件路径（相对 backend 目录） |
+| `AI_METRICS_TOKEN` | 否 | （空=可匿名） | 非空时 `GET /api/metrics` 须 `Authorization: Bearer <同值>`；未设或空串保持匿名可拉 |
 
 ### 前端生产构建配置清单（`frontend/.env.production`）
 

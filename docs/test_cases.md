@@ -27,6 +27,7 @@
 - **无 Redis 时 middleware 内存 nonce 按 TTL 淘汰 (S12)**：`backend/src/security/ai-guard.js` 在**无 Redis**且强制验签走 middleware 内存 `nonces` Map 时，写入的 nonce 须在 `nonceTtlMs`（`AI_NONCE_TTL_MS`，默认 10min）后淘汰——对齐同文件 `exchangeToken` 对 `nonceCache` 的 `setTimeout` 删除，或等价按时间戳惰性清理；过期后同一 nonce 可再次使用。单测注入假时钟/`nonceTtlMs`：TTL 内重放仍 401/`replay_blocked`；TTL 外不再因旧条目误杀（§2.42 `UT-NONCE-TTL-*` / §3.23 `SEC-NONCE-TTL-*`）。有 Redis 时仍只走现有 `SET NX PX`，本项不改。**不做**：改 `AI_REQUIRE_SIGNED_HEADERS` 默认值；改 Redis nonce 键格式；引入真 Redis 集成测；扩大为通用 LRU 框架。**residual**：无 Redis 时防重放仍单进程有效；日切 `refreshDailyStateIfNeeded` 清空可保留作兜底。公开表不写重放利用步骤。
 - **有 Redis 时日配额预扣/回补走 Redis (S13)**：`checkAndConsumeQuota` / `adjustQuotaTokens` 在存在 Redis 客户端时，把进程内 `usage.globalRequests` / `usage.globalTokens` / `usage.clients` 日计数改为 Redis 键（按 UTC `nowDayKey` 切分，TTL 覆盖到次日）；预扣、失败/abort 回补、成功按 delta 调整的语义与现内存路径一致。无 Redis 时保持现有 Map。有 `dbPool` 时对 `ai_clients` 限额与 `ai_audit_logs` 按日汇总的校验**保留**。单测注入 mock Redis（风格对齐 **B51/B52**；§2.43 `UT-QUOTA-REDIS-*` / §3.24 `SEC-QUOTA-REDIS-*`）。可同步 `docs/security-ai-guard.md` 清单：将「有 Redis 时日配额计数」标为已完成；「用户/角色配额」仍未完成。**不做**：改默认限额数字；实现月配额；实现用户/角色配额；要求生产必须配置 Redis；真集群压测或改 PM2/Nginx。**residual**：无 Redis 时文档「单进程有效」仍成立；生产是否配 Redis 属运维，不改代码默认连库行为。
 - **对齐 security-ai-guard 月配额措辞 (S14)**：只改公开文档 `docs/security-ai-guard.md`（及锁文档的只读单测，风格对齐 **S8/S11**）：凡「日/月配额」等暗示**月**配额已计数或已有月限额 env 的措辞，改为与代码一致——仅有按 UTC `nowDayKey` 的**日**配额（全局 env + `ai_clients` / 审计汇总）；不得写月限额已落地；文末「配额迁移到 Redis / 配额完全态」若仍含「日/月」字样须改为「日配额」（S13 合入后日计数可 `[x]`，月配额仍未完成）。静态读文档锁约见 §2.45 `UT-DOC-MONTH-*`。**不做**：改 `ai-guard.js` 或任何运行时代码；实现月配额或用户/角色配额；打开签名默认值；抢做 S13 的 Redis 配额实现。**residual**：真要做月限额或用户级配额需另开条目（含产品口径与 schema）；公开文档不写利用步骤。
+- **可选 AI_METRICS_TOKEN 保护 /api/metrics (S16)**：新增可选 env `AI_METRICS_TOKEN`；**非空**时 `GET /api/metrics` 必须携带匹配令牌（`Authorization: Bearer <token>`，或实现选定的等价约定头），否则 HTTP **401** 且响应正文**不得**含 `ai_guard_requests_total` 等指标行；**未设置或空字符串**时保持现网可匿名拉取（既有 `qa-verify.js` **MON-01** 仍过）。单测锁「未配置可匿名 / 已配置缺令牌 401 / 令牌正确 200 且含 `ai_guard_requests_total`」（§2.47 `UT-METRICS-*` / §3.25 `SEC-METRICS-*`）。可同步 `backend/.env.example`、部署文档 §3 与 `docs/security-ai-guard.md` 一句现状（满足 **E17** 三方一致）。**不做**：把未配置时的默认改成强制鉴权；改指标字段名或语义；要求生产必须配置该变量；引入真 Prometheus 集群。**residual**：生产是否设令牌、网络层隔离属运维，不改代码默认开放行为。
 - **前端多层级质量保障体系 (Frontend QA Strategy)**：
   - **端到端测试 (Frontend E2E - Playwright)**：覆盖核心用户链路（Main Path / Happy Path），利用 `page.route` 对大模型流式 SSE 接口进行轻量 Mock，保障真实路由鉴权、题目浏览及 AI 交互界面的稳定可用；**C42** 另锁解析面板三字段可见性与无整篇 `v-html`；**S6** 另锁助教助手气泡安全 Markdown（§4.1 `E2E-MAIN-04` / `E2E-CHAT-MD-*`）。
   - **状态机与单元测试 (Frontend UT/IT - Vitest)**：针对 Pinia Store（`user`、`settings`、`breadcrumb`）、题目解析归一化/渲染辅助及工具函数，快速验证状态迁移、本地持久化与边界容错；**B33** 另锁登录态 `chat` / `answer/generate` 的 HMAC 六头注入（§4.5 `UT-FE-SIG-*`）；**S3** 另锁助教 `POST /api/chat` 请求体 `messages[]` 尾窗与截断（§4.6 `UT-FE-CHAT-HIST-*`）；**S6** 另锁助手气泡 Markdown→DOMPurify 与用户气泡纯文本（§4.7 `UT-FE-CHAT-MD-*`）；**S7** 另锁换票 `fetch` URL 与签名 path 均为 `/api/auth/token`（§4.8 `UT-FE-TOKEN-URL-*`）。**S8** / **S11** / **S14** 只锁公开文档（§2.33 / §2.36 / §2.45），本层不新增前端测码。
@@ -1154,6 +1155,30 @@ C22 合入后 problems 关键字召回主路径改为 FTS（失败回退 LIKE）
 | UT-TOKEN-BRUTE-03 | 403 响应文案为 Client temporarily blocked | 前置：同 UT-TOKEN-BRUTE-02 触发阈值。 | 1. 末次 JSON 精确为 `{ code: 403, message: 'Client temporarily blocked' }`；<br>2. 三次均不调用 `next()`。 |
 | UT-TOKEN-BRUTE-04 | 不做边界：默认阈值 6；签名默认仍 false | 前置：A) `createAiGuard()` **不**传 `clientTokenBruteThreshold`，连续 6 次错误 token（签名各异）；B) 删除 `AI_REQUIRE_SIGNED_HEADERS` 后有会话无签名头探针。 | 1. A：前 5 次 401，第 6 次 403（默认阈值仍为 6，本项**不**改生产默认数字）；<br>2. B：未设置 env 时有会话可 `next()`（不把验签默认改 true）；<br>3. PASS **不**要求 Redis 共享 `riskEvents` 或拉黑名单。 |
 
+### 2.47 S16 配置 `AI_METRICS_TOKEN` 时 `/api/metrics` 须校验令牌，未配置保持可匿名（`backend/src/tests/metrics-token.test.js` → `server-express.js` `GET /api/metrics` / `ai-guard.js` `getMetrics`；对照 `backend/scripts/qa-verify.js` **MON-01**）
+
+对应 **S16**（`docs/backlog.md` §S16）。回归点：现网 `app.get('/api/metrics')`（`backend/src/server-express.js`）无条件 `res.send(aiGuard.getMetrics())`，Prometheus 文本（含 `ai_guard_requests_total`）可被匿名拉取；运维若暴露该路径则指标面无门槛。
+
+**做**：新增可选 env **`AI_METRICS_TOKEN`**。当其**非空**时，`GET /api/metrics` 必须携带与之**精确匹配**的令牌——契约头为 **`Authorization: Bearer <token>`**（若实现另接受等价约定头如 `X-Metrics-Token`，单测至少锁 Bearer 路径通过，且缺/错令牌仍 401）；否则 HTTP **401**，且响应正文**不得**返回指标正文（不得含子串 `ai_guard_requests_total`）。**未设置**该 env 或值为**空字符串** `""` 时行为与现网一致：可匿名拉取，**MON-01**（`qa-verify.js` Phase 2：匿名 `fetch /api/metrics` 且正文含 `ai_guard_requests_total`）仍过。成功路径 HTTP **200**，`Content-Type` 为 `text/plain`（可带 charset），正文含 `ai_guard_requests_total`（字段名/语义不变）。可同步 `backend/.env.example`、`docs/deployment-and-operations.md` §3 与 `docs/security-ai-guard.md` 一句「可选令牌」现状（合入后须满足 **E17** 三方一致；本表可含轻量锁约，不以真 Prometheus 集群为 PASS）。
+
+**不做**：把未配置时的默认改成强制鉴权；改 `ai_guard_requests_total` / `ai_guard_tokens_total` 等指标字段名或语义；要求生产必须配置该变量；引入真 Prometheus 集群。
+
+**residual**：生产是否设置令牌、网络层隔离属运维，**不**改代码在未配置时的默认开放行为。公开用例不写绕过配方。
+
+**测法**：`node:test`；建议文件 `backend/src/tests/metrics-token.test.js`。优先经 `app.handle` / 可注入的路由探针打真实 `GET /api/metrics`（或抽出鉴权辅助后对 handler 发 mock `req`/`res`）；通过改 `process.env.AI_METRICS_TOKEN`（测前保存、测后还原）覆盖未设 / `""` / 非空。断言状态码、响应正文子串与（可选）`Content-Type`。`it()` 标题须包含下表 ID。
+
+| ID | 用例标题 | 场景描述 | 预期结果 |
+| :--- | :--- | :--- | :--- |
+| UT-METRICS-01 | 未配置：匿名 GET 200 且含 `ai_guard_requests_total` | 前置：删除或 `undefined` `process.env.AI_METRICS_TOKEN`；对 `GET /api/metrics` **不**带 `Authorization`（亦无其它 metrics 约定头）。 | 1. HTTP **200**；<br>2. 响应正文（`text/plain`）含子串 **`ai_guard_requests_total`**（对齐 **MON-01** / `getMetrics` 导出）；<br>3. **不得**因「缺令牌」返回 401。 |
+| UT-METRICS-02 | 空字符串：与未配置同，可匿名 | 前置：`process.env.AI_METRICS_TOKEN = ''`（空字符串）；`GET /api/metrics` 无 Authorization。 | 1. HTTP **200**；正文含 `ai_guard_requests_total`；<br>2. 与 UT-METRICS-01 同语义——空串**不得**视为「已启用鉴权」；<br>3. 证明「未设置或空字符串时行为与现网一致」。 |
+| UT-METRICS-03 | 已配置缺令牌：401 且无指标正文 | 前置：`AI_METRICS_TOKEN=metrics-secret-s16`（非空）；`GET /api/metrics` **省略** `Authorization`（及任何等价 metrics 头）。 | 1. HTTP **401**；<br>2. 响应正文**不**含子串 `ai_guard_requests_total`（亦不得泄露完整 Prometheus 多行正文）；<br>3. **不得**调用结果等同于未鉴权的 `res.send(getMetrics())` 成功体。 |
+| UT-METRICS-04 | 已配置错误 Bearer：401 且无指标正文 | 前置：同 UT-METRICS-03 令牌值；请求头 `Authorization: Bearer wrong-token`（与 env 不等）。 | 1. HTTP **401**；<br>2. 正文**不**含 `ai_guard_requests_total`；<br>3. 证明须**匹配**令牌，而非「任意非空 Bearer 即过」。 |
+| UT-METRICS-05 | 已配置正确 Bearer：200 且含 `ai_guard_requests_total` | 前置：`AI_METRICS_TOKEN=metrics-secret-s16`；`Authorization: Bearer metrics-secret-s16`。 | 1. HTTP **200**；<br>2. `Content-Type` 含 `text/plain`；<br>3. 正文含子串 **`ai_guard_requests_total`**（可同时出现 `ai_guard_tokens_total` / `ai_guard_errors_total` / `ai_guard_rejections_total`，字段名与现网 `getMetrics` 一致，本项**不**改名）。 |
+| UT-METRICS-06 | 登录 JWT 不得替代 metrics 令牌 | 前置：`AI_METRICS_TOKEN` 非空且为 `metrics-secret-s16`；请求只带合法用户登录票 `Authorization: Bearer <login-jwt>`（claims 为普通用户或 admin，**不等于** `AI_METRICS_TOKEN` 字面）。 | 1. HTTP **401**；<br>2. 正文无 `ai_guard_requests_total`；<br>3. 证明 metrics 门禁校验的是 **`AI_METRICS_TOKEN` 匹配**，不是 `authenticateToken` 会话有效性。 |
+| UT-METRICS-07 | 不做：未配置不得强制鉴权；字段名不变 | 前置：A) 删除 `AI_METRICS_TOKEN` 后重复 UT-METRICS-01；B) 只读 `getMetrics` 输出或本表预期关键字。 | 1. A：匿名仍 200 + `ai_guard_requests_total`（**不**把默认改成强制鉴权）；<br>2. B：成功正文仍使用现网计数器名 `ai_guard_requests_total`（**不**改指标字段名/语义）；<br>3. PASS **不**要求生产必须设置该变量，**不**要求连接真 Prometheus 集群。 |
+| UT-METRICS-08 | 可同步：env 名进入 example / 部署 §3（E17 方向） | 前置：实现合入后只读 `backend/.env.example` 与 `docs/deployment-and-operations.md` §3 表；对照源码出现 `process.env.AI_METRICS_TOKEN`（或等价读取）。 | 1. `.env.example` 出现键名 **`AI_METRICS_TOKEN`**（可为注释说明「可选」）；<br>2. 部署文档 §3 表第一列含同名（满足 **E17** 与 backlog「可同步」）；<br>3. 本行**不**要求生产非空；缺文档/example 任一侧则本行 FAIL（允许补表/example 使绿，不得删代码读变量凑过）。 |
+| UT-METRICS-09 | residual：公开文档可不写利用步骤；默认仍开放 | 前置：只读 backlog S16 residual；可选扫 `docs/security-ai-guard.md` 若已补「一句现状」。 | 1. 若文档提及 `AI_METRICS_TOKEN`，须写明**可选**／未设可匿名，**不得**写成「生产必须配置」；<br>2. 公开文档**不**给可复现的绕过令牌步骤；<br>3. 承认网络层隔离属运维，代码未配置时默认开放行为保持。 |
+
 ---
 
 ## 3. 安全防护与集成测试用例 (Security & Integration)
@@ -1453,6 +1478,19 @@ Prompt 内容来自数据库，不能只依赖客户端 `AI_MAX_INPUT_CHARS` 防
 | IT-QUOTA-REDIS-01 | 成功结算 delta 后二次准入窗口正确 | 前置：注入 mock；`AI_GLOBAL_DAILY_TOKEN_LIMIT` 设为「一次预扣偏大、按小 usage 结算后仍够第二次预扣」；第一次 finalize 带小 `usage`（如 10+5）；再发第二次 middleware。 | 1. 第一次审计 `token_source === 'upstream'` 且 `totalTokens === 15`；<br>2. 第二次 `next()`（非 429）；<br>3. 与 UT-USAGE-07 / UT-QUOTA-REDIS-05 合取：delta 进入 Redis token 键。 |
 | IT-QUOTA-REDIS-02 | 有 dbPool：client 日限额 SQL 拒答仍优先可观测 | 前置：mock Redis + mock `dbPool`；`ai_clients.daily_request_limit=1`（或审计汇总已满）；全局限额很大；同一 `clientId` 第二次请求。 | 1. 第二次 429，`reason === 'client_daily_request_limit'`（或 token 对应 reason）；<br>2. SQL 查询仍发生；Redis 计数路径仍参与预扣/回滚；<br>3. 与 UT-QUOTA-REDIS-08 合取。 |
 | IT-QUOTA-REDIS-03 | 不做 / residual 边界 | 前置：只读 backlog S13 **不做**与 residual。 | 1. PASS **不**要求月配额、用户/角色配额、改默认限额、生产强制 Redis、真集群压测、改 PM2/Nginx；<br>2. 承认无 Redis 时单进程有效；<br>3. 公开用例不写可复现刷配额攻击配方。 |
+
+### 3.25 S16 `/api/metrics` 可选令牌门禁与 MON-01 匿名回归（`backend/src/tests/metrics-token-integration.test.js` 或扩展 §2.47 同文件；对照 `backend/scripts/qa-verify.js` **MON-01**）
+
+对应 **S16** 在真实 HTTP 路径上的集成与安全回归：未配置时匿名可拉（**MON-01**）；配置非空后缺/错令牌 **401** 且不泄露 Prometheus 正文；正确 `Authorization: Bearer <AI_METRICS_TOKEN>` 得 **200** 且含 `ai_guard_requests_total`。单元细节见 §2.47；本表锁可判定的状态码、正文子串、与「不做/residual」边界。**禁止**以真 Prometheus 集群或「生产必须设令牌」为 PASS。`it()` / `qa-verify` 场景标题须包含下表 ID（**MON-01** 可保留既有 assert 文案，但进程未设 `AI_METRICS_TOKEN` 时行为不得被本项破坏）。
+
+| ID | 用例标题 | 场景描述 | 预期结果 |
+| :--- | :--- | :--- | :--- |
+| MON-01 | 未配置令牌：匿名导出含 `ai_guard_requests_total` | 前置：进程**未设置** `AI_METRICS_TOKEN`（或空串）；`backend/scripts/qa-verify.js` Phase 2 或等价 `fetch(`${BASE_URL}/api/metrics`)` **无** Authorization。 | 1. HTTP 成功（现网 assert 以正文为准；集成补强时状态码应为 **200**）；<br>2. 响应正文含子串 **`ai_guard_requests_total`**；<br>3. S16 合入后本场景**仍过**（未把默认改成强制鉴权）。 |
+| SEC-METRICS-01 | 已配置：无 Authorization → 401 无指标泄露 | 前置：进程 `AI_METRICS_TOKEN` 为非空测试值；对 `GET /api/metrics` 不带 Authorization。 | 1. HTTP **401**；<br>2. 响应正文**不**含 `ai_guard_requests_total`；<br>3. 不得返回 `text/plain` 成功指标体（可 JSON/`message` 错误体，但禁止指标行）。 |
+| SEC-METRICS-02 | 已配置：错误 Bearer → 401 无指标泄露 | 前置：同 SEC-METRICS-01；`Authorization: Bearer not-the-metrics-token`。 | 1. HTTP **401**；<br>2. 正文无 `ai_guard_requests_total`；<br>3. 与 UT-METRICS-04 合取。 |
+| SEC-METRICS-03 | 已配置：正确 Bearer → 200 含计数器 | 前置：`Authorization: Bearer <与 AI_METRICS_TOKEN 相同的字面>`。 | 1. HTTP **200**；<br>2. `Content-Type` 含 `text/plain`；<br>3. 正文含 `ai_guard_requests_total`（字段名未改）。 |
+| IT-METRICS-01 | 登录 JWT 不能充当 metrics 令牌 | 前置：`AI_METRICS_TOKEN` 非空；仅带登录签发的 `Authorization: Bearer <user-jwt>` 访问 `GET /api/metrics`。 | 1. HTTP **401**；<br>2. 无指标正文；<br>3. 与 UT-METRICS-06 合取：门禁不是普通 `authenticateToken`。 |
+| IT-METRICS-02 | 不做 / residual 边界 | 前置：只读 backlog S16 **不做**与 residual。 | 1. PASS **不**要求未配置时强制鉴权、改指标字段名、生产强制设变量、引入真 Prometheus 集群；<br>2. 承认生产是否设令牌与网络隔离属运维；<br>3. 公开用例不写绕过令牌的利用步骤。 |
 
 ---
 
