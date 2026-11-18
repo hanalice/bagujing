@@ -8,10 +8,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { createApp, nextTick, type App } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import DOMPurify from 'dompurify'
-import {
-  legacyAnswerToPlainText,
-  normalizeStructuredAnswer,
-} from '@/utils/normalizeStructuredAnswer'
+import { normalizeStructuredAnswer } from '@/utils/normalizeStructuredAnswer'
+import { legacyAnswerToSafeHtml } from '@/utils/answer-rich-text'
 import type { GenerateProblemAnswerResponse, Problem } from '@/api/problemItem'
 import ProblemItem from './ProblemItem.vue'
 
@@ -214,13 +212,17 @@ describe('C42 normalizeStructuredAnswer / ProblemItem 三字段渲染', () => {
 
     expect((window as unknown as { __ut?: number }).__ut).toBeUndefined()
     expect(host!.textContent).toMatch(/粗/)
+    expect(host!.querySelector('[data-testid="answer-next-step"] b, [data-testid="answer-next-step"] strong')).toBeTruthy()
     expect(host!.querySelector('[data-testid="answer-structured"]')).toBeTruthy()
     expect(host!.querySelector('script')).toBeNull()
   })
 
   it('UT-FE-ANSWER-06: 旧 HTML answer 降级：脚本不执行', async () => {
-    const raw = '<p>旧解析</p><script>window.__legacy=1</script>'
-    expect(legacyAnswerToPlainText(raw)).toContain('旧解析')
+    const raw = '<p>旧解析</p><pre><code>const a = 1</code></pre><script>window.__legacy=1</script>'
+    const safe = legacyAnswerToSafeHtml(raw)
+    expect(safe).toContain('旧解析')
+    expect(safe).toContain('<pre>')
+    expect(safe).not.toMatch(/<script/i)
 
     await mountWithProblem(baseProblem({
       answer: raw,
@@ -231,6 +233,7 @@ describe('C42 normalizeStructuredAnswer / ProblemItem 三字段渲染', () => {
     expect(host!.textContent).toContain('旧解析')
     expect(host!.querySelector('[data-testid="answer-legacy"]')).toBeTruthy()
     expect(host!.querySelector('[data-testid="answer-legacy"] script')).toBeNull()
+    expect(host!.querySelector('[data-testid="answer-legacy"] pre code')?.textContent).toContain('const a = 1')
     expect(host!.querySelector('[data-testid="answer-structured"]')).toBeNull()
   })
 

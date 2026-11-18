@@ -4,10 +4,8 @@
     import DOMPurify from 'dompurify';
     import { useBreadcrumbStore } from '@/stores/breadcrumb'
     import LabelTag from '@/components/LabelTag.vue';
-    import {
-      legacyAnswerToPlainText,
-      normalizeStructuredAnswer,
-    } from '@/utils/normalizeStructuredAnswer';
+    import { normalizeStructuredAnswer } from '@/utils/normalizeStructuredAnswer';
+    import { legacyAnswerToSafeHtml, structuredFieldToSafeHtml } from '@/utils/answer-rich-text';
 
     const props = defineProps<{
       problemId: number;
@@ -66,10 +64,22 @@
       normalizedAnswer.value.kind === 'structured' ? normalizedAnswer.value.value : null
     )
 
-    const legacyAnswerText = computed(() =>
+    const legacyAnswerHtml = computed(() =>
       normalizedAnswer.value.kind === 'legacy'
-        ? legacyAnswerToPlainText(normalizedAnswer.value.raw)
+        ? legacyAnswerToSafeHtml(normalizedAnswer.value.raw)
         : ''
+    )
+
+    const summaryHtml = computed(() =>
+      structuredAnswer.value ? structuredFieldToSafeHtml(structuredAnswer.value.summary) : ''
+    )
+
+    const keyPointHtml = computed(() =>
+      structuredAnswer.value ? structuredAnswer.value.keyPoints.map((point) => structuredFieldToSafeHtml(point)) : []
+    )
+
+    const nextStepHtml = computed(() =>
+      structuredAnswer.value ? structuredFieldToSafeHtml(structuredAnswer.value.nextStep) : ''
     )
 
     const hasAnswerPanel = computed(() => normalizedAnswer.value.kind !== 'empty')
@@ -326,17 +336,18 @@
     <section class="content">
       <div v-if="selectedTab === 'answer'" class="relative min-h-[160px]" data-testid="answer-panel">
         <div v-if="structuredAnswer" class="answer-structured" data-testid="answer-structured">
-          <p class="answer-summary" data-testid="answer-summary">{{ structuredAnswer.summary }}</p>
+          <div class="answer-summary" data-testid="answer-summary" v-html="summaryHtml"></div>
           <ul class="answer-keypoints list-disc pl-5 my-2" data-testid="answer-keypoints">
-            <li v-for="(point, idx) in structuredAnswer.keyPoints" :key="idx">{{ point }}</li>
+            <li v-for="(point, idx) in keyPointHtml" :key="idx" v-html="point"></li>
           </ul>
-          <p class="answer-next-step" data-testid="answer-next-step">{{ structuredAnswer.nextStep }}</p>
+          <div class="answer-next-step" data-testid="answer-next-step" v-html="nextStepHtml"></div>
         </div>
         <div
-          v-else-if="legacyAnswerText"
+          v-else-if="legacyAnswerHtml"
           class="answer-legacy"
           data-testid="answer-legacy"
-        >{{ legacyAnswerText }}</div>
+          v-html="legacyAnswerHtml"
+        ></div>
         <div v-if="answerGenerateError" class="text-red-500 text-sm mt-2">{{ answerGenerateError }}</div>
 
         <div
