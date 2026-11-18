@@ -225,9 +225,18 @@ const matchAiRoute = (req) => {
   return null;
 };
 
-const takeFixedWindow = (store, key, now, windowMs, limit) => {
+/**
+ * 固定窗口限流（进程内 Map）。
+ * S17：每次访问先惰性扫掉 `now >= resetAt` 的过期键，再对当前 key 计数/重建，
+ * 避免从未再 take 的过期条目长期残留。
+ */
+export function takeFixedWindow(store, key, now, windowMs, limit) {
+  for (const [k, entry] of store) {
+    if (now >= entry.resetAt) store.delete(k);
+  }
+
   const existing = store.get(key);
-  if (!existing || now >= existing.resetAt) {
+  if (!existing) {
     store.set(key, { count: 1, resetAt: now + windowMs });
     return { ok: true, remaining: Math.max(0, limit - 1), retryAfterSec: Math.ceil(windowMs / 1000) };
   }
@@ -247,7 +256,7 @@ const takeFixedWindow = (store, key, now, windowMs, limit) => {
     remaining: Math.max(0, limit - nextCount),
     retryAfterSec: Math.max(1, Math.ceil((existing.resetAt - now) / 1000)),
   };
-};
+}
 
 // Redis 固定窗口：INCR 计数，首次写入时 PEXPIRE 设定 TTL。
 const takeRedisFixedWindow = async (redis, key, windowMs, limit) => {
@@ -1109,6 +1118,12 @@ export function createAiGuard({
     exchangeToken,
     getMetrics,
     flushAudit: () => auditQueue,
+    /** 测试钩子：暴露三条无 Redis 限流 Map，供断言过期键已删除（S17）。 */
+    getRateLimitMapsForTests: () => ({
+      routeClientMinute,
+      routeClientHour,
+      routeIpMinute,
+    }),
     set dbPool(val) { currentDbPool = val; },
     set redis(val) { currentRedis = val; }
   };
