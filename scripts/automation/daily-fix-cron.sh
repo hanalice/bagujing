@@ -13,6 +13,8 @@ PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$PROJECT_ROOT"
 
 mkdir -p "$PROJECT_ROOT/logs"
+# shellcheck source=lib/run-record.sh
+source "$PROJECT_ROOT/scripts/automation/lib/run-record.sh"
 LOG="$PROJECT_ROOT/logs/daily-fix-cron-$(date +%Y%m%d-%H%M%S).log"
 LOCK="$PROJECT_ROOT/logs/daily-fix-cron.lock"
 
@@ -22,11 +24,13 @@ echo "======== $(date -Iseconds) daily-fix-cron start ========"
 exec 9>"$LOCK"
 if ! flock -n 9; then
   echo "另一实例仍在运行，本次退出。"
+  automation_record daily-fix-cron "" cron already_running 0 "" ""
   exit 0
 fi
 
 if [ -n "$(git status --porcelain)" ]; then
   echo "工作区不干净，拒绝无人值守运行。请先处理本地改动。"
+  automation_record daily-fix-cron "" cron dirty_worktree 1 "" ""
   exit 1
 fi
 
@@ -41,6 +45,7 @@ for _ in 1 2 3 4 5 6; do
 done
 if [ "$ok_fetch" -ne 1 ]; then
   echo "git fetch 失败，放弃本次。"
+  automation_record daily-fix-cron "" cron fetch_failed 1 "" ""
   exit 1
 fi
 
@@ -50,6 +55,13 @@ git merge --ff-only origin/main
 # 独立脚本：先消化未合并的周扫描 / 日修 PR。失败则今天不新开任务。
 if ! ./scripts/automation/merge-remote-prs.sh; then
   echo "远端 PR 未合并，本次不开启新日修。"
+  reason="pr_unmerged"
+  if grep -q "冲突" "$LOG"; then
+    reason="pr_conflict"
+  elif grep -E -q "qa 未通过|qa 尚未" "$LOG"; then
+    reason="qa_failed"
+  fi
+  automation_record daily-fix-cron "" cron "$reason" 1 "" ""
   exit 1
 fi
 

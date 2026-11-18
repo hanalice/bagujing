@@ -1179,6 +1179,17 @@ C22 合入后 problems 关键字召回主路径改为 FTS（失败回退 LIKE）
 | UT-METRICS-08 | 可同步：env 名进入 example / 部署 §3（E17 方向） | 前置：实现合入后只读 `backend/.env.example` 与 `docs/deployment-and-operations.md` §3 表；对照源码出现 `process.env.AI_METRICS_TOKEN`（或等价读取）。 | 1. `.env.example` 出现键名 **`AI_METRICS_TOKEN`**（可为注释说明「可选」）；<br>2. 部署文档 §3 表第一列含同名（满足 **E17** 与 backlog「可同步」）；<br>3. 本行**不**要求生产非空；缺文档/example 任一侧则本行 FAIL（允许补表/example 使绿，不得删代码读变量凑过）。 |
 | UT-METRICS-09 | residual：公开文档可不写利用步骤；默认仍开放 | 前置：只读 backlog S16 residual；可选扫 `docs/security-ai-guard.md` 若已补「一句现状」。 | 1. 若文档提及 `AI_METRICS_TOKEN`，须写明**可选**／未设可匿名，**不得**写成「生产必须配置」；<br>2. 公开文档**不**给可复现的绕过令牌步骤；<br>3. 承认网络层隔离属运维，代码未配置时默认开放行为保持。 |
 
+### 2.48 流程飞轮：运行记录与流程队列决策（`backend/src/tests/process-decide.test.js` → `scripts/automation/process-decide.js` / `lib/run-record.sh`）
+
+日修与周扫描的失败记在 `logs/automation-runs.ndjson`（不入库）。`process-decide.js` 只改 `docs/process-backlog.md`：同一原因在最近 20 条计次记录里达到 3 次，才追加 `assist` 或降低已有项优先级；次数没有下降则写待决，不再降低同一项。`ok` 与 `empty_queue` 不计。`it()` 标题须含下表 ID。
+
+| ID | 用例标题 | 场景描述 | 预期结果 |
+| :--- | :--- | :--- | :--- |
+| UT-PROCESS-01 | 未达 3 次不改流程队列 | 两条 `qa_failed` 加一条 `ok`，空流程队列。 | `action === 'none'`，队列原文不变。 |
+| UT-PROCESS-02 | 满 3 次追加 assist | 三条 `qa_failed`，空流程队列。 | 追加 `| P1 | fix | qa_failed | assist | todo | 10 |`，状态记下 `countAtAction === 3`。 |
+| UT-PROCESS-03 | 次数没下降写待决 | 先满 3 次生成 P1，再喂 4 次同一原因。 | 待决含「次数没有下降」；P1 仍是 `assist` 且优先级仍为 10；不出现 `auto`。 |
+| UT-PROCESS-04 | 记录脚本写出一行 | 调用 `automation_classify_message` 与 `automation_record`。 | 空队列文案归为 `empty_queue`，缺契约归为 `contract_missing`；NDJSON 含 `kind`、`taskId`、`reason`、`exitCode`、`prOpened`、`qaPassed`。 |
+
 ---
 
 ## 3. 安全防护与集成测试用例 (Security & Integration)

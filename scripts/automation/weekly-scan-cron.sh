@@ -12,6 +12,8 @@ PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$PROJECT_ROOT"
 
 mkdir -p "$PROJECT_ROOT/logs"
+# shellcheck source=lib/run-record.sh
+source "$PROJECT_ROOT/scripts/automation/lib/run-record.sh"
 LOG="$PROJECT_ROOT/logs/weekly-scan-cron-$(date +%Y%m%d-%H%M%S).log"
 LOCK="$PROJECT_ROOT/logs/weekly-scan-cron.lock"
 
@@ -21,11 +23,13 @@ echo "======== $(date -Iseconds) weekly-scan-cron start ========"
 exec 9>"$LOCK"
 if ! flock -n 9; then
   echo "另一实例仍在运行，本次退出。"
+  automation_record weekly-scan-cron "" cron already_running 0 "" ""
   exit 0
 fi
 
 if [ -n "$(git status --porcelain)" ]; then
   echo "工作区不干净，拒绝无人值守运行。请先处理本地改动。"
+  automation_record weekly-scan-cron "" cron dirty_worktree 1 "" ""
   exit 1
 fi
 
@@ -39,6 +43,7 @@ for _ in 1 2 3 4 5 6; do
 done
 if [ "$ok_fetch" -ne 1 ]; then
   echo "git fetch 失败，放弃本次。"
+  automation_record weekly-scan-cron "" cron fetch_failed 1 "" ""
   exit 1
 fi
 

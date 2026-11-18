@@ -14,7 +14,13 @@ AUTOMATION_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$AUTOMATION_DIR/../.." && pwd)"
 cd "$PROJECT_ROOT"
 
-die() { echo "❌ $*" >&2; exit 1; }
+die() {
+  if [ -z "${RUN_REASON:-}" ]; then
+    RUN_REASON="$(automation_classify_message "$*")"
+  fi
+  echo "❌ $*" >&2
+  exit 1
+}
 
 # shellcheck source=lib/agent-loop.sh
 source "$AUTOMATION_DIR/lib/agent-loop.sh"
@@ -22,6 +28,26 @@ source "$AUTOMATION_DIR/lib/agent-loop.sh"
 source "$AUTOMATION_DIR/lib/git-sandbox.sh"
 # shellcheck source=lib/backlog-queue.sh
 source "$AUTOMATION_DIR/lib/backlog-queue.sh"
+# shellcheck source=lib/run-record.sh
+source "$AUTOMATION_DIR/lib/run-record.sh"
+
+RUN_KIND="weekly-scan"
+RUN_STAGE="scan"
+RUN_TASK=""
+RUN_REASON=""
+RUN_PR=""
+RUN_QA=""
+RUN_RECORD=1
+_record_weekly_scan() {
+  local code=$?
+  [ "$RUN_RECORD" = "1" ] || return 0
+  local reason="${RUN_REASON:-}"
+  if [ -z "$reason" ]; then
+    if [ "$code" -eq 0 ]; then reason=ok; else reason=unknown; fi
+  fi
+  automation_record "$RUN_KIND" "$RUN_TASK" "$RUN_STAGE" "$reason" "$code" "$RUN_PR" "$RUN_QA"
+}
+trap _record_weekly_scan EXIT
 
 LOG_DIR="$PROJECT_ROOT/logs"
 ASSUME_YES=0
@@ -38,7 +64,7 @@ while [ $# -gt 0 ]; do
     --dry-run) DRY_RUN=1; shift ;;
     --push) DO_PUSH=1; shift ;;
     --engine) ENGINE="${2:?--engine 需要 cursor-agent|claude}"; shift 2 ;;
-    -h|--help) sed -n '2,10p' "${BASH_SOURCE[0]}"; exit 0 ;;
+    -h|--help) RUN_RECORD=0; sed -n '2,10p' "${BASH_SOURCE[0]}"; exit 0 ;;
     *) echo "未知参数: $1" >&2; exit 2 ;;
   esac
 done
@@ -122,6 +148,7 @@ EOF
 }
 
 if [ "$DRY_RUN" = "1" ]; then
+  RUN_RECORD=0
   echo "===== 周扫描 prompt ====="
   build_scan_prompt
   exit 0
@@ -222,6 +249,10 @@ $NEED_YOU_BODY
 - 新增 auto：$NEW_COUNT 条（${NEW_IDS:-无}）；待决：$PENDING_COUNT 条。
 EOF
 
-git_sandbox_confirm "$ASSUME_YES" || exit 0
+git_sandbox_confirm "$ASSUME_YES" || { RUN_REASON=cancelled; exit 0; }
+RUN_STAGE="commit"
 git_sandbox_commit_all "$MSG_FILE"
+if [ "$DO_PUSH" = "1" ]; then
+  RUN_PR=true
+fi
 git_sandbox_push_pr "$DO_PUSH" "$MSG_FILE" "$TITLE"

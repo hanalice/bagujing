@@ -5,6 +5,7 @@
 # 使用方式:
 #   ./scripts/automation/daily-fix.sh                 # 取优先级最小的 auto/todo 项，提交前人工确认
 #   ./scripts/automation/daily-fix.sh --task A81      # 指定任务号
+#   ./scripts/automation/daily-fix.sh --queue process # 读 docs/process-backlog.md，不读业务队列
 #   ./scripts/automation/daily-fix.sh --dry-run       # 只打印规格阶段 + 编码阶段将要下发的 prompt
 #   ./scripts/automation/daily-fix.sh --yes --push    # 无人值守：提交、推送并用 gh 开 PR
 # 环境变量:
@@ -20,7 +21,13 @@ AUTOMATION_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$AUTOMATION_DIR/../.." && pwd)"
 cd "$PROJECT_ROOT"
 
-die() { echo "❌ $*" >&2; exit 1; }
+die() {
+  if [ -z "${RUN_REASON:-}" ]; then
+    RUN_REASON="$(automation_classify_message "$*")"
+  fi
+  echo "❌ $*" >&2
+  exit 1
+}
 
 # shellcheck source=lib/agent-loop.sh
 source "$AUTOMATION_DIR/lib/agent-loop.sh"
@@ -28,10 +35,31 @@ source "$AUTOMATION_DIR/lib/agent-loop.sh"
 source "$AUTOMATION_DIR/lib/git-sandbox.sh"
 # shellcheck source=lib/backlog-queue.sh
 source "$AUTOMATION_DIR/lib/backlog-queue.sh"
+# shellcheck source=lib/run-record.sh
+source "$AUTOMATION_DIR/lib/run-record.sh"
+
+RUN_KIND="daily-fix"
+RUN_STAGE="select"
+RUN_TASK=""
+RUN_REASON=""
+RUN_PR=""
+RUN_QA=""
+RUN_RECORD=1
+_record_daily_fix() {
+  local code=$?
+  [ "$RUN_RECORD" = "1" ] || return 0
+  local reason="${RUN_REASON:-}"
+  if [ -z "$reason" ]; then
+    if [ "$code" -eq 0 ]; then reason=ok; else reason=unknown; fi
+  fi
+  automation_record "$RUN_KIND" "$RUN_TASK" "$RUN_STAGE" "$reason" "$code" "$RUN_PR" "$RUN_QA"
+}
+trap _record_daily_fix EXIT
 
 LOG_DIR="$PROJECT_ROOT/logs"
 LEVEL="auto"
 TASK_ID=""
+QUEUE="product"
 ASSUME_YES=0
 DRY_RUN=0
 DO_PUSH=0
@@ -49,13 +77,19 @@ while [ $# -gt 0 ]; do
     --push) DO_PUSH=1; shift ;;
     --skip-review) SKIP_REVIEW=1; shift ;;
     --engine) ENGINE="${2:?--engine 需要 cursor-agent|claude}"; shift 2 ;;
-    -h|--help) sed -n '2,16p' "${BASH_SOURCE[0]}"; exit 0 ;;
+    --queue) QUEUE="${2:?--queue 需要 product|process}"; shift 2 ;;
+    -h|--help) RUN_RECORD=0; sed -n '2,16p' "${BASH_SOURCE[0]}"; exit 0 ;;
     *) echo "未知参数: $1" >&2; exit 2 ;;
   esac
 done
 
 agent_prepare_cli_path
 agent_resolve_engine
+if [ "$QUEUE" = "process" ]; then
+  BACKLOG_PATH="$PROJECT_ROOT/docs/process-backlog.md"
+elif [ "$QUEUE" != "product" ]; then
+  die "--queue 只接受 product 或 process"
+fi
 [ -f "$BACKLOG_PATH" ] || die "待办队列不存在: $BACKLOG_PATH"
 
 # ------------------------------------------------------------------------------
@@ -75,6 +109,7 @@ if [ "$ITEM_TYPE" != "fix" ] && [ "$ITEM_TYPE" != "feat" ]; then
 fi
 backlog_contract_frozen "$ID" || die "$ID 缺少契约冻结（### $ID 小节须含做 / 不做 / residual），拒绝执行"
 
+RUN_TASK="$ID"
 echo "🎯 任务 $ID [$SOURCE_ID] ($ITEM_TYPE/$ROW_LEVEL): $TASK_TEXT"
 echo "🔧 编码引擎：$ENGINE"
 
@@ -196,6 +231,7 @@ EOF
 }
 
 if [ "$DRY_RUN" = "1" ]; then
+  RUN_RECORD=0
   echo "===== 阶段 1：测试设计（只改 docs/test_cases.md） ====="
   build_spec_prompt
   echo ""
@@ -323,7 +359,9 @@ $REVIEW_GAPS
 
 请补全实现、\`docs/test_cases.md\` 用例行与回归测试（it 标题含用例 ID）。不要修改 docs/backlog.md 或 docs/internal/，不要 git commit。"
   run_agent
-  run_gate_with_repair || exit 1
+  RUN_STAGE="qa"
+  run_gate_with_repair || { RUN_REASON=qa_failed; RUN_QA=false; exit 1; }
+  RUN_QA=true
   ensure_spec_synced_with_tests || die "返修后测试已改但 docs/test_cases.md 仍未同步，拒绝提交。"
 }
 
@@ -333,7 +371,9 @@ $REVIEW_GAPS
 run_spec_phase
 run_agent
 
-run_gate_with_repair || exit 1
+RUN_STAGE="qa"
+run_gate_with_repair || { RUN_REASON=qa_failed; RUN_QA=false; exit 1; }
+RUN_QA=true
 
 git_sandbox_abandon_if_empty || exit 1
 
@@ -341,7 +381,9 @@ if ! ensure_spec_synced_with_tests; then
   echo "🚫 测试源码有改动但 docs/test_cases.md 相对基线无改动，回喂编码 agent..."
   EXTRA_INSTRUCTION="测试文件已改，但 docs/test_cases.md 没有同步。先补文档中的用例 ID / 场景 / 预期结果，再让 it() 标题包含这些 ID。不要修改 docs/backlog.md 或 docs/internal/，不要 git commit。"
   run_agent
-  run_gate_with_repair || exit 1
+  RUN_STAGE="qa"
+  run_gate_with_repair || { RUN_REASON=qa_failed; RUN_QA=false; exit 1; }
+  RUN_QA=true
   ensure_spec_synced_with_tests || die "返修后仍未同步 docs/test_cases.md，拒绝提交。"
 fi
 
@@ -353,6 +395,8 @@ else
     run_review repair_after_review; then
     echo "   缺口："
     echo "$REVIEW_GAPS"
+    RUN_STAGE="review"
+    RUN_REASON=review_rejected
     exit 1
   fi
 fi
@@ -409,20 +453,25 @@ echo "-------------------------------------------"
 cat "$MSG_FILE"
 echo "-------------------------------------------"
 
-git_sandbox_confirm "$ASSUME_YES" || exit 0
+git_sandbox_confirm "$ASSUME_YES" || { RUN_REASON=cancelled; exit 0; }
 
 # ------------------------------------------------------------------------------
 # 6. 回写队列（进 git）后提交
 # ------------------------------------------------------------------------------
 # 丢弃 agent 对队列表的改动，由脚本把本项 todo→done，与实现打进同一个 PR。
-if git cat-file -e "$BASE_BRANCH:docs/backlog.md" 2>/dev/null; then
-  git checkout "$BASE_BRANCH" -- docs/backlog.md
+QUEUE_REL="${BACKLOG_PATH#"$PROJECT_ROOT"/}"
+if git cat-file -e "$BASE_BRANCH:$QUEUE_REL" 2>/dev/null; then
+  git checkout "$BASE_BRANCH" -- "$QUEUE_REL"
 fi
-if [ -z "$(git_sandbox_list_paths | grep -v '^docs/backlog.md$' || true)" ]; then
+if [ -z "$(git_sandbox_list_paths | grep -v "^${QUEUE_REL}$" || true)" ]; then
   die "除队列文件外没有实现改动，拒绝提交。"
 fi
 backlog_writeback_done "$ID" "$TASK_TEXT" ""
-echo "📄 已将 $ID 在 docs/backlog.md 标记为 done"
+echo "📄 已将 $ID 在 $QUEUE_REL 标记为 done"
 
+RUN_STAGE="commit"
 git_sandbox_commit_all "$MSG_FILE"
+if [ "$DO_PUSH" = "1" ]; then
+  RUN_PR=true
+fi
 git_sandbox_push_pr "$DO_PUSH" "$MSG_FILE"
