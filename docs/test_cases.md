@@ -1221,6 +1221,16 @@ C22 合入后 problems 关键字召回主路径改为 FTS（失败回退 LIKE）
 | UT-RATE-TTL-11 | 不做：不引入真 Redis 集成测 / 不扩成通用 LRU | 前置：只读本表测文件与 backlog S17 **不做**。 | 1. 本表 PASS **不**要求 `REDIS_URL` 连真实实例或 docker Redis；<br>2. **不**要求把 nonce/并发/配额 Map 改造成统一 LRU 框架；<br>3. 仅锁限流三 Map 的过期键淘汰与 Redis 对照。 |
 | UT-RATE-TTL-12 | residual：无 Redis 时单进程有效；公开断言不写刷量步骤 | 前置：只读 backlog S17 residual；本表仅单 Guard 实例；扫本小节与测码注释。 | 1. PASS **不**要求跨 worker 共享内存限流 Map；<br>2. 不得以「未接 Redis 即 FAIL」否定无 Redis 路径；<br>3. 用例/注释可含 reason、窗口 ms、假时钟与键形态；**不得**附带可直接打通的刷量脚本（循环打满 + 生产 URL 配方）。 |
 
+### 2.49 流程飞轮：运行记录与流程队列决策（`backend/src/tests/process-decide.test.js` → `scripts/automation/process-decide.js` / `lib/run-record.sh`）
+
+日修与周扫描的失败记在 `logs/automation-runs.ndjson`（不入库）。`process-decide.js` 只改 `docs/process-backlog.md`：同一原因在最近 20 条计次记录里达到 3 次，才追加 `assist` 或降低已有项优先级；次数没有下降则写待决，不再降低同一项。`ok` 与 `empty_queue` 不计。`it()` 标题须含下表 ID。
+
+| ID | 用例标题 | 场景描述 | 预期结果 |
+| :--- | :--- | :--- | :--- |
+| UT-PROCESS-01 | 未达 3 次不改流程队列 | 两条 `qa_failed` 加一条 `ok`，空流程队列。 | `action === 'none'`，队列原文不变。 |
+| UT-PROCESS-02 | 满 3 次追加 assist | 三条 `qa_failed`，空流程队列。 | 追加 `| P1 | fix | qa_failed | assist | todo | 10 |`，状态记下 `countAtAction === 3`。 |
+| UT-PROCESS-03 | 次数没下降写待决 | 先满 3 次生成 P1，再喂 4 次同一原因。 | 待决含「次数没有下降」；P1 仍是 `assist` 且优先级仍为 10；不出现 `auto`。 |
+| UT-PROCESS-04 | 记录脚本写出一行 | 调用 `automation_classify_message` 与 `automation_record`。 | 空队列文案归为 `empty_queue`，缺契约归为 `contract_missing`；NDJSON 含 `kind`、`taskId`、`reason`、`exitCode`、`prOpened`、`qaPassed`。 |
 ---
 
 ## 3. 安全防护与集成测试用例 (Security & Integration)
