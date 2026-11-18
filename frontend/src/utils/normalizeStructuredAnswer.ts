@@ -3,8 +3,6 @@
  * 优先级：顶层 summary/keyPoints/nextStep → 解析 answer JSON → legacy。
  */
 
-import DOMPurify from 'dompurify'
-
 export interface StructuredAnswer {
   summary: string
   keyPoints: string[]
@@ -89,13 +87,4 @@ export function normalizeStructuredAnswer(data: Record<string, unknown> | null |
   }
 
   return { kind: 'empty' }
-}
-
-/**
- * 将旧 HTML 降级为纯文本（去标签，脚本不可执行）。
- */
-export function legacyAnswerToPlainText(raw: string): string {
-  return DOMPurify.sanitize(raw, { ALLOWED_TAGS: [], ALLOWED_ATTR: [] })
-    .replace(/\s+/g, ' ')
-    .trim()
 }
