@@ -8,6 +8,8 @@
 
 **自动拆条**：`scripts/automation/split-item.sh`（也可手动 `--task <ID>`）。日修 cron 在 **没有** `auto`+`todo`、但仍有 `assist`/`manual`+`todo` 时主动调用，每天最多 1 条。流程为拆 1（不计票）+ 评 A/B（计票）；**双评都通过（2/2）** 才把子项写成 `auto` 并改 backlog；一过一否可改版再评一轮，仍非 2/2 则不新增 `auto`（可记待决）。
 
+**飞轮总设计**：日修 / 周扫 / 拆条 / 合 PR / 流程自检 / 邮件通知，以及日志分析等仍缺的片，见 [`automation-harness.md`](automation-harness.md)。
+
 选任务前由 `scripts/automation/merge-remote-prs.sh` 单独处理远端 PR：`chore/weekly-scan-<日期>` 可合并则直接合入；`auto-fix/*` 与 `auto-feat/*` 仅当恰好一条且远端 `qa` 已通过时合入。合并不了则本次不新开任务。
 
 远端 PR 处理之后，由 `scripts/automation/prune-merged-branches.sh` 单独删除已合进 `origin/main` 的本地 `auto-fix/*`、`auto-feat/*`、`chore/weekly-scan-<日期>` 分支。未合并的留下。
@@ -114,6 +116,8 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | S16 | fix | scan | auto | done | 30 | 配置 AI_METRICS_TOKEN 时 /api/metrics 须校验令牌，未配置保持可匿名 |
 | S17 | fix | scan | auto | done | 40 | 无 Redis 时限流内存 Map 淘汰已过期窗口键 |
 | S18 | feat | audit | auto | done |  | 审计行补齐失败原因与上游状态，供日后按 reason 排行 |
+| F1 | feat | flywheel | assist | todo | 50 | 流水线日志分析：读 automation-runs 与近日 cron 日志，只写 process-backlog 的 assist/待决（禁止直接 auto） |
+| F2 | feat | flywheel | assist | todo | 55 | 业务审计 reason 排行：读 ai_audit_logs，只建议改 backlog 优先级或开 assist（禁止盲改数字） |
 
 
 ---
@@ -330,7 +334,23 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 
 - **做**：每次经过 AI Guard 的调用在 `ai_audit_logs` 留下可排行的一行。`chat` 失败的 `reason` 拆开，至少区分 `sse_idle_timeout`、`client_abort`、`upstream_http`、`circuit_open`；对不上的才用 `server_error`。`upstream_http` 必须同时写入上游 HTTP 状态码。表增加可空列 `upstream_status`、`upstream_reached`、`token_source`，`appendAudit` 写入；已有库用 `ADD COLUMN` 补齐，不回填旧行。成功路径仍使用 `stream_done`、`generated_answer`、`cached_answer`。单测锁上述 reason 与三列（NDJSON 与 SQL 一致）。
 - **不做**：不算拒绝率或失败率；不做报表、看板或 Grafana；不改周扫描；不自动改 backlog 优先级；不把 `/api/metrics` 当作排行来源；不把熔断改成跨进程共享；不改已有拒绝类 `reason` 的名字。
-- **residual**：上线前的旧行没有新列。放行路径的 `status_code` 仍可能是 `ok` / `error`，排行以 `reason` 为准。按 `reason` 改优先级的定时任务不在本项：须本项部署且审计攒满至少一天后再开；该任务必须自己读审计日志，决定这一天要不要改优先级，而不是看见最高失败就改数字。
+- **residual**：上线前的旧行没有新列。放行路径的 `status_code` 仍可能是 `ok` / `error`，排行以 `reason` 为准。按 `reason` 改优先级的定时任务见 **F2**（须审计攒满窗口后再开）；该任务必须自己读审计日志，决定这一天要不要动，而不是看见最高失败就改数字。
+
+### F1
+
+分级保持 `assist`。禁止周扫描改成 `auto`。须经 `split-item` 双评 2/2 或人拆出可锁单测的 `auto` 子项后再改。
+
+- **做**：新增低频作业（可由日修 cron 之后或独立定时触发）：读取 `logs/automation-runs.ndjson` 与近日 `logs/*cron*.log` 摘要；按 `reason` 聚类；对**尚未**被 `process-decide` 覆盖、或需要人写清契约的失败模式，向 `docs/process-backlog.md` **仅**追加 `assist`+`todo` 或待决行（含一句话现象与推荐），**禁止**直接写入 `auto`。单测锁：给定样例 NDJSON/日志片段时，输出行分级必为 assist/待决且含 reason；不得出现 `| auto |`。
+- **不做**：改 `daily-fix.sh` 选单逻辑；直接改 `docs/backlog.md` 业务队列表；把未冻契约标成 `auto`；替代现有 `process-decide` 的「满 3 次才动」阈值（可并存：本项产出草案，decide 仍管计数）。
+- **residual**：真正冻成可日修的 process `auto` 仍走拆条或人改分级。邮件正文是否附分析摘要另条。
+
+### F2
+
+分级保持 `assist`。禁止周扫描改成 `auto`。对齐 S18 residual：须审计窗口攒够后再实现；经拆条 2/2 或人拆后方可 `auto`。
+
+- **做**：定时（如每日/每周）汇总 `ai_audit_logs`（及可选 NDJSON 审计）按 `reason` 排行；产出**提案**：建议调整某业务 backlog 项优先级，或追加 `assist` 草案。提案须自检「窗口内样本是否足够、是否比上次有意义变化」——不足则**不改**队列。禁止「看见最高失败就改数字」。单测锁：样例审计行 → 有/无提案两条路径；有提案时差分可审（只改优先级数字或追加 assist 行），无提案时 backlog 原文不变。
+- **不做**：改 reason 名字或审计 schema；做 Grafana/看板；把 `/api/metrics` 当唯一数据源；不经自检盲改优先级；直接标 `auto` 业务修复项。
+- **residual**：是否自动 `git commit` 提案由拆出的 `auto` 子项契约再定；与 F1（流水线日志）数据源分离。
 
 ### E1
 
@@ -447,6 +467,8 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | 2026-11-09 | 登记 auto S18（优先级 5）：审计行补齐失败原因与上游状态；按 reason 改优先级的定时任务不在本项 |
 | 2026-11-09 | S18 完成：审计行补齐失败原因与上游状态，供日后按 reason 排行 |
 | 2026-11-10 | S14 完成：对齐 security-ai-guard.md：去掉「月配额」已落地暗示，只写日配额 |
+| 2026-11-19 | 公开飞轮设计：`docs/automation-harness.md`（日修/周扫/拆条/通知/日志分析缺口） |
+| 2026-11-19 | 登记 assist F1（流水线日志分析→process-backlog）/ F2（业务 reason 排行建议），优先级 50/55 |
 | 2026-11-11 | S15 完成：无效 client token 风控计数按 clientId 聚合，达到阈值才 403 |
 | 2026-11-13 | S16 完成：配置 AI_METRICS_TOKEN 时 /api/metrics 须校验令牌，未配置保持可匿名 |
 | 2026-11-17 | S17 完成：无 Redis 时限流内存 Map 淘汰已过期窗口键 |

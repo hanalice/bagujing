@@ -4,7 +4,9 @@
 
 `scripts/automation/process-decide-cron.sh` 只允许改本文件：把重复出现的原因对应行的优先级改小，或追加 `assist` 行，或写入待决。它不改 `daily-fix.sh`、`weekly-scan.sh` 和合并脚本。
 
-流程项要变成日修能做的 `auto`，必须先有「做 / 不做 / residual」，再由人改分级。日修只有带 `--queue process` 时才读本文件。
+流程项要变成日修能做的 `auto`，必须先有「做 / 不做 / residual」，再由人改分级（或走与业务队列相同的 `split-item` 双评拆条）。日修只有带 `--queue process` 时才读本文件。
+
+全局飞轮（含本队列与邮件防静默）见 [`automation-harness.md`](automation-harness.md)。
 
 **优先级**：正整数，越小越先做，步长 10。`done` / `split` 留空。调整优先级只改数字，不挪行。
 
