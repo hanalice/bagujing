@@ -6,6 +6,8 @@
 
 **日修只执行 `auto` + `todo`。** `assist` / `manual` 必须先拆成子项、写明契约三行（做 / 不做 / residual），把子项改成 `auto` 后才能被脚本选中。父项状态改为 `split`，cron 不会选它们。
 
+**自动拆条**：`scripts/automation/split-item.sh`（也可手动 `--task <ID>`）。日修 cron 在 **没有** `auto`+`todo`、但仍有 `assist`/`manual`+`todo` 时主动调用，每天最多 1 条。流程为拆 1（不计票）+ 评 A/B（计票）；**双评都通过（2/2）** 才把子项写成 `auto` 并改 backlog；一过一否可改版再评一轮，仍非 2/2 则不新增 `auto`（可记待决）。
+
 选任务前由 `scripts/automation/merge-remote-prs.sh` 单独处理远端 PR：`chore/weekly-scan-<日期>` 可合并则直接合入；`auto-fix/*` 与 `auto-feat/*` 仅当恰好一条且远端 `qa` 已通过时合入。合并不了则本次不新开任务。
 
 远端 PR 处理之后，由 `scripts/automation/prune-merged-branches.sh` 单独删除已合进 `origin/main` 的本地 `auto-fix/*`、`auto-feat/*`、`chore/weekly-scan-<日期>` 分支。未合并的留下。

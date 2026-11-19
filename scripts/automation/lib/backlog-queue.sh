@@ -101,6 +101,57 @@ backlog_list_auto_todo_ids() {
   ' "$BACKLOG_PATH"
 }
 
+# 列出可拆候选：assist|manual + todo，按优先级升序（同号保持表序）。
+# 每行：ID \t TYPE \t SOURCE \t LEVEL \t STATUS \t PRIORITY \t TASK
+backlog_list_split_candidates() {
+  awk -F'|' '
+    function trim(s) {
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", s)
+      return s
+    }
+    /^##[[:space:]]/ { in_queue = ($0 ~ /队列表/) }
+    !in_queue { next }
+    NF < 9 { next }
+    /^\|[[:space:]]*[A-Z][0-9]+[[:space:]]*\|/ {
+      id = trim($2); typ = trim($3); src = trim($4)
+      lvl = trim($5); st = trim($6); pri = trim($7); task = trim($8)
+      if (st != "todo") next
+      if (lvl != "assist" && lvl != "manual") next
+      seq++
+      n = (pri ~ /^[0-9]+$/) ? pri + 0 : 1000000000
+      print n "\t" seq "\t" id "\t" typ "\t" src "\t" lvl "\t" st "\t" pri "\t" task
+    }
+  ' "$BACKLOG_PATH" | sort -t$'\t' -k1,1n -k2,2n | cut -f3-
+}
+
+# 取优先级最高（数字最小）的一条可拆候选；无则空。
+# 输出同 backlog_read_row：ID \t TYPE \t SOURCE \t LEVEL \t STATUS \t TASK
+backlog_read_split_candidate() {
+  local want_id="${1:-}"
+  if [ -n "$want_id" ]; then
+    local row level status
+    row="$(backlog_read_row "$want_id" "")"
+    [ -n "$row" ] || return 0
+    IFS=$'\t' read -r _id _typ _src level status _task <<< "$row"
+    if [ "$status" = "todo" ] && { [ "$level" = "assist" ] || [ "$level" = "manual" ]; }; then
+      # backlog_read_row 在指定 ID 时不校验 level 过滤；再读一遍带任务文本
+      awk -F'|' -v want_id="$want_id" '
+        function trim(s) { gsub(/^[[:space:]]+|[[:space:]]+$/, "", s); return s }
+        /^##[[:space:]]/ { in_queue = ($0 ~ /队列表/) }
+        !in_queue { next }
+        /^\|[[:space:]]*[A-Z][0-9]+[[:space:]]*\|/ {
+          if (trim($2) == want_id) {
+            print trim($2) "\t" trim($3) "\t" trim($4) "\t" trim($5) "\t" trim($6) "\t" trim($8)
+            exit
+          }
+        }
+      ' "$BACKLOG_PATH"
+    fi
+    return 0
+  fi
+  backlog_list_split_candidates | head -n 1 | awk -F'\t' '{ print $1 "\t" $2 "\t" $3 "\t" $4 "\t" $5 "\t" $7 }'
+}
+
 # 待决表：| ID | 提出日 | 角色 | 问题 | 推荐 |
 # 输出：ID \t DATE \t ROLE \t QUESTION \t RECOMMEND
 backlog_list_pending_rows() {

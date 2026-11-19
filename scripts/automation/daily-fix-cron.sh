@@ -68,6 +68,23 @@ fi
 # 独立脚本：远端 PR 处理完后，删掉已经合进 main 的本地日修/周扫描分支。
 ./scripts/automation/prune-merged-branches.sh
 
+# shellcheck source=lib/backlog-queue.sh
+source "$PROJECT_ROOT/scripts/automation/lib/backlog-queue.sh"
+
+# 无 auto+todo 但有 assist/manual 可拆时：先拆最多 1 条（双评 2/2 才落盘），再日修。
+if [ -z "$(backlog_list_auto_todo_ids)" ]; then
+  if [ -n "$(backlog_list_split_candidates)" ]; then
+    echo "ℹ️ auto 队列空，尝试拆条（每天最多 1 条）…"
+    set +e
+    ./scripts/automation/split-item.sh --yes --push
+    split_code=$?
+    set -e
+    if [ "$split_code" -ne 0 ]; then
+      echo "拆条未采纳或失败（exit=$split_code）。仍继续尝试日修选单。"
+    fi
+  fi
+fi
+
 set +e
 ./scripts/automation/daily-fix.sh --yes --push
 code=$?

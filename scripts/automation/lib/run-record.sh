@@ -20,6 +20,7 @@ automation_classify_message() {
     *冲突*) printf '%s' pr_conflict ;;
     *qa\ 未通过*|*qa\ 尚未*) printf '%s' qa_failed ;;
     *只允许改*|*超过上限*|*逾期待决*|*同时出现*) printf '%s' scan_rejected ;;
+    *拆条未采纳*|*双评未*) printf '%s' split_rejected ;;
     *) printf '%s' unknown ;;
   esac
 }
