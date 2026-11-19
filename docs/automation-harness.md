@@ -31,8 +31,9 @@
 fetch → main 快进
   → 合并远端日修/周扫 PR（合不了则今日停，并记原因/可发信）
   → 删已合并本地分支
-  → 若无 auto+todo 且有 assist|manual+todo：split-item（每天最多 1 条）
-  → daily-fix 领 auto+todo
+  → 若无 auto+todo 且有 assist|manual+todo：split-item --yes（每天最多 1 条，只 commit）
+  → daily-fix --yes --push（复用拆条分支 → 改名 auto-* → 一个 PR）
+  → 若拆成功但日修失败：兜底仍推 auto-* PR，避免 empty_queue 死循环
 ```
 
 ---
@@ -100,12 +101,15 @@ flowchart TD
 - 提案人（拆）**不计票**；评 A / 评 B **计票**；采用须 **2/2 PASS**。
 - 评委只做五条二元清单（一次 PR / 契约不打架 / manual 壳分离 / 不误标 auto / 不重复抢范围）。
 - 同一条目：主拆 1 + 最多改版 1；每轮双评；仍不过 → **不新增 auto**，可记待决并邮件 `split_rejected`。
-- 手动：`./scripts/automation/split-item.sh --task D3`；无人值守加 `--yes --push`。
+- **commit 边界**：拆条单独一笔 `docs(backlog)`；与日修实现 **禁止 squash**。
+- **PR 策略**：cron 用 `--yes`（不开 PR）。日修复用该分支改名为 `auto-fix|feat/<子项>-日期`，与日修变更打进**同一个**可被 `merge-remote-prs` 合并的 PR。不要为 `docs/split-*` 单独开 PR（合不进 → main 持续无 auto → `empty_queue` 循环）。
+- 手动单独合入时仍可用 `--yes --push`。
 
 ### 3.3 日修（执行 auto）
 
 - 只领 `auto`+`todo`（可 `--queue process` 读流程队列）。
 - 阶段：登记 `test_cases` → 实现 → `qa-report` → 独立审核 → 回写 `done` → PR。
+- 若当前已在领先 `main` 的拆条分支上：`git_sandbox_prepare_task_branch` 复用并改名，PR 基线仍为 `main`；日修 diff 起点为拆条 tip（审核看不到拆条 commit 里的 backlog 差分）。
 - 前置依赖合 PR 脚本：有未合日修 PR 且不能自动合时，**今日不新开**，避免分叉爆炸。
 
 ### 3.4 流程飞轮（流水线自检）

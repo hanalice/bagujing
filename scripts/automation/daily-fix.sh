@@ -247,10 +247,11 @@ git_sandbox_ensure_clean
 agent_check_auth
 [ "$DO_PUSH" = "1" ] && git_sandbox_require_gh
 
+# 若 cron 刚拆条留下领先 main 的 commit，复用该分支并改名为 auto-*，PR 仍打向 main。
 if [ "$ITEM_TYPE" = "feat" ]; then
-  git_sandbox_open_branch "auto-feat/${ID,,}-$(date +%Y%m%d)"
+  git_sandbox_prepare_task_branch "auto-feat/${ID,,}-$(date +%Y%m%d)" main
 else
-  git_sandbox_open_branch "auto-fix/${ID,,}-$(date +%Y%m%d)"
+  git_sandbox_prepare_task_branch "auto-fix/${ID,,}-$(date +%Y%m%d)" main
 fi
 
 RUN_LOG="$LOG_DIR/daily-fix-$ID-$(date +%Y%m%d-%H%M%S).log"

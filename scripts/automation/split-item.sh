@@ -5,11 +5,13 @@
 # 使用方式:
 #   ./scripts/automation/split-item.sh                 # 取优先级最高的可拆项
 #   ./scripts/automation/split-item.sh --task D3
-#   ./scripts/automation/split-item.sh --yes --push    # 无人值守：采纳后提交并开 PR
+#   ./scripts/automation/split-item.sh --yes           # 无人值守：采纳后只 commit，留给日修同 PR
+#   ./scripts/automation/split-item.sh --yes --push    # 仅手动：采纳后单独开 PR（cron 不要用）
 #   ./scripts/automation/split-item.sh --dry-run       # 只打印将要下发的 prompt
 # 规则:
 #   拆 1 人（不计票）+ 评 A/B（计票）。采用须双评 PASS。
 #   同一条目最多：主拆 1 + 改版 1；每轮双评；第二轮仍非 2/2 则不改 auto。
+#   拆条 commit 与日修 commit 分开；cron 路径不 --push，由 daily-fix 开同一条 auto-* PR。
 # ==============================================================================
 
 set -euo pipefail
@@ -299,7 +301,8 @@ if [ "$ACTION" != "adopt" ]; then
     ' "$BACKLOG_PATH" > "$BACKLOG_PATH.tmp" && mv "$BACKLOG_PATH.tmp" "$BACKLOG_PATH"
   fi
   RUN_REASON="split_rejected"
-  if [ "$ASSUME_YES" = "1" ] && [ -n "$(git status --porcelain -- docs/backlog.md)" ]; then
+  # 仅手动 --push 才为否决开 PR；cron（--yes 无 --push）不留本地否决 commit，避免挡住日修。
+  if [ "$ASSUME_YES" = "1" ] && [ "$DO_PUSH" = "1" ] && [ -n "$(git status --porcelain -- docs/backlog.md)" ]; then
     MSG_FILE="$LOG_DIR/.split-commit-msg"
     cat >"$MSG_FILE" <<EOF
 docs(backlog): [$ID] 拆条双评未通过，记入待决
@@ -309,10 +312,8 @@ docs(backlog): [$ID] 拆条双评未通过，记入待决
 EOF
     git_sandbox_confirm "$ASSUME_YES" || die "已取消"
     git_sandbox_commit_all "$MSG_FILE"
-    if [ "$DO_PUSH" = "1" ]; then
-      git_sandbox_push_pr "$DO_PUSH" "$MSG_FILE" "docs(backlog): [$ID] 拆条双评未通过"
-      RUN_PR_OPENED="true"
-    fi
+    git_sandbox_push_pr "$DO_PUSH" "$MSG_FILE" "docs(backlog): [$ID] 拆条双评未通过"
+    RUN_PR_OPENED="true"
   else
     git checkout -- docs/backlog.md 2>/dev/null || cp "$LOG_DIR/.split-${ID}-backlog.before.md" "$BACKLOG_PATH"
     git_sandbox_abandon_if_empty || true
@@ -358,6 +359,8 @@ RUN_QA_PASSED="true"
 if [ "$DO_PUSH" = "1" ]; then
   git_sandbox_push_pr "$DO_PUSH" "$MSG_FILE" "docs(backlog): [$ID] 双评通过拆成 auto 子项"
   RUN_PR_OPENED="true"
+else
+  echo "ℹ️ 拆条已 commit 在 $WORK_BRANCH，未开 PR（供同次日修复用同一条 auto-* 分支）。"
 fi
 
 echo "✅ 拆条已采纳：$ID"

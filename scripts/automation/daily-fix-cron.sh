@@ -70,17 +70,23 @@ fi
 
 # shellcheck source=lib/backlog-queue.sh
 source "$PROJECT_ROOT/scripts/automation/lib/backlog-queue.sh"
+# shellcheck source=lib/git-sandbox.sh
+source "$PROJECT_ROOT/scripts/automation/lib/git-sandbox.sh"
 
-# 无 auto+todo 但有 assist/manual 可拆时：先拆最多 1 条（双评 2/2 才落盘），再日修。
+# 无 auto+todo 但有 assist/manual 可拆时：先拆最多 1 条（只 commit、不开 PR），再日修同 PR。
+SPLIT_ADOPTED=0
 if [ -z "$(backlog_list_auto_todo_ids)" ]; then
   if [ -n "$(backlog_list_split_candidates)" ]; then
-    echo "ℹ️ auto 队列空，尝试拆条（每天最多 1 条）…"
+    echo "ℹ️ auto 队列空，尝试拆条（每天最多 1 条，commit 后交日修开 PR）…"
     set +e
-    ./scripts/automation/split-item.sh --yes --push
+    ./scripts/automation/split-item.sh --yes
     split_code=$?
     set -e
-    if [ "$split_code" -ne 0 ]; then
-      echo "拆条未采纳或失败（exit=$split_code）。仍继续尝试日修选单。"
+    if [ "$split_code" -eq 0 ]; then
+      SPLIT_ADOPTED=1
+    else
+      echo "拆条未采纳或失败（exit=$split_code）。回到 main 再尝试日修选单。"
+      git checkout main >/dev/null 2>&1 || true
     fi
   fi
 fi
@@ -89,6 +95,31 @@ set +e
 ./scripts/automation/daily-fix.sh --yes --push
 code=$?
 set -e
+
+# 拆条已落盘但日修失败：开 auto-* 兜底 PR，避免 main 无 auto 却永远合不进拆条。
+if [ "$code" -ne 0 ] && [ "$SPLIT_ADOPTED" -eq 1 ]; then
+  echo "⚠️ 日修未完成，尝试把已拆条分支推成 auto-* 兜底 PR…"
+  first_auto="$(backlog_list_auto_todo_ids 2>/dev/null | head -n 1)"
+  first_auto_lc="$(printf '%s' "$first_auto" | tr '[:upper:]' '[:lower:]')"
+  item_type="fix"
+  if [ -n "$first_auto" ]; then
+    row="$(backlog_read_row "$first_auto" auto 2>/dev/null || true)"
+    if [ -n "$row" ]; then
+      IFS=$'\t' read -r _ item_type _ _ _ _ <<<"$row" || true
+    fi
+  fi
+  set +e
+  git_sandbox_push_split_fallback_pr "$first_auto_lc" "$item_type"
+  fb=$?
+  set -e
+  if [ "$fb" -eq 0 ]; then
+    automation_record daily-fix-cron "${first_auto:-}" cron split_fallback_pr 0 true ""
+    echo "✅ 已开拆条兜底 PR（日修仍失败，请看邮件/日志）。"
+  else
+    echo "⚠️ 兜底 PR 未推成（exit=$fb）；本地分支可能仍含拆条 commit，请人工处理。"
+    automation_record daily-fix-cron "${first_auto:-}" cron split_fallback_failed 1 "" ""
+  fi
+fi
 
 echo "======== $(date -Iseconds) daily-fix-cron end exit=$code ========"
 # 队列空：daily-fix 已记 empty_queue 并尝试发邮件；对 Windows 任务仍记成功，避免「失败重试」刷屏
