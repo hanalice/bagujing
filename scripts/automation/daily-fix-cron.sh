@@ -68,16 +68,33 @@ fi
 # 独立脚本：远端 PR 处理完后，删掉已经合进 main 的本地日修/周扫描分支。
 ./scripts/automation/prune-merged-branches.sh
 
+# shellcheck source=lib/backlog-queue.sh
+source "$PROJECT_ROOT/scripts/automation/lib/backlog-queue.sh"
+
+# 无 auto+todo 但有 assist/manual 可拆时：先拆最多 1 条（双评 2/2 才落盘），再日修。
+if [ -z "$(backlog_list_auto_todo_ids)" ]; then
+  if [ -n "$(backlog_list_split_candidates)" ]; then
+    echo "ℹ️ auto 队列空，尝试拆条（每天最多 1 条）…"
+    set +e
+    ./scripts/automation/split-item.sh --yes --push
+    split_code=$?
+    set -e
+    if [ "$split_code" -ne 0 ]; then
+      echo "拆条未采纳或失败（exit=$split_code）。仍继续尝试日修选单。"
+    fi
+  fi
+fi
+
 set +e
 ./scripts/automation/daily-fix.sh --yes --push
 code=$?
 set -e
 
 echo "======== $(date -Iseconds) daily-fix-cron end exit=$code ========"
-# 队列空或当日无 auto 项时 daily-fix 返回非 0，对定时任务视为「今天没事做」
+# 队列空：daily-fix 已记 empty_queue 并尝试发邮件；对 Windows 任务仍记成功，避免「失败重试」刷屏
 if [ "$code" -ne 0 ]; then
   if grep -q "队列中没有可执行任务" "$LOG"; then
-    echo "队列已空，定时任务记为成功。"
+    echo "队列已空（应已发 empty_queue 邮件）。定时任务记为成功。"
     exit 0
   fi
 fi

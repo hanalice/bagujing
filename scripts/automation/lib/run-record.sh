@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # 把一次日修 / 周扫描 / 定时入口的结局追加到 logs/automation-runs.ndjson。
 # 文件在 logs/ 下，不进 git。失败不得改变调用方的退出码。
+# 需要人工的原因会尝试发邮件（见 lib/notify-email.sh）；发信失败不改变退出码。
+
+# shellcheck source=notify-email.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/notify-email.sh"
 
 # 把 die 文案收成固定原因。对不上则 unknown。
 automation_classify_message() {
@@ -16,6 +20,7 @@ automation_classify_message() {
     *冲突*) printf '%s' pr_conflict ;;
     *qa\ 未通过*|*qa\ 尚未*) printf '%s' qa_failed ;;
     *只允许改*|*超过上限*|*逾期待决*|*同时出现*) printf '%s' scan_rejected ;;
+    *拆条未采纳*|*双评未*) printf '%s' split_rejected ;;
     *) printf '%s' unknown ;;
   esac
 }
@@ -55,4 +60,5 @@ automation_record() {
     };
     fs.appendFileSync(process.env.AUTOMATION_RUN_FILE, JSON.stringify(row) + "\n");
   ' || true
+  automation_notify_human "$reason" "$kind" "$task_id" "$stage" "$exit_code" || true
 }
