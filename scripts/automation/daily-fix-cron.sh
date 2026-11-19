@@ -74,10 +74,10 @@ code=$?
 set -e
 
 echo "======== $(date -Iseconds) daily-fix-cron end exit=$code ========"
-# 队列空或当日无 auto 项时 daily-fix 返回非 0，对定时任务视为「今天没事做」
+# 队列空：daily-fix 已记 empty_queue 并尝试发邮件；对 Windows 任务仍记成功，避免「失败重试」刷屏
 if [ "$code" -ne 0 ]; then
   if grep -q "队列中没有可执行任务" "$LOG"; then
-    echo "队列已空，定时任务记为成功。"
+    echo "队列已空（应已发 empty_queue 邮件）。定时任务记为成功。"
     exit 0
   fi
 fi
