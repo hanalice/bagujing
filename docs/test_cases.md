@@ -1231,6 +1231,21 @@ C22 合入后 problems 关键字召回主路径改为 FTS（失败回退 LIKE）
 | UT-PROCESS-02 | 满 3 次追加 assist | 三条 `qa_failed`，空流程队列。 | 追加 `| P1 | fix | qa_failed | assist | todo | 10 |`，状态记下 `countAtAction === 3`。 |
 | UT-PROCESS-03 | 次数没下降写待决 | 先满 3 次生成 P1，再喂 4 次同一原因。 | 待决含「次数没有下降」；P1 仍是 `assist` 且优先级仍为 10；不出现 `auto`。 |
 | UT-PROCESS-04 | 记录脚本写出一行 | 调用 `automation_classify_message` 与 `automation_record`。 | 空队列文案归为 `empty_queue`，缺契约归为 `contract_missing`；NDJSON 含 `kind`、`taskId`、`reason`、`exitCode`、`prOpened`、`qaPassed`。 |
+
+### 2.50 拆条双评裁决（`backend/src/tests/split-review.test.js` → `scripts/automation/lib/split-review.js`）
+
+对应自制飞轮「拆条」环（见 `docs/automation-harness.md`）：提案人不计票；评 A/B 计票；**2/2 PASS** 才采纳。`parseReviewerOutput` / `decideSplitRound` 锁格式与动作。`it()` 标题须含下表 ID。
+
+| ID | 用例标题 | 场景描述 | 预期结果 |
+| :--- | :--- | :--- | :--- |
+| UT-SPLIT-01 | 解析 PASS | 输出含 `VERDICT: PASS`。 | `verdict === 'PASS'`，`failCodes` 为空。 |
+| UT-SPLIT-02 | 解析 FAIL 与条款号 | `VERDICT: FAIL` 且 `FAIL_CODES: 1, 4`。 | `verdict === 'FAIL'`，`failCodes` 含 1 与 4。 |
+| UT-SPLIT-03 | PASS 与失败条款矛盾 | `CHECK-2: FAIL` 且 `VERDICT: PASS`。 | 按 `FAIL` 处理，`failCodes` 含 2。 |
+| UT-SPLIT-04 | 双评 PASS → adopt | 两评均为 PASS，`revisionUsed=false`。 | `action === 'adopt'`。 |
+| UT-SPLIT-05 | 一过一否未改版 → revise | 一评 PASS、一评 FAIL，尚未改版。 | `action === 'revise'`。 |
+| UT-SPLIT-06 | 改版后仍非 2/2 → reject | `revisionUsed=true` 且仍非双 PASS。 | `action === 'reject'`。 |
+| UT-SPLIT-07 | 未知结论不当 PASS | 一评无 `VERDICT`、一评 PASS。 | `action === 'revise'`（不得 adopt）。 |
+
 ---
 
 ## 3. 安全防护与集成测试用例 (Security & Integration)

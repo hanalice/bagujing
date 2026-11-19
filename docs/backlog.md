@@ -8,6 +8,8 @@
 
 **自动拆条**：`scripts/automation/split-item.sh`（也可手动 `--task <ID>`）。日修 cron 在 **没有** `auto`+`todo`、但仍有 `assist`/`manual`+`todo` 时主动调用，每天最多 1 条。流程为拆 1（不计票）+ 评 A/B（计票）；**双评都通过（2/2）** 才把子项写成 `auto` 并改 backlog；一过一否可改版再评一轮，仍非 2/2 则不新增 `auto`（可记待决）。
 
+**飞轮总设计**：日修 / 周扫 / 拆条 / 合 PR / 流程自检 / 邮件通知，以及日志分析等仍缺的片，见 [`automation-harness.md`](automation-harness.md)。
+
 选任务前由 `scripts/automation/merge-remote-prs.sh` 单独处理远端 PR：`chore/weekly-scan-<日期>` 可合并则直接合入；`auto-fix/*` 与 `auto-feat/*` 仅当恰好一条且远端 `qa` 已通过时合入。合并不了则本次不新开任务。
 
 远端 PR 处理之后，由 `scripts/automation/prune-merged-branches.sh` 单独删除已合进 `origin/main` 的本地 `auto-fix/*`、`auto-feat/*`、`chore/weekly-scan-<日期>` 分支。未合并的留下。
@@ -447,6 +449,7 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | 2026-11-09 | 登记 auto S18（优先级 5）：审计行补齐失败原因与上游状态；按 reason 改优先级的定时任务不在本项 |
 | 2026-11-09 | S18 完成：审计行补齐失败原因与上游状态，供日后按 reason 排行 |
 | 2026-11-10 | S14 完成：对齐 security-ai-guard.md：去掉「月配额」已落地暗示，只写日配额 |
+| 2026-11-19 | 公开飞轮设计：`docs/automation-harness.md`（日修/周扫/拆条/通知/日志分析缺口） |
 | 2026-11-11 | S15 完成：无效 client token 风控计数按 clientId 聚合，达到阈值才 403 |
 | 2026-11-13 | S16 完成：配置 AI_METRICS_TOKEN 时 /api/metrics 须校验令牌，未配置保持可匿名 |
 | 2026-11-17 | S17 完成：无 Redis 时限流内存 Map 淘汰已过期窗口键 |

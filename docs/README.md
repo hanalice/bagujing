@@ -10,6 +10,8 @@
 docs/
 ├── README.md                       # 本规范说明文件（公开）
 ├── backlog.md                      # 工程待办队列（公开，日修/周扫描调度源）
+├── process-backlog.md              # 流程待办队列（公开，流水线自检，不占业务名额）
+├── automation-harness.md           # 自制工程飞轮总设计（日修/周扫/拆条/通知/缺口）
 ├── git-commit-convention.md        # Git 提交规范与模板（公开）
 ├── security-ai-guard.md            # AI 网关安全防护专项白皮书（公开）
 ├── dependency-vulnerability-scanning.md # 依赖漏洞月扫与修复步骤（公开）
@@ -44,6 +46,9 @@ docs/
 5. **工程待办队列 (Executable Backlog)**：
    - 日修 / 周扫描的机器可读队列，含 fix 与 feat。只写完成标准，不写利用方式。
    - *示例*：[`backlog.md`](backlog.md)。
+6. **自制工程飞轮 (Automation Harness)**：
+   - 日修、周扫、拆条（assist/manual→auto）、流程自检、邮件防静默，以及「离人自转」仍缺的片。
+   - *示例*：[`automation-harness.md`](automation-harness.md)、[`process-backlog.md`](process-backlog.md)。
 
 ---
 
