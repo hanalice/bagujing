@@ -6,7 +6,7 @@
 
 **日修只执行 `auto` + `todo`。** `assist` / `manual` 必须先拆成子项、写明契约三行（做 / 不做 / residual），把子项改成 `auto` 后才能被脚本选中。父项状态改为 `split`，cron 不会选它们。
 
-**自动拆条**：`scripts/automation/split-item.sh`（也可手动 `--task <ID>`）。日修 cron 在 **没有** `auto`+`todo`、但仍有 `assist`/`manual`+`todo` 时主动调用，每天最多 1 条。流程为拆 1（不计票）+ 评 A/B（计票）；**双评都通过（2/2）** 才把子项写成 `auto` 并改 backlog；一过一否可改版再评一轮，仍非 2/2 则不新增 `auto`（可记待决）。
+**自动拆条**：`scripts/automation/split-item.sh`（也可手动 `--task <ID>`）。日修 cron 在 **没有** `auto`+`todo`、但仍有 `assist`/`manual`+`todo` 时主动调用，每天最多 1 条。流程为拆 1（不计票）+ 评 A/B（计票）；**双评都通过（2/2）** 才把子项写成 `auto` 并改 backlog；一过一否可改版再评一轮，仍非 2/2 则不新增 `auto`（可记待决）。cron 路径拆条**只 commit、不开独立 PR**，由同次日修改名为 `auto-fix|feat/*` 开**一个** PR（拆条 commit 与日修 commit 分开）；避免 `docs/split-*` 合不进 main 导致持续 `empty_queue`。
 
 **飞轮总设计**：日修 / 周扫 / 拆条 / 合 PR / 流程自检 / 邮件通知，以及日志分析等仍缺的片，见 [`automation-harness.md`](automation-harness.md)。
 

@@ -31,7 +31,7 @@ automation_notify_load_env() {
 # 这些原因需要人介入；成功 / 互斥占用 / 用户取消不发。
 automation_notify_needed() {
   case "$1" in
-    empty_queue|dirty_worktree|fetch_failed|pr_conflict|pr_unmerged|qa_failed|review_rejected|agent_auth|contract_missing|scan_rejected|split_rejected|unknown)
+    empty_queue|dirty_worktree|fetch_failed|pr_conflict|pr_unmerged|qa_failed|review_rejected|agent_auth|contract_missing|scan_rejected|split_rejected|split_fallback_failed|unknown)
       return 0
       ;;
     *)
@@ -54,6 +54,7 @@ automation_notify_reason_zh() {
     contract_missing) printf '%s' '条目缺少契约冻结三行' ;;
     scan_rejected) printf '%s' '周扫描结果被脚本拒绝' ;;
     split_rejected) printf '%s' '拆条双评未 2/2：父项仍 assist/manual，请看待决或改口径' ;;
+    split_fallback_failed) printf '%s' '拆条已落盘但日修失败，且兜底 auto-* PR 未推成' ;;
     unknown) printf '%s' '未分类失败，请看当天 cron 日志' ;;
     *) printf '%s' "$1" ;;
   esac
@@ -148,7 +149,8 @@ bagujing 自动化需要你介入。
 任务：kind=${kind} taskId=${task_id:-（无）} stage=${stage} exit=${exit_code}
 
 请你做的事：
-- empty_queue：cron 会先尝试 split-item.sh（双评 2/2）；仍空则拆 assist/manual 或等周扫描补题。
+- empty_queue：cron 会先 split-item（只 commit）再日修同 PR；仍空则等周扫描或改口径。
+- split_fallback_failed：拆条已在本地，兜底 PR 未推成，请看分支与 cron 日志。
 - dirty_worktree：处理干净工作区后再跑日修。
 - fetch_failed / agent_auth：检查网络、gh / cursor-agent 登录。
 - pr_* / qa_failed / review_rejected：打开对应 PR 或本地分支看日志。
