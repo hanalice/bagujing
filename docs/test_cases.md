@@ -39,6 +39,7 @@
 - **pre-commit 拦截暂存区硬编码口令/密钥 (E13)**：`.githooks/pre-commit` 在 `qa-report.sh` **之前**检查暂存 diff；只认三类明文（PEM 私钥块、带用户名密码的 URL、敏感变量名 + ≥8 引号字面量）；命中则非 0 并输出 `文件:行` + 改走环境变量提示；占位字面量与 `*.example` / `docs/**` / 测试文件 / `package-lock.json` 放行。用构造的 diff 文本单测命中与放行（§2.39 `UT-SECRET-SCAN-*`）。**不做**：并进 OSV / `vulnerability-report.yml`；扫 git 历史；升级依赖；让 `qa.yml` 因漏洞失败；改写已入库密钥。**residual**：混淆/编码秘密与历史中已有密钥本项不清除。
 - **qa-report 采集前后端行覆盖率 (E14)**：`scripts/qa-report.sh` 采集**行覆盖率**并写入 `docs/qa_report.md`。后端沿用 `npm run test:coverage`（`--test-coverage-include=src/**`，`--test-coverage-exclude=src/tests/**`）。前端 Vitest 行覆盖率只统计 `frontend/src`，**不含** e2e。报告须含后端、前端两个可解析百分比；**比例高低均不得**让门禁失败；采集命令本身跑不起来则失败。单测见 §2.40 `UT-QA-COV-*`。**不做**：因比例拦截（**E15/E16**）；为凑比例改业务代码；把 E2E 算进行覆盖率。**residual**：历史 ≥60% 与新增行 ≥80% 仍属 E15/E16，禁止周扫描提前改 `auto`。
 - **部署文档 §3 环境变量名三方一致 (E17)**：单测锁 `docs/deployment-and-operations.md` **§3** 表格第一列环境变量名：表中每个名字须在后端 `process.env.<名>` 或前端 `import.meta.env.<名>` 出现（`VITE_` 只查前端）；`backend/.env.example` 与 `frontend/.env.example` 的键须出现在该节表中；缺任一侧则失败。允许补表或补 example 使绿，**不得**删掉代码仍在读的变量凑通过。单测见 §2.41 `UT-DOC-DEPLOY-*`。**不做**：改 `docs/security-ai-guard.md`（**S8/S11/S14**）；对齐散文 / 架构图 / Nginx 段；新增环境变量。**residual**：两份 `.env.example` 都没有的内部开关不要求进表。
+- **流水线日志解析→reason 聚类提案 (F11)**：在 `scripts/automation/` 提供可单测纯函数：输入样例 `automation-runs.ndjson` 文本 + 近日 `*cron*.log` 片段，按 `reason` 聚类，产出提案对象列表（`reason`、一句话现象可附截断摘录、`level` 仅为 `assist`|`pending`、推荐动作一句）；忽略 `ok` / `empty_queue` / `already_running` / `dry_run` / `cancelled`；摘录硬上限；疑似密钥/连接串行整行丢弃。**不写盘**、禁 `auto`。单测见 §2.51 `UT-LOG-PARSE-*`。**不做**：写任何 markdown；改 `process-decide.js` 阈值/状态；读 `ai_audit_logs`（**F2**）；发邮件；改 `daily-fix.sh` 选单。**residual**：落盘 **F12**；CLI/cron 壳 **F13**；本机挂载 **F14**。
 
 ---
 
@@ -1223,7 +1224,7 @@ C22 合入后 problems 关键字召回主路径改为 FTS（失败回退 LIKE）
 
 ### 2.49 流程飞轮：运行记录与流程队列决策（`backend/src/tests/process-decide.test.js` → `scripts/automation/process-decide.js` / `lib/run-record.sh`）
 
-日修与周扫描的失败记在 `logs/automation-runs.ndjson`（不入库）。`process-decide.js` 只改 `docs/process-backlog.md`：同一原因在最近 20 条计次记录里达到 3 次，才追加 `assist` 或降低已有项优先级；次数没有下降则写待决，不再降低同一项。`ok` 与 `empty_queue` 不计。`it()` 标题须含下表 ID。
+日修与周扫描的失败记在 `logs/automation-runs.ndjson`（不入库）。`process-decide.js` 只改 `docs/process-backlog.md`：同一原因在最近 20 条计次记录里达到 3 次，才追加 `assist` 或降低已有项优先级；次数没有下降则写待决，不再降低同一项。`ok` 与 `empty_queue` 不计。**F11**（§2.51 `UT-LOG-PARSE-*`）另做 NDJSON+cron → 提案对象纯函数，**不**写盘、**不**改本表阈值。`it()` 标题须含下表 ID。
 
 | ID | 用例标题 | 场景描述 | 预期结果 |
 | :--- | :--- | :--- | :--- |
@@ -1245,6 +1246,48 @@ C22 合入后 problems 关键字召回主路径改为 FTS（失败回退 LIKE）
 | UT-SPLIT-05 | 一过一否未改版 → revise | 一评 PASS、一评 FAIL，尚未改版。 | `action === 'revise'`。 |
 | UT-SPLIT-06 | 改版后仍非 2/2 → reject | `revisionUsed=true` 且仍非双 PASS。 | `action === 'reject'`。 |
 | UT-SPLIT-07 | 未知结论不当 PASS | 一评无 `VERDICT`、一评 PASS。 | `action === 'revise'`（不得 adopt）。 |
+
+### 2.51 流水线日志解析：NDJSON + 近日 cron 摘要 → reason 聚类提案（F11）（`backend/src/tests/process-log-parse.test.js` → `scripts/automation/` 可单测纯函数；可与未来 CLI 同文件导出）
+
+对应 **F11**（`docs/backlog.md` §F11；父项 **F1** 已拆）。现状：日修/周扫描结局已写入 `logs/automation-runs.ndjson`（§2.49 `UT-PROCESS-04`），`process-decide.js` 按「最近 20 条满 3 次」改 `process-backlog`；**尚无**「读 NDJSON + 近日 cron 日志 → 产出提案对象、且自身不写盘」的解析纯函数。完成标准：**做**——新增可单测解析纯函数；**不做**写 markdown / 改 decide 阈值 / 读业务审计 / 发信 / 改日修选单；落盘与 CLI 属 **F12/F13**。
+
+**做**：
+
+1. 在 `scripts/automation/` 存在可 `import`/`require` 的纯函数（契约建议名 `analyzePipelineLogs` / `clusterReasonProposals`，实现若用别名须在测码注释写明；允许与未来 F13 CLI 同文件导出）。签名接受至少：`ndjsonText: string`（样例 `automation-runs.ndjson` 全文或多行 NDJSON）、`cronLogText: string`（近日 `*cron*.log` 片段，可多文件拼接）。**禁止**在函数体内 `fs.writeFile` / `appendFile` / 改写任意 `.md`。
+2. 按记录的 `reason` 字段聚类（同一 `reason` 合并为一条提案）；产出**数组**，每项为提案对象，字段至少：
+   - `reason`：非空字符串（与源记录一致）；
+   - 一句话现象：非空字符串（可附截断摘录；字段名以实现为准，如 `summary` / `phenomenon`，测码注释写明）；
+   - `level`：精确为 `'assist'` 或 `'pending'`（字符串全等）；
+   - 推荐动作：非空一句（字段名如 `recommendation` / `actionHint`，测码注释写明）。
+3. **忽略**（不产生提案、不计入聚类分子）`reason` ∈ {`ok`, `empty_queue`, `already_running`, `dry_run`, `cancelled`}（与 `process-decide.js` 的 `IGNORED_REASONS` 对齐；本函数**不**要求满 3 次才提案，亦**不**改 decide 的 `limit`/`threshold`）。
+4. 摘录须有**硬上限**（契约建议 ≤ 200 字符；实现常量名/数值须在测码注释写明且为有限正整数）。超长 cron/NDJSON 相关摘录被截断后长度 `<=` 该上限；不得把整份超大日志原样塞进提案字段。
+5. **跳过疑似密钥/连接串行**：若某日志行变量名含 `PASSWORD` / `SECRET` / `TOKEN` / `API_KEY`（大小写不敏感子串），**或** URL 含用户口令形态（`://`…`:`…`@`），则该行**整行丢弃**，不得出现在任一提案的摘录/现象字符串中。
+6. 夹具下对返回数组做全量扫描：任意提案的 `level` **从不**等于 `'auto'`；亦不得出现 `| auto |` 字面量（本阶段不写 md，但对象序列化/字段值亦禁 `auto` 分级）。
+
+**不做**：写入任何 markdown（含 `docs/process-backlog.md` / `docs/backlog.md`）；改 `process-decide.js` 的计次窗口、阈值或状态文件读写；读 `ai_audit_logs`（属 **F2**）；发邮件；改 `daily-fix.sh` 选单逻辑。
+
+**residual**：提案落盘见 **F12**；可执行 CLI/cron 壳见 **F13**；本机任务计划挂载见 **F14**。本表**不得**以「未写 process-backlog」「未提供 CLI」为 FAIL。
+
+**测法**：`node:test` + `node:assert/strict`；建议 `backend/src/tests/process-log-parse.test.js`。① 用内存字符串夹具调用纯函数，禁止依赖真实 `logs/` 脏文件（可用 `AUTOMATION_RUN_FILE` 无关的临时字符串）；② stub/`mock` `fs.writeFileSync`/`fs.appendFileSync`（若实现误引用）断言调用次数为 0，或静态确认导出函数体无写盘 API；③ 对照只读 `scripts/automation/process-decide.js` 的 `IGNORED_REASONS` 集合与阈值常量，本项测码**不**修改该文件；④ 禁止真实发信、禁止读 SQLite `ai_audit_logs`、禁止改 `daily-fix.sh`。`it()` 标题须包含下表 ID。
+
+| ID | 用例标题 | 场景描述 | 预期结果 |
+| :--- | :--- | :--- | :--- |
+| UT-LOG-PARSE-01 | 纯函数可对内存 NDJSON+cron 文本产出提案数组 | 前置：构造合法 NDJSON 两行（`reason: 'qa_failed'`、`kind: 'daily-fix'`）+ 短 cron 片段含同一失败摘要；调用解析纯函数（不传文件路径，或路径参数可省略）。 | 1. 返回值为数组且 `length >= 1`；<br>2. 首项（或唯一 `qa_failed` 项）含非空 `reason === 'qa_failed'`、非空现象句、非空推荐动作句、`level` ∈ {`'assist'`,`'pending'`}；<br>3. 调用过程**零次**写盘（无新建/改写 `.md`；若 stub `fs.*Sync` 写接口则调用次数为 0）。 |
+| UT-LOG-PARSE-02 | 夹具下提案 `level` 从不含 `auto` | 前置：夹具混合 ≥3 种非忽略 `reason`（如 `qa_failed`、`dirty_worktree`、`agent_auth`）及可选 cron 噪音行；调用纯函数。 | 1. 对返回数组每一项断言 `level` 精确为 `'assist'` 或 `'pending'`（集合外一律 FAIL）；<br>2. **零**项满足 `level === 'auto'`；不得存在其它分级字段取值为 `'auto'`；<br>3. 与 backlog「禁 auto」「level 仅为 assist 或 pending」字面一致（现象文案中偶然出现英文词 `automation` 不构成 FAIL）。 |
+| UT-LOG-PARSE-03 | 同 `reason` 聚类稳定（多行合并为一条） | 前置：NDJSON 含 4 行同一 `reason: 'qa_failed'`（可夹杂不同 `ts`/`taskId`）+ 1 行 `reason: 'fetch_failed'`；无忽略 reason。 | 1. 返回数组中 `reason === 'qa_failed'` 的提案**恰好 1** 条；`fetch_failed` 恰好 1 条；总提案数 `=== 2`（或仅含这两类）；<br>2. 对同一夹具连续调用 2 次，两次数组按 `reason` 排序后深相等（聚类稳定，不因 Map 遍历抖动改序——若实现无排序，测码对拷贝按 `reason` localeCompare 后再比）；<br>3. `qa_failed` 现象/摘录可反映多次出现，但不得输出 4 条独立提案。 |
+| UT-LOG-PARSE-04 | 忽略 ok / empty_queue / already_running / dry_run / cancelled | 前置：NDJSON 五行分别 `reason` 为 `ok`、`empty_queue`、`already_running`、`dry_run`、`cancelled`（`kind` 可为 `daily-fix`）；另加一行 `qa_failed`。 | 1. 返回数组中**不存在**上述五个忽略 reason 的提案；<br>2. 存在且仅因 `qa_failed`（及夹具内其它非忽略 reason）产生的提案；<br>3. 与 `process-decide.js` `IGNORED_REASONS` 五元集合对齐；本行**不**要求满 3 次才出提案。 |
+| UT-LOG-PARSE-05 | 超长日志摘录被硬上限截断 | 前置：cron 片段含单行或连续文本长度 > 硬上限（如 500+ 字符可打印 ASCII/`x`.repeat(N)，N 大于实现上限）；NDJSON 含对应非忽略 `reason`（如 `scan_rejected`）使该摘录进入提案。 | 1. 实现导出或测码可读的摘录上限为有限正整数 `MAX`（注释写明默认建议 200）；<br>2. 提案中附带摘录的字段 `length <= MAX`；<br>3. 原始超长尾巴（如末尾 sentinel `TAIL_SENTINEL_XYZ`）**不**完整出现在该字段中（证明截断而非原样拷贝）。 |
+| UT-LOG-PARSE-06 | 含伪密钥行时摘录不含该行（PASSWORD/SECRET/TOKEN/API_KEY） | 前置：cron 文本含三行：① 普通失败行 `daily-fix: qa_failed at gate`；② `export OPENAI_API_KEY=sk_live_fake_probe_001`（或 `DB_PASSWORD=...` / `AUTH_TOKEN=...` / `CLIENT_SECRET=...`）；③ 另一普通行 `retry scheduled`。NDJSON 触发非忽略 reason 提案。 | 1. 所有提案的现象/摘录字符串 **均不包含** `sk_live_fake_probe_001` 及该伪密钥整行原文；<br>2. 普通失败行语义仍可出现在摘录或现象中（证明不是清空全部 cron）；<br>3. 变量名关键词按大小写不敏感子串匹配（`api_key` / `Api_Key` 等价命中）。 |
+| UT-LOG-PARSE-07 | URL 用户口令形态整行丢弃 | 前置：cron 含 `postgres://appuser:s3cretPW@db.internal:5432/app` 一行，另含无口令的 `https://example.com/status`；NDJSON 有非忽略 reason。 | 1. 任一提案摘录/现象**不含** `s3cretPW` 与完整 `appuser:s3cretPW@` 子串；<br>2. 允许保留无口令 URL `example.com`（不得仅因 `://` 误杀全部 URL）；<br>3. 与 backlog「URL 含用户口令形态则整行丢弃」一致。 |
+| UT-LOG-PARSE-08 | 空输入 → 空提案列表 | 前置：`ndjsonText === ''` 且 `cronLogText === ''`（或仅空白/换行）。 | 1. 返回 `[]`（或 `length === 0`）；<br>2. 不抛异常；<br>3. 不写盘。 |
+| UT-LOG-PARSE-09 | 残缺/非法 NDJSON 行可跳过 | 前置：三行文本：合法 JSON 行 `qa_failed`；一行非 JSON `not-json`；一行缺 `reason` 字段的 JSON `{"kind":"daily-fix"}`。 | 1. 不抛未捕获异常；<br>2. 仅合法且含非忽略 `reason` 的行进入聚类；<br>3. 非法行被跳过（可计入内部 warn，但不得污染提案 `reason` 为 `undefined`）。 |
+| UT-LOG-PARSE-10 | 近日 cron 摘要可参与现象/摘录（与 NDJSON 联合） | 前置：NDJSON 仅一行 `reason: 'agent_auth'` 无长 message；cron 片段含 `agent not logged in` / `CLI not in PATH` 类摘要行（无密钥）。 | 1. 对应提案 `reason === 'agent_auth'`；<br>2. 现象或摘录字符串包含 cron 摘要中的可判定子串（如 `not logged in` 或 `PATH`）；<br>3. 证明输入契约含「NDJSON + cron 片段」二者，而非只读其一。 |
+| UT-LOG-PARSE-11 | 不做：调用后不写任何 markdown | 前置：临时目录内放置只读拷贝的 `process-backlog.md` 与 `backlog.md` 内容哈希/原文快照；调用纯函数（即使传入路径参数也不应写入）。 | 1. 两份 markdown 原文与调用前逐字节（或 hash）相同；<br>2. 临时目录无新增 `.md`；<br>3. 与 **不做**「写入任何 markdown」及任务「不写盘」一致——本行 FAIL 条件含「函数直接 append 了 assist 行」（那属 F12）。 |
+| UT-LOG-PARSE-12 | 不做：不改 process-decide 阈值或状态文件 | 前置：只读 `scripts/automation/process-decide.js`；记录 `IGNORED_REASONS`、计次 `limit`（20）、`threshold`（3）等字面量；调用 F11 纯函数前后再读该文件。 | 1. `process-decide.js` 原文不变；<br>2. 本表 PASS **不**要求改 20/3 阈值，亦**不**调用 `decideFromRuns` 写状态；<br>3. 与 **不做**「改 process-decide.js 阈值或状态文件」一致；与 §2.49 分界：满 3 次落盘仍属 decide，本函数只产出提案对象。 |
+| UT-LOG-PARSE-13 | 不做：不读 ai_audit_logs（属 F2） | 前置：stub / 监视任何 `sqlite`/`ai_audit_logs` / `dbPool.query`；夹具仅字符串输入；调用纯函数。 | 1. **零次**触及 `ai_audit_logs` 表名或业务审计文件路径；<br>2. PASS **不**要求连接真实 DB；<br>3. 与 **不做**「读 ai_audit_logs」及 residual「F2」分界一致。 |
+| UT-LOG-PARSE-14 | 不做：不发邮件；不改 daily-fix.sh 选单 | 前置：A) stub `sendMail` / `automation_notify_human` / SMTP 相关；B) 读取 `scripts/automation/daily-fix.sh` 调用前哈希。 | 1. A：发信相关函数调用次数为 0；<br>2. B：`daily-fix.sh` 原文不变（本项实现不得改选单）；<br>3. 与 **不做**「发邮件」「改 daily-fix.sh 选单」字面一致。 |
+| UT-LOG-PARSE-15 | residual：本表不要求 F12 落盘 / F13 CLI / F14 cron 挂载 | 前置：只读 backlog F11 residual 与本小节断言范围。 | 1. PASS **不**要求存在 `process-log-analyze-cron.sh` 或 `--dry-run` CLI（属 F13）；<br>2. PASS **不**要求提案被写入 `docs/process-backlog.md`（属 F12）；<br>3. PASS **不**要求系统 crontab / 任务计划注册（属 F14）；以「未落盘/无 CLI」判 FAIL 则本行失败。 |
+| UT-LOG-PARSE-16 | 与 UT-PROCESS 分界：不计 decide 的「满 3 次」门槛 | 前置：NDJSON 仅 **1** 条 `qa_failed`（少于 decide 阈值 3）；`cronLogText` 可空或短摘要；调用 F11 纯函数。 | 1. 返回数组中存在恰好一条 `reason === 'qa_failed'` 的提案，且其 `level` ∈ {`'assist'`,`'pending'`}（**不得**因出现次数 &lt; 3 返回空数组）；<br>2. 调用前后 `docs/process-backlog.md`（或测码临时 md 快照）原文不变；<br>3. 证明 F11 只做聚类提案，不替代 §2.49 `UT-PROCESS-01`（未满 3 次不改队列）/ `UT-PROCESS-02`（满 3 次才落盘）的计次语义。 |
 
 ---
 

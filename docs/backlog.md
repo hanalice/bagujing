@@ -117,7 +117,7 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | S17 | fix | scan | auto | done | 40 | 无 Redis 时限流内存 Map 淘汰已过期窗口键 |
 | S18 | feat | audit | auto | done |  | 审计行补齐失败原因与上游状态，供日后按 reason 排行 |
 | F1 | feat | flywheel | assist | split |  | 已拆为 F11 / F12 / F13 / F14 |
-| F11 | feat | flywheel | auto | todo | 50 | 流水线日志解析：NDJSON+近日 cron 摘要→reason 聚类提案对象（不写盘；禁 auto） |
+| F11 | feat | flywheel | auto | done | 50 | 流水线日志解析：NDJSON+近日 cron 摘要→reason 聚类提案对象（不写盘；禁 auto） |
 | F12 | feat | flywheel | auto | todo | 60 | 将分析提案只写入 process-backlog 的 assist/待决（禁 auto；不抢 process-decide 降优先级） |
 | F13 | feat | flywheel | auto | todo | 70 | 低频分析 CLI/cron 壳：调 F11+F12；支持 dry-run；与 process-decide 并存 |
 | F14 | feat | flywheel | manual | todo | 80 | 本机任务计划/cron 挂载 F13（运维壳；禁止改代码默认强制跑） |
@@ -497,3 +497,4 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | 2026-11-11 | S15 完成：无效 client token 风控计数按 clientId 聚合，达到阈值才 403 |
 | 2026-11-13 | S16 完成：配置 AI_METRICS_TOKEN 时 /api/metrics 须校验令牌，未配置保持可匿名 |
 | 2026-11-17 | S17 完成：无 Redis 时限流内存 Map 淘汰已过期窗口键 |
+| 2026-11-20 | F11 完成：流水线日志解析：NDJSON+近日 cron 摘要→reason 聚类提案对象（不写盘；禁 auto） |
