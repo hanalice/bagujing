@@ -29,9 +29,10 @@ automation_notify_load_env() {
 }
 
 # 这些原因需要人介入；成功 / 互斥占用 / 用户取消不发。
+# split_fallback_pr：日修失败但已开兜底 PR，仍需人知悉（看 PR / 日志）。
 automation_notify_needed() {
   case "$1" in
-    empty_queue|dirty_worktree|fetch_failed|pr_conflict|pr_unmerged|qa_failed|review_rejected|agent_auth|contract_missing|scan_rejected|split_rejected|split_fallback_failed|unknown)
+    empty_queue|dirty_worktree|fetch_failed|pr_conflict|pr_unmerged|qa_failed|review_rejected|agent_auth|contract_missing|scan_rejected|split_rejected|split_fallback_failed|split_fallback_pr|secret_scan|commit_hook_failed|unknown)
       return 0
       ;;
     *)
@@ -55,9 +56,103 @@ automation_notify_reason_zh() {
     scan_rejected) printf '%s' '周扫描结果被脚本拒绝' ;;
     split_rejected) printf '%s' '拆条双评未 2/2：父项仍 assist/manual，请看待决或改口径' ;;
     split_fallback_failed) printf '%s' '拆条已落盘但日修失败，且兜底 auto-* PR 未推成' ;;
+    split_fallback_pr) printf '%s' '日修未完成，但已开 auto-* 兜底 PR（请看 PR，勿当 QA 红）' ;;
+    secret_scan) printf '%s' '提交被密钥扫描拦截（常见：规则字面量/注释形似口令 URL）' ;;
+    commit_hook_failed) printf '%s' 'git 提交钩子失败（非门禁用例红）' ;;
     unknown) printf '%s' '未分类失败，请看当天 cron 日志' ;;
     *) printf '%s' "$1" ;;
   esac
+}
+
+# 只展开与本次 reason 相关的处置提示，避免把 qa_failed 手册当成「本次原因」。
+automation_notify_action_for_reason() {
+  local reason="$1"
+  local log_hint="$2"
+  case "$reason" in
+    empty_queue)
+      printf '%s\n' "- cron 会先 split-item（只 commit）再日修同 PR；仍空则等周扫描或改口径。"
+      printf '%s\n' "- 先读 ${log_hint}"
+      ;;
+    secret_scan)
+      printf '%s\n' "- 这不是 QA 用例失败：pre-commit 密钥扫描拦了暂存 diff。"
+      printf '%s\n' "- 查日志里「命中位置」：规则字面量/注释勿写成连续的 URL userinfo 形态；测试夹具放 *.test.js。"
+      printf '%s\n' "- 修好后在同一 auto-* 分支补 commit 并推 PR。"
+      ;;
+    commit_hook_failed)
+      printf '%s\n' "- 提交未写入：看钩子输出（secret scan / commit-msg / qa-report）。"
+      printf '%s\n' "- 先读 ${log_hint} 尾部，再对症修。"
+      ;;
+    split_fallback_pr)
+      printf '%s\n' "- 日修本身失败，但拆条变更已推成 auto-* 兜底 PR，避免 empty_queue 死循环。"
+      printf '%s\n' "- 打开该 PR：先看是否缺实现 commit；再对照同次 daily-fix 失败原因。"
+      printf '%s\n' "- 日志：${log_hint}"
+      ;;
+    split_fallback_failed)
+      printf '%s\n' "- 拆条已在本地，兜底 PR 未推成：看分支与 ${log_hint}。"
+      ;;
+    dirty_worktree)
+      printf '%s\n' "- 处理干净工作区后再跑日修。"
+      ;;
+    fetch_failed|agent_auth)
+      printf '%s\n' "- 检查网络、gh / cursor-agent 登录与 PATH。"
+      ;;
+    pr_conflict|pr_unmerged)
+      printf '%s\n' "- 打开未合并 PR，处理冲突或等 qa 变绿后再跑日修。"
+      ;;
+    qa_failed)
+      printf '%s\n' "- 打开 docs/qa_report.md 与当天 daily-fix 日志，修红后返修或人工接手。"
+      ;;
+    review_rejected)
+      printf '%s\n' "- 看独立审核缺口列表，补实现/用例后再跑。"
+      ;;
+    contract_missing)
+      printf '%s\n' "- 给条目补齐 ### 契约三行（做 / 不做 / residual）。"
+      ;;
+    scan_rejected|split_rejected)
+      printf '%s\n' "- 看周扫/拆条日志与待决表，改口径后再跑。"
+      ;;
+    *)
+      printf '%s\n' "- 先读 ${log_hint}，按尾部错误对症处理。"
+      ;;
+  esac
+}
+
+# 找当天最新 cron 日志路径（相对仓库根），找不到则给通配提示。
+automation_notify_latest_cron_log() {
+  local root="${PROJECT_ROOT:-.}"
+  local day
+  day="$(date +%Y%m%d)"
+  local hit=""
+  hit="$(ls -1t "$root/logs/daily-fix-cron-${day}"-*.log 2>/dev/null | head -n 1 || true)"
+  if [ -z "$hit" ]; then
+    hit="$(ls -1t "$root/logs/weekly-scan-cron-${day}"-*.log 2>/dev/null | head -n 1 || true)"
+  fi
+  if [ -n "$hit" ]; then
+    printf '%s' "${hit#"$root"/}"
+  else
+    printf '%s' "logs/daily-fix-cron-${day}-*.log"
+  fi
+}
+
+# 取日志尾部若干非空行，供邮件锚定（截断防爆）。
+automation_notify_log_excerpt() {
+  local log_rel="$1"
+  local root="${PROJECT_ROOT:-.}"
+  local abs="$root/$log_rel"
+  [ -f "$abs" ] || return 0
+  local excerpt
+  # 优先钩子/失败标记行，避免从 diff 正文里扫到「硬编码」说明文字。
+  excerpt="$(grep -E '^❌|^🚫|Secret Scan|命中位置|Git Hook 拦截|质量门禁失败|拆条未采纳|🎯 任务 ' "$abs" 2>/dev/null | tail -n 8 || true)"
+  if [ -z "$excerpt" ]; then
+    excerpt="$(tail -n 12 "$abs" 2>/dev/null || true)"
+  fi
+  [ -n "$excerpt" ] || return 0
+  # 单行过长截断
+  printf '%s\n' "$excerpt" | awk '{
+    s=$0
+    if (length(s) > 200) s=substr(s,1,200) "…"
+    print s
+  }'
 }
 
 # 发一封纯文本邮件。参数：主题 正文。失败只打日志，返回非 0。
@@ -136,31 +231,35 @@ automation_notify_human() {
   local extra="${6:-}"
   automation_notify_needed "$reason" || return 0
 
-  local zh subject body root log_hint
+  local zh subject body root log_rel actions excerpt
   zh="$(automation_notify_reason_zh "$reason")"
   subject="[bagujing] 需要人工：${zh}"
   root="${PROJECT_ROOT:-.}"
-  log_hint="logs/ 下当天 daily-fix-cron-*.log / weekly-scan-cron-*.log"
+  log_rel="$(automation_notify_latest_cron_log)"
+  actions="$(automation_notify_action_for_reason "$reason" "$log_rel")"
+  excerpt="$(automation_notify_log_excerpt "$log_rel" || true)"
   body="$(cat <<EOF
 bagujing 自动化需要你介入。
 
 原因：${reason}
 摘要：${zh}
 任务：kind=${kind} taskId=${task_id:-（无）} stage=${stage} exit=${exit_code}
+日志：${log_rel}
 
-请你做的事：
-- empty_queue：cron 会先 split-item（只 commit）再日修同 PR；仍空则等周扫描或改口径。
-- split_fallback_failed：拆条已在本地，兜底 PR 未推成，请看分支与 cron 日志。
-- dirty_worktree：处理干净工作区后再跑日修。
-- fetch_failed / agent_auth：检查网络、gh / cursor-agent 登录。
-- pr_* / qa_failed / review_rejected：打开对应 PR 或本地分支看日志。
-- 其它：先读 ${log_hint}
-
+请你做的事（仅针对本次原因）：
+${actions}
 仓库：${root}
 ${extra}
 
-（本机 SMTP 自动发送；勿回复此邮件地址除非你知道发件箱。）
 EOF
 )"
+  if [ -n "$excerpt" ]; then
+    body="${body}日志摘录：
+${excerpt}
+
+"
+  fi
+  body="${body}（本机 SMTP 自动发送；勿回复此邮件地址除非你知道发件箱。）
+"
   automation_notify_send "$subject" "$body" || true
 }

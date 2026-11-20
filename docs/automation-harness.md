@@ -123,7 +123,9 @@ flowchart TD
 
 - 配置：本机 `~/.config/bagujing/automation-notify.env` 或 `scripts/automation/automation-notify.env.local`（见 `automation-notify.env.example`，**勿提交密钥**）。
 - 试发：`./scripts/automation/send-notify-test.sh`。
-- 会发信的原因包括：`empty_queue`、`dirty_worktree`、`fetch_failed`、`pr_conflict` / `pr_unmerged`、`qa_failed`、`review_rejected`、`agent_auth`、`contract_missing`、`scan_rejected`、`split_rejected`、`unknown`。
+- 会发信的原因包括：`empty_queue`、`dirty_worktree`、`fetch_failed`、`pr_conflict` / `pr_unmerged`、`qa_failed`、`review_rejected`、`agent_auth`、`contract_missing`、`scan_rejected`、`split_rejected`、`secret_scan`、`commit_hook_failed`、`split_fallback_pr` / `split_fallback_failed`、`unknown`。
+- 邮件正文带**动态** `taskId`（不写死 F11 等编号）、当天 cron 日志路径、尾部摘录；「请你做的事」只展开**本次 reason**，避免把通用 QA 手册误当成本次原因。
+- 提交钩子失败（密钥扫描等）记 `secret_scan` / `commit_hook_failed`，与 `qa_failed` 区分；拆条兜底取号优先分支名 / `.last-daily-fix-task` / 拆条时冻结的首个 auto，避免写回 done 后串到下一条。
 - **不发**：成功、`already_running`、用户取消、dry-run。
 
 ---
