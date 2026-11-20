@@ -116,7 +116,11 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | S16 | fix | scan | auto | done | 30 | 配置 AI_METRICS_TOKEN 时 /api/metrics 须校验令牌，未配置保持可匿名 |
 | S17 | fix | scan | auto | done | 40 | 无 Redis 时限流内存 Map 淘汰已过期窗口键 |
 | S18 | feat | audit | auto | done |  | 审计行补齐失败原因与上游状态，供日后按 reason 排行 |
-| F1 | feat | flywheel | assist | todo | 50 | 流水线日志分析：读 automation-runs 与近日 cron 日志，只写 process-backlog 的 assist/待决（禁止直接 auto） |
+| F1 | feat | flywheel | assist | split |  | 已拆为 F11 / F12 / F13 / F14 |
+| F11 | feat | flywheel | auto | todo | 50 | 流水线日志解析：NDJSON+近日 cron 摘要→reason 聚类提案对象（不写盘；禁 auto） |
+| F12 | feat | flywheel | auto | todo | 60 | 将分析提案只写入 process-backlog 的 assist/待决（禁 auto；不抢 process-decide 降优先级） |
+| F13 | feat | flywheel | auto | todo | 70 | 低频分析 CLI/cron 壳：调 F11+F12；支持 dry-run；与 process-decide 并存 |
+| F14 | feat | flywheel | manual | todo | 80 | 本机任务计划/cron 挂载 F13（运维壳；禁止改代码默认强制跑） |
 | F2 | feat | flywheel | assist | todo | 55 | 业务审计 reason 排行：读 ai_audit_logs，只建议改 backlog 优先级或开 assist（禁止盲改数字） |
 
 
@@ -338,11 +342,31 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 
 ### F1
 
-分级保持 `assist`。禁止周扫描改成 `auto`。须经 `split-item` 双评 2/2 或人拆出可锁单测的 `auto` 子项后再改。
+已由人/机拆为 F11–F14。周扫描不得把本父项改回 `todo`，不得把 F14 改成 `auto`，不得把未写「做 / 不做 / residual」的子项标成 `auto`。总约束仍有效：只写 `process-backlog` 的 assist/待决，禁止直接 `auto`；不替代 `process-decide` 计数阈值；不改业务 `docs/backlog.md` 队列表。
 
-- **做**：新增低频作业（可由日修 cron 之后或独立定时触发）：读取 `logs/automation-runs.ndjson` 与近日 `logs/*cron*.log` 摘要；按 `reason` 聚类；对**尚未**被 `process-decide` 覆盖、或需要人写清契约的失败模式，向 `docs/process-backlog.md` **仅**追加 `assist`+`todo` 或待决行（含一句话现象与推荐），**禁止**直接写入 `auto`。单测锁：给定样例 NDJSON/日志片段时，输出行分级必为 assist/待决且含 reason；不得出现 `| auto |`。
-- **不做**：改 `daily-fix.sh` 选单逻辑；直接改 `docs/backlog.md` 业务队列表；把未冻契约标成 `auto`；替代现有 `process-decide` 的「满 3 次才动」阈值（可并存：本项产出草案，decide 仍管计数）。
-- **residual**：真正冻成可日修的 process `auto` 仍走拆条或人改分级。邮件正文是否附分析摘要另条。
+### F11
+
+- **做**：在 `scripts/automation/` 新增可单测的解析纯函数（可与 CLI 同文件导出）：输入样例 `automation-runs.ndjson` 文本与近日 `*cron*.log` 片段；按 `reason` 聚类；产出提案对象列表，每项含 `reason`、一句话现象（可附截断摘录）、`level` 仅为 `assist` 或 `pending`、推荐动作一句。忽略 `ok` / `empty_queue` / `already_running` / `dry_run` / `cancelled`。摘录须有硬上限，并跳过疑似密钥/连接串行（变量名含 `PASSWORD`/`SECRET`/`TOKEN`/`API_KEY` 或 URL 含用户口令形态则整行丢弃）。单测 `it()` 标题含用例 ID：夹具下提案 `level` 从不含 `auto`；同 reason 聚类稳定；超长日志被截断；含伪密钥行时摘录不含该行。
+- **不做**：写入任何 markdown；改 `process-decide.js` 阈值或状态文件；读 `ai_audit_logs`（属 F2）；发邮件；改 `daily-fix.sh` 选单。
+- **residual**：落盘见 F12；可执行入口见 F13；本机挂载见 F14。
+
+### F12
+
+- **做**：消费 F11 提案，只改 `docs/process-backlog.md`：追加 `assist`+`todo` 行（来源列写 `reason`，任务列含现象与推荐）或待决行。已有同 `reason` 的 `todo` 则跳过追加，**不**降低其优先级（降优先级仍属 `process-decide`）。单次写入后新增行不得出现 `| auto |`。可写修订记录一行说明来源为日志分析。单测锁：样例 md → 有写入 / 已存在则跳过 / 待决 路径；差分可审；全文扫描不得因本函数新增 `auto` 分级。
+- **不做**：改业务 `docs/backlog.md`；替代、删除或绕过 `process-decide` 的「满 3 次才动」；把未冻项标成 `auto`；改 `daily-fix.sh` / `weekly-scan.sh`。
+- **residual**：process 项冻成可日修 `auto` 仍走拆条或人改分级。邮件是否附分析摘要另条。
+
+### F13
+
+- **做**：提供可执行入口（CLI，及可选 `process-log-analyze-cron.sh` 风格壳）：默认读 `logs/automation-runs.ndjson` 与近日 `logs/*cron*.log`，串联 F11+F12；支持 `--dry-run`（只打印提案、不改 md）。可对独立 kind 调用 `automation_record`，不得冒充 `daily-fix` / `weekly-scan` 计次。单测：`--dry-run` 后 process-backlog 原文不变；非 dry-run 可对临时目录断言只碰 process-backlog（不碰业务 backlog）。
+- **不做**：改 `daily-fix.sh` 选单逻辑或强制插入日修主路径；在脚本内注册系统 crontab / Windows 任务；读业务审计；发邮件正文（通知另条）。
+- **residual**：本机任务计划挂载见 F14（manual）。
+
+### F14
+
+- **做**：在已跑日修的本机用任务计划或 cron 低频挂载 F13 入口（建议日修之后或独立槽位），与 `process-decide-cron` 并存。可在部署/运维文档补一句路径级示例，不把「每次日修必跑分析」写进仓库代码默认。
+- **不做**：改代码默认值迫使分析作业必跑；把 SMTP 或仓库凭据写入本项；自动 `git stash` 脏工作区；改 `process-decide` 阈值。
+- **residual**：邮件正文是否附分析摘要另条。真要改日修主路径串联须另开条目并冻契约。
 
 ### F2
 
@@ -469,6 +493,7 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | 2026-11-10 | S14 完成：对齐 security-ai-guard.md：去掉「月配额」已落地暗示，只写日配额 |
 | 2026-11-19 | 公开飞轮设计：`docs/automation-harness.md`（日修/周扫/拆条/通知/日志分析缺口） |
 | 2026-11-19 | 登记 assist F1（流水线日志分析→process-backlog）/ F2（业务 reason 排行建议），优先级 50/55 |
+| 2026-11-20 | 人/机拆 F1：父项 split；F11–F13 为 auto+todo（解析/落盘/入口）；F14 为 manual 运维挂载 |
 | 2026-11-11 | S15 完成：无效 client token 风控计数按 clientId 聚合，达到阈值才 403 |
 | 2026-11-13 | S16 完成：配置 AI_METRICS_TOKEN 时 /api/metrics 须校验令牌，未配置保持可匿名 |
 | 2026-11-17 | S17 完成：无 Redis 时限流内存 Map 淘汰已过期窗口键 |
