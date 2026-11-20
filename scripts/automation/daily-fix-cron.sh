@@ -75,6 +75,8 @@ source "$PROJECT_ROOT/scripts/automation/lib/git-sandbox.sh"
 
 # 无 auto+todo 但有 assist/manual 可拆时：先拆最多 1 条（只 commit、不开 PR），再日修同 PR。
 SPLIT_ADOPTED=0
+# 拆成功后、日修前冻结的首个 auto（写回 done 后 backlog 会指向下一条，不能再用来取失败任务号）。
+SPLIT_PRIMARY_AUTO=""
 if [ -z "$(backlog_list_auto_todo_ids)" ]; then
   if [ -n "$(backlog_list_split_candidates)" ]; then
     echo "ℹ️ auto 队列空，尝试拆条（每天最多 1 条，commit 后交日修开 PR）…"
@@ -84,6 +86,7 @@ if [ -z "$(backlog_list_auto_todo_ids)" ]; then
     set -e
     if [ "$split_code" -eq 0 ]; then
       SPLIT_ADOPTED=1
+      SPLIT_PRIMARY_AUTO="$(backlog_list_auto_todo_ids 2>/dev/null | head -n 1 || true)"
     else
       echo "拆条未采纳或失败（exit=$split_code）。回到 main 再尝试日修选单。"
       git checkout main >/dev/null 2>&1 || true
@@ -96,28 +99,53 @@ set +e
 code=$?
 set -e
 
+# 从分支名 / 日修落盘标记 / 拆条时冻结的首个 auto 还原「真正失败的任务号」。
+resolve_failed_task_id() {
+  local cur id from_file
+  cur="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+  if [[ "$cur" =~ ^auto-(fix|feat)/([a-z0-9]+)-[0-9]{8}$ ]]; then
+    # f11 → F11
+    id="$(printf '%s' "${BASH_REMATCH[2]}" | tr '[:lower:]' '[:upper:]')"
+    printf '%s' "$id"
+    return 0
+  fi
+  from_file="$(tr -d '[:space:]' <"$PROJECT_ROOT/logs/.last-daily-fix-task" 2>/dev/null || true)"
+  if [ -n "$from_file" ]; then
+    printf '%s' "$from_file"
+    return 0
+  fi
+  printf '%s' "${SPLIT_PRIMARY_AUTO:-}"
+}
+
 # 拆条已落盘但日修失败：开 auto-* 兜底 PR，避免 main 无 auto 却永远合不进拆条。
 if [ "$code" -ne 0 ] && [ "$SPLIT_ADOPTED" -eq 1 ]; then
   echo "⚠️ 日修未完成，尝试把已拆条分支推成 auto-* 兜底 PR…"
-  first_auto="$(backlog_list_auto_todo_ids 2>/dev/null | head -n 1)"
-  first_auto_lc="$(printf '%s' "$first_auto" | tr '[:upper:]' '[:lower:]')"
+  failed_task="$(resolve_failed_task_id)"
+  failed_task_lc="$(printf '%s' "$failed_task" | tr '[:upper:]' '[:lower:]')"
   item_type="fix"
-  if [ -n "$first_auto" ]; then
-    row="$(backlog_read_row "$first_auto" auto 2>/dev/null || true)"
+  if [ -n "$failed_task" ]; then
+    row="$(backlog_read_row "$failed_task" "" 2>/dev/null || true)"
     if [ -n "$row" ]; then
       IFS=$'\t' read -r _ item_type _ _ _ _ <<<"$row" || true
     fi
   fi
+  # 分支已是 auto-feat 时以分支前缀为准
+  cur_br="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+  if [[ "$cur_br" == auto-feat/* ]]; then
+    item_type="feat"
+  elif [[ "$cur_br" == auto-fix/* ]]; then
+    item_type="fix"
+  fi
   set +e
-  git_sandbox_push_split_fallback_pr "$first_auto_lc" "$item_type"
+  git_sandbox_push_split_fallback_pr "$failed_task_lc" "$item_type"
   fb=$?
   set -e
   if [ "$fb" -eq 0 ]; then
-    automation_record daily-fix-cron "${first_auto:-}" cron split_fallback_pr 0 true ""
-    echo "✅ 已开拆条兜底 PR（日修仍失败，请看邮件/日志）。"
+    automation_record daily-fix-cron "${failed_task:-}" cron split_fallback_pr 0 true ""
+    echo "✅ 已开拆条兜底 PR（日修仍失败，请看邮件/日志；taskId=${failed_task:-未知}）。"
   else
     echo "⚠️ 兜底 PR 未推成（exit=$fb）；本地分支可能仍含拆条 commit，请人工处理。"
-    automation_record daily-fix-cron "${first_auto:-}" cron split_fallback_failed 1 "" ""
+    automation_record daily-fix-cron "${failed_task:-}" cron split_fallback_failed 1 "" ""
   fi
 fi
 

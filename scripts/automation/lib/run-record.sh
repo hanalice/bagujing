@@ -6,13 +6,15 @@
 # shellcheck source=notify-email.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/notify-email.sh"
 
-# 把 die 文案收成固定原因。对不上则 unknown。
+# 把 die / 钩子输出文案收成固定原因。对不上则 unknown。
 automation_classify_message() {
   local msg="$1"
   case "$msg" in
     *队列中没有可执行任务*) printf '%s' empty_queue ;;
     *缺少契约*|*契约冻结*) printf '%s' contract_missing ;;
     *未登录*|*不在\ PATH*|*登录态失效*) printf '%s' agent_auth ;;
+    *Secret\ Scan*|*硬编码秘密*|*硬编码口令*|*硬编码密钥*) printf '%s' secret_scan ;;
+    *Git\ Hook*|*commit-msg*|*钩子*拦截*|*提交已被取消*) printf '%s' commit_hook_failed ;;
     *门禁*) printf '%s' qa_failed ;;
     *审核*) printf '%s' review_rejected ;;
     *工作区*) printf '%s' dirty_worktree ;;
@@ -23,6 +25,15 @@ automation_classify_message() {
     *拆条未采纳*|*双评未*) printf '%s' split_rejected ;;
     *) printf '%s' unknown ;;
   esac
+}
+
+# 从日志尾部推断失败原因（提交钩子失败时 die 文案可能进不了 classify）。
+automation_classify_log_tail() {
+  local log="${1:-}"
+  [ -n "$log" ] && [ -f "$log" ] || { printf '%s' unknown; return 0; }
+  local tail_txt
+  tail_txt="$(tail -n 80 "$log" 2>/dev/null || true)"
+  automation_classify_message "$tail_txt"
 }
 
 # 参数：kind taskId stage reason exitCode prOpened qaPassed

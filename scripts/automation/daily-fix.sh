@@ -50,7 +50,18 @@ _record_daily_fix() {
   [ "$RUN_RECORD" = "1" ] || return 0
   local reason="${RUN_REASON:-}"
   if [ -z "$reason" ]; then
-    if [ "$code" -eq 0 ]; then reason=ok; else reason=unknown; fi
+    if [ "$code" -eq 0 ]; then
+      reason=ok
+    elif [ -n "${RUN_LOG:-}" ] && [ -f "${RUN_LOG}" ]; then
+      reason="$(automation_classify_log_tail "$RUN_LOG")"
+    else
+      reason=unknown
+    fi
+  fi
+  # 供 cron 兜底取「刚失败的任务号」，避免写回 done 后读到下一条 auto。
+  if [ -n "${RUN_TASK:-}" ]; then
+    mkdir -p "${LOG_DIR:-$PROJECT_ROOT/logs}"
+    printf '%s\n' "$RUN_TASK" >"${LOG_DIR:-$PROJECT_ROOT/logs}/.last-daily-fix-task"
   fi
   automation_record "$RUN_KIND" "$RUN_TASK" "$RUN_STAGE" "$reason" "$code" "$RUN_PR" "$RUN_QA"
 }
@@ -471,7 +482,21 @@ backlog_writeback_done "$ID" "$TASK_TEXT" ""
 echo "📄 已将 $ID 在 $QUEUE_REL 标记为 done"
 
 RUN_STAGE="commit"
-git_sandbox_commit_all "$MSG_FILE"
+# 提交钩子失败（密钥扫描 / commit-msg / 钩子内 qa）必须记成明确 reason，避免落成 unknown 或 silently 丢记账。
+COMMIT_OUT="$LOG_DIR/.daily-fix-commit-out"
+set +e
+git_sandbox_commit_all "$MSG_FILE" >"$COMMIT_OUT" 2>&1
+commit_rc=$?
+set -e
+tee -a "$RUN_LOG" <"$COMMIT_OUT" >/dev/null || true
+cat "$COMMIT_OUT"
+if [ "$commit_rc" -ne 0 ]; then
+  RUN_REASON="$(automation_classify_message "$(cat "$COMMIT_OUT")")"
+  if [ "$RUN_REASON" = "unknown" ]; then
+    RUN_REASON=commit_hook_failed
+  fi
+  exit 1
+fi
 if [ "$DO_PUSH" = "1" ]; then
   RUN_PR=true
 fi
