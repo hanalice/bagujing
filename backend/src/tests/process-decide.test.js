@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { decide } from '../../../scripts/automation/process-decide.js';
 
 const TEMPLATE = fs.readFileSync(
@@ -83,15 +83,21 @@ describe('process-decide', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'run-record-'));
     const file = path.join(root, 'automation-runs.ndjson');
     const lib = path.resolve(import.meta.dirname, '../../../scripts/automation/lib/run-record.sh');
-    execFileSync('bash', ['-c', `
+    // 必须禁用发信：automation_record 会对 qa_failed 调本机 SMTP；否则日修 pre-commit 会误发「S14/qa_failed」真邮件。
+    const result = spawnSync('bash', ['-c', `
       set -euo pipefail
       PROJECT_ROOT=${JSON.stringify(root)}
       AUTOMATION_RUN_FILE=${JSON.stringify(file)}
+      AUTOMATION_NOTIFY_DISABLE=1
       source ${JSON.stringify(lib)}
       test "$(automation_classify_message '队列中没有可执行任务')" = empty_queue
       test "$(automation_classify_message '缺少契约冻结')" = contract_missing
       automation_record daily-fix S14 qa qa_failed 1 false false
     `], { encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const combined = `${result.stdout || ''}\n${result.stderr || ''}`;
+    assert.match(combined, /AUTOMATION_NOTIFY_DISABLE/);
+    assert.doesNotMatch(combined, /已发送通知邮件/);
     const row = JSON.parse(fs.readFileSync(file, 'utf8').trim());
     assert.equal(row.kind, 'daily-fix');
     assert.equal(row.taskId, 'S14');
