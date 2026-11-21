@@ -39,7 +39,8 @@
 - **pre-commit 拦截暂存区硬编码口令/密钥 (E13)**：`.githooks/pre-commit` 在 `qa-report.sh` **之前**检查暂存 diff；只认三类明文（PEM 私钥块、带用户名密码的 URL、敏感变量名 + ≥8 引号字面量）；命中则非 0 并输出 `文件:行` + 改走环境变量提示；占位字面量与 `*.example` / `docs/**` / 测试文件 / `package-lock.json` 放行。用构造的 diff 文本单测命中与放行（§2.39 `UT-SECRET-SCAN-*`）。**不做**：并进 OSV / `vulnerability-report.yml`；扫 git 历史；升级依赖；让 `qa.yml` 因漏洞失败；改写已入库密钥。**residual**：混淆/编码秘密与历史中已有密钥本项不清除。
 - **qa-report 采集前后端行覆盖率 (E14)**：`scripts/qa-report.sh` 采集**行覆盖率**并写入 `docs/qa_report.md`。后端沿用 `npm run test:coverage`（`--test-coverage-include=src/**`，`--test-coverage-exclude=src/tests/**`）。前端 Vitest 行覆盖率只统计 `frontend/src`，**不含** e2e。报告须含后端、前端两个可解析百分比；**比例高低均不得**让门禁失败；采集命令本身跑不起来则失败。单测见 §2.40 `UT-QA-COV-*`。**不做**：因比例拦截（**E15/E16**）；为凑比例改业务代码；把 E2E 算进行覆盖率。**residual**：历史 ≥60% 与新增行 ≥80% 仍属 E15/E16，禁止周扫描提前改 `auto`。
 - **部署文档 §3 环境变量名三方一致 (E17)**：单测锁 `docs/deployment-and-operations.md` **§3** 表格第一列环境变量名：表中每个名字须在后端 `process.env.<名>` 或前端 `import.meta.env.<名>` 出现（`VITE_` 只查前端）；`backend/.env.example` 与 `frontend/.env.example` 的键须出现在该节表中；缺任一侧则失败。允许补表或补 example 使绿，**不得**删掉代码仍在读的变量凑通过。单测见 §2.41 `UT-DOC-DEPLOY-*`。**不做**：改 `docs/security-ai-guard.md`（**S8/S11/S14**）；对齐散文 / 架构图 / Nginx 段；新增环境变量。**residual**：两份 `.env.example` 都没有的内部开关不要求进表。
-- **流水线日志解析→reason 聚类提案 (F11)**：在 `scripts/automation/` 提供可单测纯函数：输入样例 `automation-runs.ndjson` 文本 + 近日 `*cron*.log` 片段，按 `reason` 聚类，产出提案对象列表（`reason`、一句话现象可附截断摘录、`level` 仅为 `assist`|`pending`、推荐动作一句）；忽略 `ok` / `empty_queue` / `already_running` / `dry_run` / `cancelled`；摘录硬上限；疑似密钥/连接串行整行丢弃。**不写盘**、禁 `auto`。单测见 §2.51 `UT-LOG-PARSE-*`。**不做**：写任何 markdown；改 `process-decide.js` 阈值/状态；读 `ai_audit_logs`（**F2**）；发邮件；改 `daily-fix.sh` 选单。**residual**：落盘 **F12**；CLI/cron 壳 **F13**；本机挂载 **F14**。
+- **流水线日志解析→reason 聚类提案 (F11)**：在 `scripts/automation/` 提供可单测纯函数：输入样例 `automation-runs.ndjson` 文本 + 近日 `*cron*.log` 片段，按 `reason` 聚类，产出提案对象列表（`reason`、一句话现象可附截断摘录、`level` 仅为 `assist`|`pending`、推荐动作一句）；忽略 `ok` / `empty_queue` / `already_running` / `dry_run` / `cancelled`；摘录硬上限；疑似密钥/连接串行整行丢弃。**不写盘**、禁 `auto`。单测见 §2.51 `UT-LOG-PARSE-*`。**不做**：写任何 markdown；改 `process-decide.js` 阈值/状态；读 `ai_audit_logs`（**F2**）；发邮件；改 `daily-fix.sh` 选单。**residual**：落盘 **F12**（§2.52）；CLI/cron 壳 **F13**；本机挂载 **F14**。
+- **分析提案写入 process-backlog（F12）**：消费 F11 提案对象，**只**改 `docs/process-backlog.md`：追加 `assist`+`todo` 行（来源列=`reason`，任务列含现象与推荐）或待决行；已有同 `reason` 的 `todo` 则**跳过追加且不降优先级**（降优先级仍属 `process-decide`）；单次写入后新增行不得出现 `| auto |`；可写修订记录一行说明来源为日志分析。单测见 §2.52 `UT-LOG-WRITE-*`。**不做**：改业务 `docs/backlog.md`；替代/删除/绕过 `process-decide`「满 3 次才动」；把未冻项标 `auto`；改 `daily-fix.sh` / `weekly-scan.sh`。**residual**：冻成日修 `auto` 仍走拆条或人改分级；邮件附分析摘要另条；CLI/cron 串联属 **F13**。
 
 ---
 
@@ -1224,7 +1225,7 @@ C22 合入后 problems 关键字召回主路径改为 FTS（失败回退 LIKE）
 
 ### 2.49 流程飞轮：运行记录与流程队列决策（`backend/src/tests/process-decide.test.js` → `scripts/automation/process-decide.js` / `lib/run-record.sh`）
 
-日修与周扫描的失败记在 `logs/automation-runs.ndjson`（不入库）。`process-decide.js` 只改 `docs/process-backlog.md`：同一原因在最近 20 条计次记录里达到 3 次，才追加 `assist` 或降低已有项优先级；次数没有下降则写待决，不再降低同一项。`ok` 与 `empty_queue` 不计。**F11**（§2.51 `UT-LOG-PARSE-*`）另做 NDJSON+cron → 提案对象纯函数，**不**写盘、**不**改本表阈值。`it()` 标题须含下表 ID。
+日修与周扫描的失败记在 `logs/automation-runs.ndjson`（不入库）。`process-decide.js` 只改 `docs/process-backlog.md`：同一原因在最近 20 条计次记录里达到 3 次，才追加 `assist` 或降低已有项优先级；次数没有下降则写待决，不再降低同一项。`ok` 与 `empty_queue` 不计。**F11**（§2.51 `UT-LOG-PARSE-*`）另做 NDJSON+cron → 提案对象纯函数，**不**写盘、**不**改本表阈值。**F12**（§2.52 `UT-LOG-WRITE-*`）消费 F11 提案落盘 process-backlog 的 assist/待决，**禁止**降优先级、**禁止**标 `auto`，不得替代本表「满 3 次」门槛。`it()` 标题须含下表 ID。
 
 | ID | 用例标题 | 场景描述 | 预期结果 |
 | :--- | :--- | :--- | :--- |
@@ -1266,7 +1267,7 @@ C22 合入后 problems 关键字召回主路径改为 FTS（失败回退 LIKE）
 
 **不做**：写入任何 markdown（含 `docs/process-backlog.md` / `docs/backlog.md`）；改 `process-decide.js` 的计次窗口、阈值或状态文件读写；读 `ai_audit_logs`（属 **F2**）；发邮件；改 `daily-fix.sh` 选单逻辑。
 
-**residual**：提案落盘见 **F12**；可执行 CLI/cron 壳见 **F13**；本机任务计划挂载见 **F14**。本表**不得**以「未写 process-backlog」「未提供 CLI」为 FAIL。
+**residual**：提案落盘见 **F12**（§2.52 `UT-LOG-WRITE-*`）；可执行 CLI/cron 壳见 **F13**；本机任务计划挂载见 **F14**。本表**不得**以「未写 process-backlog」「未提供 CLI」为 FAIL。
 
 **测法**：`node:test` + `node:assert/strict`；建议 `backend/src/tests/process-log-parse.test.js`。① 用内存字符串夹具调用纯函数，禁止依赖真实 `logs/` 脏文件（可用 `AUTOMATION_RUN_FILE` 无关的临时字符串）；② stub/`mock` `fs.writeFileSync`/`fs.appendFileSync`（若实现误引用）断言调用次数为 0，或静态确认导出函数体无写盘 API；③ 对照只读 `scripts/automation/process-decide.js` 的 `IGNORED_REASONS` 集合与阈值常量，本项测码**不**修改该文件；④ 禁止真实发信、禁止读 SQLite `ai_audit_logs`、禁止改 `daily-fix.sh`。`it()` 标题须包含下表 ID。
 
@@ -1288,6 +1289,43 @@ C22 合入后 problems 关键字召回主路径改为 FTS（失败回退 LIKE）
 | UT-LOG-PARSE-14 | 不做：不发邮件；不改 daily-fix.sh 选单 | 前置：A) stub `sendMail` / `automation_notify_human` / SMTP 相关；B) 读取 `scripts/automation/daily-fix.sh` 调用前哈希。 | 1. A：发信相关函数调用次数为 0；<br>2. B：`daily-fix.sh` 原文不变（本项实现不得改选单）；<br>3. 与 **不做**「发邮件」「改 daily-fix.sh 选单」字面一致。 |
 | UT-LOG-PARSE-15 | residual：本表不要求 F12 落盘 / F13 CLI / F14 cron 挂载 | 前置：只读 backlog F11 residual 与本小节断言范围。 | 1. PASS **不**要求存在 `process-log-analyze-cron.sh` 或 `--dry-run` CLI（属 F13）；<br>2. PASS **不**要求提案被写入 `docs/process-backlog.md`（属 F12）；<br>3. PASS **不**要求系统 crontab / 任务计划注册（属 F14）；以「未落盘/无 CLI」判 FAIL 则本行失败。 |
 | UT-LOG-PARSE-16 | 与 UT-PROCESS 分界：不计 decide 的「满 3 次」门槛 | 前置：NDJSON 仅 **1** 条 `qa_failed`（少于 decide 阈值 3）；`cronLogText` 可空或短摘要；调用 F11 纯函数。 | 1. 返回数组中存在恰好一条 `reason === 'qa_failed'` 的提案，且其 `level` ∈ {`'assist'`,`'pending'`}（**不得**因出现次数 &lt; 3 返回空数组）；<br>2. 调用前后 `docs/process-backlog.md`（或测码临时 md 快照）原文不变；<br>3. 证明 F11 只做聚类提案，不替代 §2.49 `UT-PROCESS-01`（未满 3 次不改队列）/ `UT-PROCESS-02`（满 3 次才落盘）的计次语义。 |
+
+### 2.52 分析提案写入 process-backlog：assist / 待决落盘（F12）（`backend/src/tests/process-log-write.test.js` → `scripts/automation/` 可单测写入函数；消费 F11 提案对象）
+
+对应 **F12**（`docs/backlog.md` §F12；父项 **F1** 已拆）。现状：F11（§2.51）产出内存提案对象且不写盘；`process-decide.js`（§2.49）按「最近 20 条满 3 次」追加 assist、降优先级或写待决。完成标准：**做**——消费 F11 提案，只改 `docs/process-backlog.md`（测码用临时目录拷贝）；**不做**改业务 backlog、替代 decide 阈值、标 `auto`、改日修/周扫脚本；CLI/`--dry-run` 属 **F13**。
+
+**做**：
+
+1. 在 `scripts/automation/` 存在可 `import`/`require` 的写入函数（契约建议名 `applyLogProposals` / `writeProposalsToProcessBacklog`，实现别名须在测码注释写明）。签名至少接受：`proposals: Array`（F11 形态：`reason`、现象、`level`∈{`assist`,`pending`}、推荐动作）、`processBacklogMarkdown: string`（或指向临时 `process-backlog.md` 的路径）；返回 `{ markdown: string, action: 'assist'|'pending'|'skip'|'none'|… }`（字段名以实现为准，测码注释写明）。
+2. **`level === 'assist'`**（或等价）：在 `## 队列表` 追加一行，列形态对齐现网队列表：`| ID | 类型 | 来源 | 分级 | 状态 | 优先级 | 任务 |`——其中**来源列**精确等于提案 `reason`；**分级**为 `assist`；**状态**为 `todo`；**任务列**须同时含现象与推荐动作的可判定子串（可拼接，不得空任务列）。
+3. **`level === 'pending'`**（或等价）：在 `## 待决` 追加一行（表头：`ID | 提出日 | 角色 | 问题 | 推荐`），问题/推荐列可判定含 `reason` 或现象/推荐语义；日修不读待决——本函数**不得**把 pending 提案写成队列表 `auto`/`todo` 混入日修可读行（除非契约另有显式映射且测码注释写明；默认锁：pending → 仅待决节）。
+4. **已有同 `reason` 且状态为 `todo` 的队列表行**：跳过追加；**不得**改该行优先级数字（「不抢 process-decide 降优先级」）；`action` 为 skip/none 类，差分中该行优先级单元格与调用前全等。
+5. 单次写入后，对返回 markdown（或落盘全文）扫描：本函数**新增**的队列表/待决行**不得**出现 `| auto |` 分级单元格；全文不得因本函数把既有非 auto 行改成 `auto`。
+6. 允许在 `## 修订记录` 追加**一行**，说明来源为日志分析（可判定子串如「日志分析」/`log-analyze`/`F11`/`pipeline`，测码注释写明约定关键词）；不得借修订记录改队列表优先级。
+7. 差分可审：调用前后 markdown 可做行级 diff；有写入时至少能指出新增队列表行或待决行或修订行；跳过/空提案时原文不变（逐字节或 hash 相同）。
+
+**不做**：改业务 `docs/backlog.md`（测码临时目录内业务 backlog 原文必须不变）；替代、删除或绕过 `process-decide` 的「满 3 次才动」（本函数**不**读 NDJSON 计次窗口、**不**调用 `decide`/`decideFromRuns` 写状态、**不**把已有 todo 优先级改小）；把未冻项标成 `auto`；改 `daily-fix.sh` / `weekly-scan.sh` 源文件。
+
+**residual**：process 项冻成可日修 `auto` 仍走拆条或人改分级——本表 PASS **不**要求把新增行标 `auto`。邮件是否附分析摘要另条。可执行 CLI/`--dry-run`/cron 壳属 **F13**；本机挂载属 **F14**。本表**不得**以「无 CLI」「未改 daily-fix 选单」为 FAIL。
+
+**测法**：`node:test` + `node:assert/strict`；建议 `backend/src/tests/process-log-write.test.js`。① 以仓库 `docs/process-backlog.md` 为模板拷入 `fs.mkdtempSync` 临时目录（可另放伪 `docs/backlog.md` 哨兵内容）；② 提案夹具为内存对象数组（可手写，或先调 F11 纯函数再喂入——若 F11 未合入则手写最小提案对象）；③ 优先测「纯函数吃 markdown 字符串返回新 markdown」，若实现只写路径则对临时文件读写并断言；④ **禁止**改真实仓库 `docs/process-backlog.md` / `docs/backlog.md`；⑤ 对照只读 `process-decide.js` 的队列表/待决/修订写入形态，本项测码**不**修改 decide 阈值常量；⑥ 禁止真实发信、禁止改 `daily-fix.sh`/`weekly-scan.sh`。`it()` 标题须包含下表 ID。
+
+| ID | 用例标题 | 场景描述 | 预期结果 |
+| :--- | :--- | :--- | :--- |
+| UT-LOG-WRITE-01 | assist 提案 → 队列表追加 assist+todo 行 | 前置：临时目录 `process-backlog.md` 为仅含表头的空队列表（可基于仓库模板）；提案数组一项：`reason:'qa_failed'`，`level:'assist'`，现象=`闸门失败于 UT-X`，推荐=`检查 qa-report 日志`；调用写入函数。 | 1. 返回/落盘 markdown 的 `## 队列表` 中新增恰好一行，正则可匹配 `\| <ID> \| … \| qa_failed \| assist \| todo \| <正整数优先级> \|`（ID 形如 `P\d+`，与 decide 追加形态一致）；<br>2. 该行**来源列**精确为 `qa_failed`；**任务列**同时含 `闸门失败于 UT-X` 与 `检查 qa-report 日志`（或测码注释约定的截断/拼接后仍可判定的子串）；<br>3. `action`（或等价返回）表明发生了 assist 写入（非 skip/none）。 |
+| UT-LOG-WRITE-02 | 已有同 reason 的 todo → 跳过追加且不降优先级 | 前置：样例 md 队列表已有 `\| P3 \| fix \| dirty_worktree \| assist \| todo \| 20 \| 既有任务文案 \|`；提案一项：`reason:'dirty_worktree'`，`level:'assist'`，现象/推荐为新文案 `NEW_PHENOMENON` / `NEW_HINT`；调用写入。 | 1. 队列表中 `dirty_worktree` 且 `todo` 的数据行**仍恰好 1** 条（未再追加第二行）；<br>2. 该行优先级单元格仍为 `20`（**未**变为更小数字；与 backlog「不降低其优先级」一致）；<br>3. 任务列**可不**被改成含 `NEW_PHENOMENON`（跳过即不改行）；`action` 为 skip/none 类；证明不抢 `process-decide` 降优先级路径（对照 §2.49 `UT-PROCESS-03`）。 |
+| UT-LOG-WRITE-03 | pending 提案 → 只写入待决节 | 前置：空待决表 + 空队列表；提案一项：`reason:'agent_auth'`，`level:'pending'`，现象=`CLI 未登录`，推荐=`人确认 agent 登录态`；调用写入。 | 1. `## 待决` 下新增恰好一行，可判定含 `agent_auth` 或 `CLI 未登录` / `人确认 agent 登录态`；<br>2. `## 队列表` **无**新增 `agent_auth` 的 `todo`/`auto` 行（pending 不得误写入日修可读队列为 auto）；<br>3. 全文扫描本函数新增行不含 `| auto |`。 |
+| UT-LOG-WRITE-04 | 单次写入后新增行不得出现 `\| auto \|` | 前置：空队列表；提案 ≥2 项，`level` 分别为 `assist` 与 `pending`（reason 如 `qa_failed` / `fetch_failed`）；调用一次写入。 | 1. 对返回 markdown 做全文（或新增行）扫描：新增队列表行分级单元格**不得**为 `auto`；不得出现匹配 `\|\s*auto\s*\|` 且位于本函数新增队列表数据行的片段；<br>2. assist 项分级为 `assist`、状态为 `todo`；pending 项仅在待决；<br>3. 与 backlog「单次写入后新增行不得出现 `| auto |`」「禁 auto」字面一致（修订记录中英文词 `automation` 不构成 FAIL）。 |
+| UT-LOG-WRITE-05 | 可写修订记录一行：来源为日志分析 | 前置：模板含空或已有修订表；assist 提案一项导致队列表写入；调用写入（`today`/`date` 可注入为 `2026-11-21`）。 | 1. `## 修订记录` 相对调用前**恰增多 1 行**数据行（或至少 1 行新增），日期列含注入日；<br>2. 说明列含可判定「日志分析」来源关键词（如 `日志分析` / `log analysis` / `log-analyze` / `pipeline`，实现选定后测码注释锁死）；<br>3. 修订行**不**改写队列表既有行的优先级单元格。 |
+| UT-LOG-WRITE-06 | 差分可审：有写入时可定位新增行 | 前置：记录调用前 markdown 全文；assist 提案写入成功。 | 1. 调用后 markdown ≠ 调用前；<br>2. 行级 diff（或 `split('\n')` 集合差）至少能指出 1 条新增队列表数据行，且该行含提案 `reason` 与 `assist`/`todo`；<br>3. 证明「差分可审」，不得整文件无差别却声称写入成功。 |
+| UT-LOG-WRITE-07 | 空提案数组 → process-backlog 原文不变 | 前置：任意合法样例 md 快照；`proposals === []`；调用写入。 | 1. 返回 markdown 与输入逐字节（或 hash）相同；<br>2. `action === 'none'`（或等价「无变更」）；<br>3. 临时目录内业务 `backlog.md` 哨兵亦不变。 |
+| UT-LOG-WRITE-08 | 不做：绝不改业务 docs/backlog.md | 前置：临时根目录同时放置 `docs/process-backlog.md`（可写）与 `docs/backlog.md`（哨兵正文含唯一标记 `BUSINESS_BACKLOG_SENTINEL_F12`，记录 hash）；提案一项 assist 必触发 process 写入；调用写入（路径指向临时 process-backlog）。 | 1. `docs/backlog.md` 原文与调用前 hash 全等；<br>2. 仅 `process-backlog.md`（或返回的 process markdown）发生变化；<br>3. 与 **不做**「改业务 docs/backlog.md」一致。 |
+| UT-LOG-WRITE-09 | 不做：不替代 process-decide「满 3 次才动」/ 不降优先级 | 前置：A) 样例 md 已有 `\| P1 \| fix \| qa_failed \| assist \| todo \| 10 \| … \|`；提案 `qa_failed`+`assist`；B) 只读记录 `process-decide.js` 中 `threshold`/`limit` 字面量；调用 F12 写入前后再读该文件。 | 1. A：P1 优先级仍为 `10`，未因本函数变为 `0`/`5` 等更小值；未删除 P1；<br>2. B：`process-decide.js` 原文不变；本函数调用**不**要求、亦**不**执行「先读 NDJSON 计满 3 次」才写入（F12 可直接落盘提案，但不抢 decide 降优先级）；<br>3. 与 **不做**「替代、删除或绕过 process-decide 的满 3 次才动」及任务「不抢 process-decide 降优先级」一致。 |
+| UT-LOG-WRITE-10 | 不做：不改 daily-fix.sh / weekly-scan.sh | 前置：读取 `scripts/automation/daily-fix.sh` 与 `weekly-scan.sh`（若存在）调用前 hash；执行本表夹具写入（仅临时 md）。 | 1. 两脚本原文 hash 不变；<br>2. 本项实现文件不得以改选单/强制串联日修主路径为交付（串联属 F13，挂载属 F14）；<br>3. 与 **不做**「改 daily-fix.sh / weekly-scan.sh」字面一致。 |
+| UT-LOG-WRITE-11 | 多提案：仅缺失 reason 落盘，已存在 reason 跳过 | 前置：队列表已有 `qa_failed`+`todo`；提案两项：① `qa_failed`+`assist`；② `scan_rejected`+`assist`（队列表尚无）。 | 1. 写入后 `scan_rejected` 新增恰好 1 条 `assist`+`todo` 行；<br>2. `qa_failed` 仍恰好 1 条且优先级数字未变；<br>3. 不得因「批量写入」把已存在项改成 `auto` 或复制第二行。 |
+| UT-LOG-WRITE-12 | 待决路径：同 reason 已在待决则可跳过重复 | 前置：待决已有含 `agent_auth` 的一行；提案再给 `level:'pending'`、`reason:'agent_auth'`；调用写入。 | 1. 待决中含 `agent_auth` 的数据行数**不增加**（跳过重复），或实现若允许更新文案则行数仍为 1 且**不**写入队列表 `auto`（测码注释锁选定语义；默认推荐：跳过、行数不变）；<br>2. 队列表不新增该 reason 的 `todo`/`auto`；<br>3. 与「或待决行」及禁 auto 一致。 |
+| UT-LOG-WRITE-13 | residual：本表不要求标 auto / 不要求 F13 CLI / 不要求邮件摘要 | 前置：只读 backlog F12 residual 与本小节断言范围；assist 写入成功的夹具一次。 | 1. PASS **不**要求新增行分级为 `auto`，亦**不**要求调用拆条双评；<br>2. PASS **不**要求存在 `--dry-run` CLI 或 `process-log-analyze-cron.sh`（属 F13）；<br>3. PASS **不**要求发信或邮件正文附分析摘要；以「未标 auto / 无 CLI / 未发信」判 FAIL 则本行失败。 |
+| UT-LOG-WRITE-14 | 与 UT-LOG-PARSE / UT-PROCESS 分界：只落盘不解析 NDJSON、不计次 | 前置：写入函数入参仅为提案对象数组 + process markdown（**不**传 NDJSON 计次文本，或传入也被忽略）；提案 1 条 `assist`（未满 decide 的 3 次语义）。 | 1. 仍可追加 `assist`+`todo`（F12 不实施「满 3 次」门槛——门槛属 decide；解析属 F11）；<br>2. 测码断言调用栈/依赖：**未**调用 `decide`/`decideFromRuns`（可 stub 计数为 0），**未**读取 `automation-runs.ndjson` 作为计次输入；<br>3. 与 §2.51「F11 不写盘」、§2.49「decide 满 3 次才动」分界清晰：本函数只消费提案写 assist/待决。 |
 
 ---
 
