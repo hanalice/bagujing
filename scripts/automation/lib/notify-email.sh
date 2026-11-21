@@ -220,6 +220,15 @@ print("✅ 已发送通知邮件")
 PY
 }
 
+# 单测 / 沙箱禁止发真信。automation_record 会调到这里；未设置时仍会读本机 SMTP 配置。
+automation_notify_disabled() {
+  local v="${AUTOMATION_NOTIFY_DISABLE:-${BAGUJING_NOTIFY_DISABLE:-}}"
+  case "$v" in
+    1|true|TRUE|yes|YES) return 0 ;;
+  esac
+  return 1
+}
+
 # 若 reason 需要人，则发信。参数：reason kind taskId stage exitCode [extra]
 # 永不因发信失败让调用方崩掉。
 automation_notify_human() {
@@ -229,6 +238,10 @@ automation_notify_human() {
   local stage="${4:-}"
   local exit_code="${5:-}"
   local extra="${6:-}"
+  if automation_notify_disabled; then
+    echo "ℹ️ AUTOMATION_NOTIFY_DISABLE 已设，跳过邮件通知（reason=${reason}）。" >&2
+    return 0
+  fi
   automation_notify_needed "$reason" || return 0
 
   local zh subject body root log_rel actions excerpt

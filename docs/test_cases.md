@@ -1231,7 +1231,7 @@ C22 合入后 problems 关键字召回主路径改为 FTS（失败回退 LIKE）
 | UT-PROCESS-01 | 未达 3 次不改流程队列 | 两条 `qa_failed` 加一条 `ok`，空流程队列。 | `action === 'none'`，队列原文不变。 |
 | UT-PROCESS-02 | 满 3 次追加 assist | 三条 `qa_failed`，空流程队列。 | 追加 `| P1 | fix | qa_failed | assist | todo | 10 |`，状态记下 `countAtAction === 3`。 |
 | UT-PROCESS-03 | 次数没下降写待决 | 先满 3 次生成 P1，再喂 4 次同一原因。 | 待决含「次数没有下降」；P1 仍是 `assist` 且优先级仍为 10；不出现 `auto`。 |
-| UT-PROCESS-04 | 记录脚本写出一行 | 调用 `automation_classify_message` 与 `automation_record`。 | 空队列文案归为 `empty_queue`，缺契约归为 `contract_missing`；NDJSON 含 `kind`、`taskId`、`reason`、`exitCode`、`prOpened`、`qaPassed`。 |
+| UT-PROCESS-04 | 记录脚本写出一行 | 调用 `automation_classify_message` 与 `automation_record`；**必须** `AUTOMATION_NOTIFY_DISABLE=1`（禁止读本机 SMTP 发真信）。 | 空队列文案归为 `empty_queue`，缺契约归为 `contract_missing`；NDJSON 含 `kind`、`taskId`、`reason`、`exitCode`、`prOpened`、`qaPassed`；输出含禁用发信提示且**无**「已发送通知邮件」。 |
 
 ### 2.50 拆条双评裁决（`backend/src/tests/split-review.test.js` → `scripts/automation/lib/split-review.js`）
 

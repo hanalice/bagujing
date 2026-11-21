@@ -38,6 +38,8 @@ automation_classify_log_tail() {
 
 # 参数：kind taskId stage reason exitCode prOpened qaPassed
 # prOpened / qaPassed：true、false，或空表示未执行。
+# 注意：成功写入后会对需要人工的 reason 调 automation_notify_human。
+# 单测必须 export AUTOMATION_NOTIFY_DISABLE=1，否则会读本机 SMTP 发真信。
 automation_record() {
   local kind="$1"
   local task_id="$2"
