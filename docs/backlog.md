@@ -121,7 +121,11 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | F12 | feat | flywheel | auto | done | 60 | 将分析提案只写入 process-backlog 的 assist/待决（禁 auto；不抢 process-decide 降优先级） |
 | F13 | feat | flywheel | auto | done | 70 | 低频分析 CLI/cron 壳：调 F11+F12；支持 dry-run；与 process-decide 并存 |
 | F14 | feat | flywheel | manual | todo | 80 | 本机任务计划/cron 挂载 F13（运维壳；禁止改代码默认强制跑） |
-| F2 | feat | flywheel | assist | todo | 55 | 业务审计 reason 排行：读 ai_audit_logs，只建议改 backlog 优先级或开 assist（禁止盲改数字） |
+| F2 | feat | flywheel | assist | split |  | 已拆为 F21 / F22 / F23 / F24 |
+| F21 | feat | flywheel | auto | done | 50 | 业务审计 reason 排行：读 ai_audit_logs（+可选 NDJSON）→带门控的提案对象（不写盘；禁 auto） |
+| F22 | feat | flywheel | auto | todo | 60 | 将审计提案只写入业务 backlog：调优先级数字或追加 assist（禁 auto；无提案则原文不变） |
+| F23 | feat | flywheel | auto | todo | 70 | 低频审计排行 CLI/cron 壳：调 F21+F22；支持 dry-run；与 F13/process-decide 并存 |
+| F24 | feat | flywheel | manual | todo | 80 | 本机任务计划/cron 挂载 F23（运维壳；禁止改代码默认强制跑） |
 
 
 ---
@@ -370,11 +374,31 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 
 ### F2
 
-分级保持 `assist`。禁止周扫描改成 `auto`。对齐 S18 residual：须审计窗口攒够后再实现；经拆条 2/2 或人拆后方可 `auto`。
+已由人/机拆为 F21–F24。周扫描不得把本父项改回 `todo`，不得把 F24 改成 `auto`，不得把未写「做 / 不做 / residual」的子项标成 `auto`。总约束仍有效：对齐 S18 residual——须自检窗口样本足够且相对上次有意义变化才动；只改业务 `docs/backlog.md` 的优先级数字或追加 `assist`，禁止盲改数字、禁止直接标 `auto`；与 F1（流水线日志）数据源分离。
 
-- **做**：定时（如每日/每周）汇总 `ai_audit_logs`（及可选 NDJSON 审计）按 `reason` 排行；产出**提案**：建议调整某业务 backlog 项优先级，或追加 `assist` 草案。提案须自检「窗口内样本是否足够、是否比上次有意义变化」——不足则**不改**队列。禁止「看见最高失败就改数字」。单测锁：样例审计行 → 有/无提案两条路径；有提案时差分可审（只改优先级数字或追加 assist 行），无提案时 backlog 原文不变。
-- **不做**：改 reason 名字或审计 schema；做 Grafana/看板；把 `/api/metrics` 当唯一数据源；不经自检盲改优先级；直接标 `auto` 业务修复项。
-- **residual**：是否自动 `git commit` 提案由拆出的 `auto` 子项契约再定；与 F1（流水线日志）数据源分离。
+### F21
+
+- **做**：在 `scripts/automation/` 新增可单测纯函数（可与 CLI 同文件导出）：输入样例 `ai_audit_logs` 行集（及可选 NDJSON 审计片段）与可选「上次排行快照」；按 `reason` 聚类排行；产出提案对象列表，每项含 `reason`、窗口内计数/占比、一句话现象（可附截断摘录）、`level` 仅为 `assist`、推荐动作（调某已有 backlog 项优先级 **或** 开 assist 草案一句）。成功类 reason（至少 `stream_done` / `generated_answer` / `cached_answer`）可作分母，不得单独成「失败飙升」提案。自检门：窗口总样本不足、或相对上次无意义变化（同 top reason 且计数/占比波动低于写死阈值）→ **空列表**，禁止「看见最高失败就提案」。摘录须有硬上限，并跳过疑似密钥/连接串行（变量名含 `PASSWORD`/`SECRET`/`TOKEN`/`API_KEY` 或 URL 含用户口令形态则整行丢弃）。单测 `it()` 标题含用例 ID：样本不足→空提案；无意义变化→空提案；足够且有变化→有提案且 `level` 从不含 `auto`；同夹具排行稳定；含伪密钥行时摘录不含该行。
+- **不做**：写入任何 markdown；改 `docs/backlog.md` / `docs/process-backlog.md`；改 reason 名字或审计 schema；读流水线 `automation-runs.ndjson` / cron 日志当主源（属 F1）；做 Grafana/看板；把 `/api/metrics` 当唯一数据源；发邮件；改 `daily-fix.sh` 选单。
+- **residual**：落盘见 F22；可执行入口见 F23；本机挂载见 F24。旧审计行缺 S18 新列可忽略该列，排行仍以 `reason` 为准。
+
+### F22
+
+- **做**：消费 F21 提案，只改业务 `docs/backlog.md`：①若队列表已有可关联的 `todo` 行，则**仅**调整其优先级正整数（步长有硬上限，不得一次跨多档乱跳）；②若无关联项，则追加 `assist`+`todo` 草案行（来源列可写 `audit` 或 `reason`，任务列含现象与推荐）。已有同 `reason`/同主题的 `todo` 则跳过追加，**不**把分级改成 `auto`，**不**改 `done`/`split` 行。单次写入后新增行不得出现 `| auto |`。无提案或自检未过时 backlog 原文不变。可写修订记录一行说明来源为业务审计排行。单测锁：样例 md → 调优先级 / 追加 assist / 已存在则跳过 / 无提案则原文不变；差分可审；全文扫描不得因本函数新增 `auto` 分级。
+- **不做**：改 `docs/process-backlog.md`；替代或绕过 `process-decide`；读流水线日志当主源；改审计 schema / reason 名；把未冻项标成 `auto`；改 `daily-fix.sh` / `weekly-scan.sh`；在本函数内 `git commit`/`push`。
+- **residual**：assist 冻成可日修 `auto` 仍走拆条或人改分级。日修/自动化壳是否 commit 由调用方决定，本项只负责 md 差分。
+
+### F23
+
+- **做**：提供可执行入口（CLI，及可选 `audit-reason-rank-cron.sh` 风格壳）：默认读业务审计（可配置 SQLite/`ai_audit_logs` 导出夹具与可选 NDJSON 审计路径），串联 F21+F22；支持 `--dry-run`（只打印提案、不改 md）。可对独立 kind 调用 `automation_record`，不得冒充 `daily-fix` / `weekly-scan` / F13 分析 kind 计次。与 F13、`process-decide` 并存。单测：`--dry-run` 后 backlog 原文不变；非 dry-run 可对临时目录断言只碰业务 backlog（不碰 process-backlog）；样本不足路径不改 md。
+- **不做**：改 `daily-fix.sh` 选单逻辑或强制插入日修主路径；在脚本内注册系统 crontab / Windows 任务；读流水线 NDJSON/cron 当主数据源（属 F1/F13）；发邮件正文（通知另条）；改审计 schema。
+- **residual**：本机任务计划挂载见 F24（manual）。
+
+### F24
+
+- **做**：在已跑日修的本机用任务计划或 cron 低频挂载 F23 入口（建议与 F13 / `process-decide-cron` 错开槽位）。可在部署/运维文档补一句路径级示例，不把「每次日修必跑审计排行」写进仓库代码默认。
+- **不做**：改代码默认值迫使排行作业必跑；把 SMTP 或仓库凭据写入本项；自动 `git stash` 脏工作区；改 `process-decide` 阈值或 F21 自检阈值。
+- **residual**：邮件正文是否附排行摘要另条。真要改日修主路径串联须另开条目并冻契约。
 
 ### E1
 
@@ -500,3 +524,5 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | 2026-11-20 | F11 完成：流水线日志解析：NDJSON+近日 cron 摘要→reason 聚类提案对象（不写盘；禁 auto） |
 | 2026-11-21 | F12 完成：将分析提案只写入 process-backlog 的 assist/待决（禁 auto；不抢 process-decide 降优先级） |
 | 2026-11-21 | F13 完成：低频分析 CLI/cron 壳：调 F11+F12；支持 dry-run；与 process-decide 并存 |
+| 2026-11-22 | 人/机拆 F2：父项 split；F21–F23 为 auto+todo（排行门控/落盘/入口）；F24 为 manual 运维挂载 |
+| 2026-11-22 | F21 完成：业务审计 reason 排行：读 ai_audit_logs（+可选 NDJSON）→带门控的提案对象（不写盘；禁 auto） |

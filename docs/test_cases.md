@@ -42,6 +42,7 @@
 - **流水线日志解析→reason 聚类提案 (F11)**：在 `scripts/automation/` 提供可单测纯函数：输入样例 `automation-runs.ndjson` 文本 + 近日 `*cron*.log` 片段，按 `reason` 聚类，产出提案对象列表（`reason`、一句话现象可附截断摘录、`level` 仅为 `assist`|`pending`、推荐动作一句）；忽略 `ok` / `empty_queue` / `already_running` / `dry_run` / `cancelled`；摘录硬上限；疑似密钥/连接串行整行丢弃。**不写盘**、禁 `auto`。单测见 §2.51 `UT-LOG-PARSE-*`。**不做**：写任何 markdown；改 `process-decide.js` 阈值/状态；读 `ai_audit_logs`（**F2**）；发邮件；改 `daily-fix.sh` 选单。**residual**：落盘 **F12**（§2.52）；CLI/cron 壳 **F13**；本机挂载 **F14**。
 - **分析提案写入 process-backlog（F12）**：消费 F11 提案对象，**只**改 `docs/process-backlog.md`：追加 `assist`+`todo` 行（来源列=`reason`，任务列含现象与推荐）或待决行；已有同 `reason` 的 `todo` 则**跳过追加且不降优先级**（降优先级仍属 `process-decide`）；单次写入后新增行不得出现 `| auto |`；可写修订记录一行说明来源为日志分析。单测见 §2.52 `UT-LOG-WRITE-*`。**不做**：改业务 `docs/backlog.md`；替代/删除/绕过 `process-decide`「满 3 次才动」；把未冻项标 `auto`；改 `daily-fix.sh` / `weekly-scan.sh`。**residual**：冻成日修 `auto` 仍走拆条或人改分级；邮件附分析摘要另条；CLI/cron 串联属 **F13**（§2.53）。
 - **低频分析 CLI/cron 壳（F13）**：可执行入口（CLI，及可选 `process-log-analyze-cron.sh` 风格壳）默认读 `logs/automation-runs.ndjson` 与近日 `logs/*cron*.log`，串联 **F11→F12**；支持 `--dry-run`（只打印提案、不改 md）；可对**独立 kind** 调 `automation_record`，不得冒充 `daily-fix` / `weekly-scan`（含 `*-cron`）计次；与 `process-decide` / `process-decide-cron` **并存**（独立入口，不改 decide 阈值）。单测见 §2.53 `UT-LOG-CLI-*`。**不做**：改 `daily-fix.sh` 选单或强制插入日修主路径；脚本内注册系统 crontab / Windows 任务；读业务审计；发邮件正文。**residual**：本机任务计划挂载属 **F14**。
+- **业务审计 reason 排行→带门控提案 (F21)**：在 `scripts/automation/` 提供可单测纯函数：输入样例 `ai_audit_logs` 行集（及可选 NDJSON 审计片段）与可选「上次排行快照」；按 `reason` 聚类排行；产出提案对象（`reason`、窗口内计数/占比、一句话现象可附截断摘录、`level` **仅为** `assist`、推荐动作：调业务 backlog 优先级 **或** 开 assist 草案一句）。成功类 reason（至少 `stream_done` / `generated_answer` / `cached_answer`）可作分母，**不得**单独成「失败飙升」提案。自检门：窗口总样本不足、或相对上次无意义变化（同 top reason 且计数/占比波动低于写死阈值）→ **空列表**。摘录硬上限；疑似密钥/连接串行整行丢弃。**不写盘**、禁 `auto`。单测见 §2.54 `UT-AUDIT-RANK-*`。**不做**：写任何 markdown；改 `docs/backlog.md` / `docs/process-backlog.md`；改 reason 名或审计 schema；读流水线 `automation-runs.ndjson` / cron 当主源（**F1**）；Grafana/看板；把 `/api/metrics` 当唯一数据源；发邮件；改 `daily-fix.sh` 选单。**residual**：落盘 **F22**；CLI/cron 壳 **F23**；本机挂载 **F24**；旧行缺 S18 新列可忽略该列。
 
 ---
 
@@ -1367,6 +1368,60 @@ C22 合入后 problems 关键字召回主路径改为 FTS（失败回退 LIKE）
 | UT-LOG-CLI-13 | 空输入 / 无提案：两类 md 均不变 | 前置：临时 NDJSON 为空或仅忽略 reason（`ok`/`empty_queue`）；cron 空；`process-backlog.md` 与 `backlog.md` 记 hash；分别跑 `--dry-run` 与非 dry-run。 | 1. 两次运行后两份 md hash 均与运行前全等；<br>2. dry-run 输出为空列表语义或明确「无提案」（可判定）；<br>3. 退出码仍为成功约定（与 UT-LOG-CLI-01 一致）。 |
 | UT-LOG-CLI-14 | residual：不要求 F14 挂载 / 不要求日修默认串联分析 | 前置：只读 backlog F13 residual 与本小节断言范围；CLI 夹具已绿。 | 1. PASS **不**要求系统 crontab / 任务计划已挂载 F13；<br>2. PASS **不**要求改 `daily-fix.sh` 或部署文档把「每次日修必跑分析」写成仓库代码默认；<br>3. 以「未挂载 crontab / 日修未串联分析」判 FAIL 则本行失败——挂载属 **F14**。 |
 | UT-LOG-CLI-15 | 与 UT-PROCESS / UT-LOG-WRITE 分界：不实施满 3 次门槛、不降优先级 | 前置：临时 NDJSON **仅 1** 条 `qa_failed`（&lt; decide 阈值 3）；队列表已有 `\| P9 \| fix \| qa_failed \| assist \| todo \| 15 \| 旧文案 \|`；非 dry-run 跑 F13。 | 1. **不**因次数 &lt; 3 而拒绝调用 F11/F12（空跑除外：若 F12 因同 reason 跳过，则 P9 优先级仍为 `15`）；<br>2. P9 优先级单元格仍为 `15`（F13/F12 **不**降优先级；降优先级仍属 §2.49）；<br>3. 证明 F13 只是壳，计次门槛仍属 decide，落盘语义仍属 F12。 |
+
+### 2.54 业务审计 reason 排行：ai_audit_logs（+可选 NDJSON）→带门控提案对象（F21）（`backend/src/tests/audit-reason-rank.test.js` → `scripts/automation/` 可单测纯函数；可与未来 CLI 同文件导出）
+
+对应 **F21**（`docs/backlog.md` §F21；父项 **F2** 已拆）。现状：S18 已让 `ai_audit_logs` / 审计 NDJSON 带可排行 `reason` 与可选 `upstream_status` 等列（§2.44 `UT-AUDIT-REASON-*`）；F11（§2.51）只读流水线 NDJSON+cron、**不**读业务审计。完成标准：**做**——新增可单测排行纯函数（带样本/变化自检门控）；**不做**写 markdown / 改 backlog / 改 schema / 以流水线日志或 `/api/metrics` 为主源 / 发信 / 改日修选单；落盘与 CLI 属 **F22/F23**。对齐 S18 residual：须自检窗口样本足够且相对上次有意义变化才出提案，禁止「看见最高失败就提案」。
+
+**做**：
+
+1. 在 `scripts/automation/` 存在可 `import`/`require` 的纯函数（契约建议名 `rankAuditReasons` / `clusterAuditReasonProposals`，实现若用别名须在测码注释写明；允许与未来 F23 CLI 同文件导出）。签名接受至少：
+   - `auditRows`：样例 `ai_audit_logs` 行集（对象数组，或可解析为行集的导出文本；每行至少含 `reason` 字符串）；
+   - 可选 `ndjsonAuditText: string`（业务审计 NDJSON 片段，字段名与 SQL 行语义对齐，如 `reason` / `upstreamStatus`）；
+   - 可选 `previousSnapshot`：「上次排行快照」（结构以实现为准：至少能表达 top `reason` 及其计数或占比；测码注释写明）。
+   **禁止**在函数体内 `fs.writeFile` / `appendFile` / 改写任意 `.md`。
+2. 按 `reason` 聚类排行；产出**数组**，每项为提案对象，字段至少：
+   - `reason`：非空字符串（失败/异常类，见下条成功类排除）；
+   - 窗口内计数与占比：有限非负（字段名如 `count`/`ratio` 或 `share`，测码注释写明；占比可用 0–1 或百分数，断言与实现统一）；
+   - 一句话现象：非空字符串（可附截断摘录；字段名如 `summary` / `phenomenon`）；
+   - `level`：精确为 `'assist'`（字符串全等；**不得**为 `'pending'` 或 `'auto'`——与 F11 的 assist|pending 不同，本项 backlog 明文「仅为 assist」）；
+   - 推荐动作：非空一句，语义为「调某已有 backlog 项优先级」**或**「开 assist 草案」其一（字段名如 `recommendation` / `actionHint`；测码可用子串如 `优先级` / `assist` / `草案` 判定，注释锁死约定）。
+3. **成功类 reason**（至少 `stream_done`、`generated_answer`、`cached_answer`）可计入窗口总分母，**不得**单独产出「失败飙升」提案（返回数组中不存在这三项为 `reason` 的提案）。
+4. **自检门（硬门槛）**：
+   - 窗口总样本数 &lt; 实现写死的最小阈值 `MIN_SAMPLES`（有限正整数，测码注释写明常量名与值）→ 返回 `[]`；
+   - 传入 `previousSnapshot` 且相对上次**无意义变化**（同 top `reason` 且计数/占比波动的绝对值低于写死阈值 `MIN_DELTA` / `MIN_RATIO_DELTA`，测码注释写明）→ 返回 `[]`；
+   - 禁止仅因「当前失败 reason 计数最高」在未过门时产出提案。
+5. 摘录须有**硬上限**（契约建议 ≤ 200 字符；实现常量名/数值须在测码注释写明且为有限正整数）。超长摘录被截断后长度 `<=` 该上限。
+6. **跳过疑似密钥/连接串行**：若某审计行/NDJSON 行的文本字段（或序列化串）变量名含 `PASSWORD` / `SECRET` / `TOKEN` / `API_KEY`（大小写不敏感子串），**或** URL 含用户口令形态（`://`…`:`…`@`），则该行**整行丢弃**（不计入聚类分子/摘录），不得出现在任一提案的摘录/现象字符串中。丢弃行是否仍计入「总样本」以实现注释为准；默认推荐：整行不计入窗口样本与聚类。
+7. 夹具下对返回数组做全量扫描：任意提案的 `level` **从不**等于 `'auto'`；亦不得出现其它分级字段取值为 `'auto'`。
+8. 旧审计行缺 S18 新列（`upstream_status` / `upstream_reached` / `token_source` 为 `null`/缺省）时，**忽略**这些列，排行仍以 `reason` 为准，不抛异常、不要求回填。
+
+**不做**：写入任何 markdown（含 `docs/backlog.md` / `docs/process-backlog.md`）；改 reason 名字或审计表/NDJSON schema；读流水线 `logs/automation-runs.ndjson` / `*cron*.log` 当**主**数据源（属 **F1**/F11）；做 Grafana/看板；把 `GET /api/metrics` 当唯一数据源；发邮件；改 `daily-fix.sh` 选单逻辑。
+
+**residual**：提案落盘见 **F22**；可执行 CLI/cron 壳见 **F23**；本机任务计划挂载见 **F24**。本表**不得**以「未写 backlog」「未提供 CLI」「未挂 crontab」为 FAIL。旧行缺 S18 新列见上条「做-8」。
+
+**测法**：`node:test` + `node:assert/strict`；建议 `backend/src/tests/audit-reason-rank.test.js`。① 用内存行集/字符串夹具调用纯函数，禁止依赖真实生产 DB 或脏 `logs/`；② stub/`mock` `fs.writeFileSync`/`fs.appendFileSync`（若实现误引用）断言调用次数为 0，或静态确认导出函数体无写盘 API；③ **禁止**把流水线 `automation-runs.ndjson` 行（`kind: daily-fix` 等）当作本函数主输入夹具冒充审计行；④ 禁止真实发信、禁止改 `daily-fix.sh`、禁止请求 `/api/metrics` 作为唯一输入；⑤ 对照只读 §2.44 / S18 reason 集合构造失败类夹具（如 `sse_idle_timeout`、`client_abort`、`upstream_http`、`circuit_open`）。`it()` 标题须包含下表 ID。
+
+| ID | 用例标题 | 场景描述 | 预期结果 |
+| :--- | :--- | :--- | :--- |
+| UT-AUDIT-RANK-01 | 纯函数可对内存审计行集产出提案数组 | 前置：构造窗口样本数 ≥ `MIN_SAMPLES` 的 `auditRows`：含足够多成功类分母行（如 `stream_done`）+ 失败类 `reason: 'sse_idle_timeout'` 多条（占比明显高于其它失败）；`previousSnapshot` 省略或为「不同 top / 大 delta」使门控通过；不传文件路径；调用排行纯函数。 | 1. 返回值为数组且 `length >= 1`；<br>2. 存在 `reason === 'sse_idle_timeout'`（或夹具主失败 reason）的提案，含非空现象句、非空推荐动作句、有限 `count` 与占比、`level === 'assist'`；<br>3. 调用过程**零次**写盘（无新建/改写 `.md`；若 stub `fs.*Sync` 写接口则调用次数为 0）。 |
+| UT-AUDIT-RANK-02 | 样本不足 → 空提案列表 | 前置：`auditRows.length`（或实现定义的窗口总样本）严格 &lt; `MIN_SAMPLES`；即使失败 reason 占比 100%（如仅 3 条 `upstream_http`）；`previousSnapshot` 任意。 | 1. 返回 `[]`（`length === 0`）；<br>2. 不抛异常；不写盘；<br>3. 与 backlog「窗口总样本不足 → 空列表」「禁止看见最高失败就提案」及单测锁「样本不足→空提案」字面一致。 |
+| UT-AUDIT-RANK-03 | 无意义变化 → 空提案列表 | 前置：窗口样本 ≥ `MIN_SAMPLES`；当前 top 失败 reason 与 `previousSnapshot` 的 top `reason` **相同**，且计数差与占比差的绝对值均 &lt; 写死 `MIN_DELTA` / `MIN_RATIO_DELTA`（测码用恰好低于阈值的夹具）；成功类作分母。 | 1. 返回 `[]`；<br>2. 证明门控读取了上次快照（若实现导出比较函数可单测；否则通过「改大 delta 后同夹具能出提案」对照 UT-AUDIT-RANK-04）；<br>3. 与 backlog「相对上次无意义变化 → 空列表」及单测锁「无意义变化→空提案」一致。 |
+| UT-AUDIT-RANK-04 | 足够且有变化 → 有提案且 `level` 从不含 `auto` | 前置：样本 ≥ `MIN_SAMPLES`；相对 `previousSnapshot` 满足有意义变化（换 top reason，或同 reason 但 count/ratio 增量 ≥ 阈值）；夹具含 ≥1 种失败 reason（如 `circuit_open`）与成功分母。 | 1. 返回数组 `length >= 1`；每一项 `level` **精确**为 `'assist'`；<br>2. **零**项满足 `level === 'auto'` 或 `level === 'pending'`；不得存在其它分级字段值为 `'auto'`；<br>3. 与 backlog「足够且有变化→有提案且 level 从不含 auto」「level 仅为 assist」字面一致（现象文案中偶然出现 `automation` 不构成 FAIL）。 |
+| UT-AUDIT-RANK-05 | 同夹具排行稳定 | 前置：固定同一 `auditRows` + 同一可选 NDJSON + 同一 `previousSnapshot`（门控可通过）；连续调用纯函数 2 次。 | 1. 两次返回数组长度相等；<br>2. 按 `reason` 做 `localeCompare` 排序后深相等（聚类与排序稳定，不因 `Map`/`Object` 键序抖动）；<br>3. 与 backlog 单测锁「同夹具排行稳定」一致。 |
+| UT-AUDIT-RANK-06 | 成功类 reason 可作分母、不得单独成失败提案 | 前置：窗口仅含成功类 `stream_done` / `generated_answer` / `cached_answer`（样本 ≥ `MIN_SAMPLES`），无失败 reason；或成功类占绝大多数且失败为 0；`previousSnapshot` 使门控不因「无失败」误过（预期仍空或无成功类提案）。 | 1. 返回数组中**不存在** `reason ∈ {stream_done, generated_answer, cached_answer}` 的提案；<br>2. 若无任何失败 reason，返回 `[]`；<br>3. 与 backlog「成功类可作分母，不得单独成失败飙升提案」一致。 |
+| UT-AUDIT-RANK-07 | 同 `reason` 聚类为一条且含计数/占比 | 前置：门控可通过；`auditRows` 含 5 条 `client_abort` + 2 条 `upstream_http` + 足够成功分母；无密钥行。 | 1. `reason === 'client_abort'` 的提案**恰好 1** 条，其 `count === 5`（或与实现「丢弃行不计」规则一致的可判定值）；<br>2. `upstream_http` 恰好 1 条；总失败提案数 === 2（或仅含这两类）；<br>3. 每条提案占比为有限数，且各失败占比之和 ≤ 1（或 ≤ 100，与单位约定一致）；证明字段含「窗口内计数/占比」。 |
+| UT-AUDIT-RANK-08 | 超长摘录被硬上限截断 | 前置：某失败审计行携带超长 message/detail（`x`.repeat(N)，N &gt; 实现上限，尾部含 sentinel `TAIL_SENTINEL_AUDIT_XYZ`）；门控可通过并产出含该 reason 的提案。 | 1. 实现导出或测码可读的摘录上限为有限正整数 `MAX`（注释写明默认建议 200）；<br>2. 提案中附带摘录的字段 `length <= MAX`；<br>3. 原始超长尾巴 sentinel **不**完整出现在该字段中。 |
+| UT-AUDIT-RANK-09 | 含伪密钥行时摘录不含该行（PASSWORD/SECRET/TOKEN/API_KEY） | 前置：行集含：① 普通失败行 `reason:'sse_idle_timeout'`，detail=`idle timeout after 60s`；② 同行或另行列文本含 `OPENAI_API_KEY=sk_live_fake_audit_001`（或 `DB_PASSWORD=` / `AUTH_TOKEN=` / `CLIENT_SECRET=`）；③ 另两条普通失败同 reason；样本与变化门控可通过。 | 1. 所有提案的现象/摘录字符串 **均不包含** `sk_live_fake_audit_001` 及该伪密钥整行原文；<br>2. 普通失败语义（如 `idle timeout`）仍可出现；<br>3. 关键词大小写不敏感（`api_key` / `Api_Key` 等价命中）；与 backlog 单测锁「含伪密钥行时摘录不含该行」一致。 |
+| UT-AUDIT-RANK-10 | URL 用户口令形态整行丢弃 | 前置：审计/NDJSON 某行 detail 含 `postgres://appuser:s3cretAudit@db.internal:5432/app`，另有无口令 `https://example.com/health` 与可聚类失败 reason；门控可通过。 | 1. 任一提案摘录/现象**不含** `s3cretAudit` 与完整 `appuser:s3cretAudit@`；<br>2. 允许保留无口令 URL 的 `example.com`（不得仅因 `://` 误杀全部 URL）；<br>3. 与 backlog「URL 含用户口令形态则整行丢弃」一致。 |
+| UT-AUDIT-RANK-11 | 可选 NDJSON 审计片段可并入聚类（非流水线 NDJSON） | 前置：`auditRows` 仅少量失败；`ndjsonAuditText` 含多行业务审计 JSON（`reason:'upstream_http'`，可含 `upstreamStatus:502`），使合并后样本与变化门控通过；**不**传入 `automation-runs` 形态（无 `kind:daily-fix`）。 | 1. 返回中存在 `reason === 'upstream_http'` 提案，且 `count` 反映 SQL 行集 + NDJSON 合并后的次数（可判定 ≥ NDJSON 行数）；<br>2. 现象/摘录可含上游状态可判定信息（若实现纳入；可选断言 `502`）；<br>3. 证明输入契约含「ai_audit_logs 行集 + 可选 NDJSON 审计」，而非只读流水线日志。 |
+| UT-AUDIT-RANK-12 | 旧行缺 S18 新列仍按 reason 排行 | 前置：行对象仅有 `reason`/`ts` 等旧列，`upstream_status`/`upstream_reached`/`token_source` 缺省或 `null`；失败 reason 足够且门控通过。 | 1. 不抛异常；返回含对应 `reason` 的提案；<br>2. **不**要求实现回填或改 schema；<br>3. 与 residual「旧审计行缺 S18 新列可忽略该列，排行仍以 reason 为准」一致。 |
+| UT-AUDIT-RANK-13 | 推荐动作语义：调优先级或开 assist 草案 | 前置：门控可通过；产出至少一条失败提案。 | 1. 该提案推荐动作字段为非空字符串；<br>2. 可判定匹配「调整优先级」类（子串如 `优先级` / `priority`）**或**「开 assist 草案」类（子串如 `assist` / `草案` / `backlog`）至少一类（测码注释锁死允许的关键词集）；<br>3. 推荐动作**不得**要求或暗示把分级写成 `auto`。 |
+| UT-AUDIT-RANK-14 | 不做：调用后不写任何 markdown / 不改 backlog | 前置：临时目录放置 `docs/backlog.md` 与 `docs/process-backlog.md` 哨兵（含唯一标记，记录 hash）；调用纯函数（门控可通过、有提案）。 | 1. 两份 markdown 与调用前 hash 全等；临时目录无新增 `.md`；<br>2. 与 **不做**「写入任何 markdown」「改 docs/backlog.md / docs/process-backlog.md」及任务「不写盘」一致；<br>3. 本行 FAIL 条件含「函数直接改了业务 backlog 优先级」（那属 **F22**）。 |
+| UT-AUDIT-RANK-15 | 不做：不以流水线 automation-runs/cron 为主源（属 F1） | 前置：A) 仅传入空 `auditRows` + 空 NDJSON 审计，同时若误传/实现内部去读 `logs/automation-runs.ndjson` 或 `*cron*.log` 则应被测码监视；B) 对照夹具：把流水线形态行（`{"kind":"daily-fix","reason":"qa_failed"}`）塞进**审计**输入槽——若实现只认审计字段，应忽略或不当作 F11 提案源。 | 1. A：在审计输入为空时返回 `[]`，且**零次**读取流水线 NDJSON/cron 路径作为主源（spy `fs.readFileSync` 对 `automation-runs.ndjson` / `*cron*.log` 次数为 0，或函数签名根本无默认读这些路径）；<br>2. B：不得因 `qa_failed`+`daily-fix` 形态而产出与 F11 混淆的流水线提案（本函数提案 reason 应来自业务审计语义）；<br>3. 与 **不做**「读流水线 automation-runs.ndjson / cron 日志当主源」及与 §2.51 F11 数据源分离一致。 |
+| UT-AUDIT-RANK-16 | 不做：不改 reason 名/审计 schema；不以 /api/metrics 为唯一源；不做 Grafana/看板；不发信；不改 daily-fix 选单 | 前置：A) 只读 `backend/src/security/ai-guard.js` / schema 中既有 reason 字符串字面量集合作对照；B) stub `sendMail` / `automation_notify_human` / HTTP 对 `/api/metrics`；C) 记录 `scripts/automation/daily-fix.sh` hash；调用纯函数。 | 1. A：本项实现**不**重命名既有失败 reason（如不得把 `sse_idle_timeout` 改成新名才排行）；测码不要求 `ALTER TABLE`；<br>2. B：发信次数为 0；**零次**把 `GET /api/metrics` 当作唯一输入（纯函数入参为行集/NDJSON/快照）；PASS **不**要求接入 Grafana/看板或导出仪表盘；<br>3. C：`daily-fix.sh` hash 不变；与 **不做**「改 reason 名字或审计 schema」「把 /api/metrics 当唯一数据源」「做 Grafana/看板」「发邮件」「改 daily-fix.sh 选单」一致。 |
+| UT-AUDIT-RANK-17 | residual：本表不要求 F22 落盘 / F23 CLI / F24 cron 挂载 | 前置：只读 backlog F21 residual 与本小节断言范围；有提案夹具一次。 | 1. PASS **不**要求提案被写入 `docs/backlog.md`（属 **F22**）；<br>2. PASS **不**要求存在 `audit-reason-rank-cron.sh` 或 `--dry-run` CLI（属 **F23**）；<br>3. PASS **不**要求系统 crontab / 任务计划注册（属 **F24**）；以「未落盘/无 CLI/未挂载」判 FAIL 则本行失败。 |
+| UT-AUDIT-RANK-18 | 与 UT-LOG-PARSE / S18 分界：消费业务审计而非流水线；不改 backlog 数字 | 前置：门控可通过并产出提案；调用前后业务/process backlog 哨兵 hash；对照 §2.51 纯函数若可 import 则**不**在本用例调用链中执行。 | 1. 提案 `reason` 取自审计失败类（如 `sse_idle_timeout`），而非流水线 `qa_failed`/`dirty_worktree`（除非审计行本身就是这些字符串——夹具避免混用）；<br>2. backlog md 原文不变（数字盲改属禁止；改数字属 F22）；<br>3. 证明 F21 只做带门控的提案对象，对齐 S18 residual「必须自己读审计日志决定要不要动，而不是看见最高失败就改数字」。 |
 
 ---
 
