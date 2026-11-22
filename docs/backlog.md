@@ -126,6 +126,9 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | F22 | feat | flywheel | auto | todo | 60 | 将审计提案只写入业务 backlog：调优先级数字或追加 assist（禁 auto；无提案则原文不变） |
 | F23 | feat | flywheel | auto | todo | 70 | 低频审计排行 CLI/cron 壳：调 F21+F22；支持 dry-run；与 F13/process-decide 并存 |
 | F24 | feat | flywheel | manual | todo | 80 | 本机任务计划/cron 挂载 F23（运维壳；禁止改代码默认强制跑） |
+| S19 | fix | scan | auto | todo | 100 | finalize/reject 审计贯通 actionName/pageTitle/userAgent/pagePath；CORS 放行对应页头 |
+| S20 | fix | scan | auto | todo | 110 | 助教 Markdown 消毒与答案区白名单对齐（ALLOWED_TAGS/ATTR） |
+| S21 | feat | scan | auto | todo | 120 | getMetrics 导出 latencyBuckets 四档延迟计数 |
 
 
 ---
@@ -400,6 +403,24 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 - **不做**：改代码默认值迫使排行作业必跑；把 SMTP 或仓库凭据写入本项；自动 `git stash` 脏工作区；改 `process-decide` 阈值或 F21 自检阈值。
 - **residual**：邮件正文是否附排行摘要另条。真要改日修主路径串联须另开条目并冻契约。
 
+### S19
+
+- **做**：`ai-guard.js` 的 `finalize`（allow）与 `reject` 调用 `appendAudit` 时，带上 middleware 已写入 `req.aiGuard` 的 `actionName`、`pageTitle`、`userAgent`，以及 `pagePath`（`x-page-path` 非空用其，否则回退 `req.path`）。SQL `page_path` 绑定优先 `payload.pagePath`，缺省再回退 `payload.path`；NDJSON 同步含上述字段。`corsOptions.allowedHeaders` 补齐 `X-Page-Path`、`X-Page-Title`、`X-User-Id`（大小写与现有六头风格一致）。单测 `it()` 标题含用例 ID：allow 路径 `actionName`/`userAgent` 非空；带 `x-page-path` 时审计 `pagePath`/`page_path` 等于该头；CORS 名单含上述三头；既有 S9 identifier 用例不破。
+- **不做**：改表 schema 或列名；强制前端必发 `x-page-*`；把这些头当鉴权凭据；改 S9 登录态忽略伪造 `x-user-id` 的规则；改 reason 名。
+- **residual**：前端未发 `x-page-path` 时 `page_path` 仍为 API `req.path`。是否在助教/解析请求里主动附带页头另条。
+
+### S20
+
+- **做**：`frontend/src/utils/assistant-markdown.ts` 的 `DOMPurify.sanitize` 使用与 `answer-rich-text.ts` 相同的 `ALLOWED_TAGS` / `ALLOWED_ATTR`（可抽共享常量，或在助教侧复制同表并加注释对齐）。单测锁：含 `script` / `javascript:` 的输入消毒后不进 DOM；`img` / `iframe` 不保留；现有加粗与围栏代码块用例仍过。可对齐 `E2E-MAIN-04`。
+- **不做**：改 B22 Prompt；改题目解析页 `ProblemItem` / `answer-rich-text` 既有调用方行为（除非仅抽共享常量且语义不变）；做 LaTeX / mermaid。
+- **residual**：默认 DOMPurify 已剥事件属性；本项收紧标签面。结构化三字段入库侧尖括号文本仍靠前端展示消毒。
+
+### S21
+
+- **做**：`getMetrics()` 导出 `finalize` 已累计的 `latencyBuckets` 四档（`<1s` / `<3s` / `<10s` / `≥10s`）为 Prometheus 文本计数器（约定名如 `ai_guard_latency_bucket{le="1"}` 等四条，或等价固定标签；单测锁关键字与四档数字）。既有 `ai_guard_requests_total` 等计数器名与 `MON-01` / `UT-METRICS-*` 不破。
+- **不做**：接真 Prometheus 集群；改现有请求/Token/拒绝计数器语义；要求生产必须刮取该指标（运维自决）。
+- **residual**：进程内累计，多 worker 不聚合。直方图精确分位另条。
+
 ### E1
 
 已由人拆为 E11–E17。周扫描不得把本父项改回 `todo`，不得把 E15/E16 改成 `auto`，不得把 OSV 接进 `qa.yml` 或让扫描器改本队列。
@@ -526,3 +547,4 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | 2026-11-21 | F13 完成：低频分析 CLI/cron 壳：调 F11+F12；支持 dry-run；与 process-decide 并存 |
 | 2026-11-22 | 人/机拆 F2：父项 split；F21–F23 为 auto+todo（排行门控/落盘/入口）；F24 为 manual 运维挂载 |
 | 2026-11-22 | F21 完成：业务审计 reason 排行：读 ai_audit_logs（+可选 NDJSON）→带门控的提案对象（不写盘；禁 auto） |
+| 2026-11-22 | 周扫描：新增 auto S19（审计页上下文贯通+CORS 页头）、S20（助教消毒白名单对齐）、S21（latencyBuckets 导出）；无逾期待决；待决表仍空；D3/D4/E15/E16 未拆 |
