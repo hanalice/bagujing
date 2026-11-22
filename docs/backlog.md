@@ -122,7 +122,7 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | F13 | feat | flywheel | auto | done | 70 | 低频分析 CLI/cron 壳：调 F11+F12；支持 dry-run；与 process-decide 并存 |
 | F14 | feat | flywheel | manual | todo | 80 | 本机任务计划/cron 挂载 F13（运维壳；禁止改代码默认强制跑） |
 | F2 | feat | flywheel | assist | split |  | 已拆为 F21 / F22 / F23 / F24 |
-| F21 | feat | flywheel | auto | todo | 50 | 业务审计 reason 排行：读 ai_audit_logs（+可选 NDJSON）→带门控的提案对象（不写盘；禁 auto） |
+| F21 | feat | flywheel | auto | done | 50 | 业务审计 reason 排行：读 ai_audit_logs（+可选 NDJSON）→带门控的提案对象（不写盘；禁 auto） |
 | F22 | feat | flywheel | auto | todo | 60 | 将审计提案只写入业务 backlog：调优先级数字或追加 assist（禁 auto；无提案则原文不变） |
 | F23 | feat | flywheel | auto | todo | 70 | 低频审计排行 CLI/cron 壳：调 F21+F22；支持 dry-run；与 F13/process-decide 并存 |
 | F24 | feat | flywheel | manual | todo | 80 | 本机任务计划/cron 挂载 F23（运维壳；禁止改代码默认强制跑） |
@@ -525,3 +525,4 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | 2026-11-21 | F12 完成：将分析提案只写入 process-backlog 的 assist/待决（禁 auto；不抢 process-decide 降优先级） |
 | 2026-11-21 | F13 完成：低频分析 CLI/cron 壳：调 F11+F12；支持 dry-run；与 process-decide 并存 |
 | 2026-11-22 | 人/机拆 F2：父项 split；F21–F23 为 auto+todo（排行门控/落盘/入口）；F24 为 manual 运维挂载 |
+| 2026-11-22 | F21 完成：业务审计 reason 排行：读 ai_audit_logs（+可选 NDJSON）→带门控的提案对象（不写盘；禁 auto） |
