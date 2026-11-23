@@ -32,7 +32,7 @@ automation_notify_load_env() {
 # split_fallback_pr：日修失败但已开兜底 PR，仍需人知悉（看 PR / 日志）。
 automation_notify_needed() {
   case "$1" in
-    empty_queue|dirty_worktree|fetch_failed|pr_conflict|pr_unmerged|qa_failed|review_rejected|agent_auth|contract_missing|scan_rejected|split_rejected|split_fallback_failed|split_fallback_pr|secret_scan|commit_hook_failed|unknown)
+    empty_queue|dirty_worktree|fetch_failed|pr_conflict|pr_unmerged|qa_failed|review_rejected|agent_auth|agent_unavailable|contract_missing|scan_rejected|split_rejected|split_fallback_failed|split_fallback_pr|secret_scan|commit_hook_failed|unknown)
       return 0
       ;;
     *)
@@ -52,6 +52,7 @@ automation_notify_reason_zh() {
     qa_failed) printf '%s' '质量门禁失败且返修未过' ;;
     review_rejected) printf '%s' '审核未通过且返修用尽' ;;
     agent_auth) printf '%s' 'cursor-agent / gh 登录态失效' ;;
+    agent_unavailable) printf '%s' '编码 agent 后端不可用（Error: [unavailable]），非任务本身失败' ;;
     contract_missing) printf '%s' '条目缺少契约冻结三行' ;;
     scan_rejected) printf '%s' '周扫描结果被脚本拒绝' ;;
     split_rejected) printf '%s' '拆条双评未 2/2：父项仍 assist/manual，请看待决或改口径' ;;
@@ -95,6 +96,11 @@ automation_notify_action_for_reason() {
       ;;
     fetch_failed|agent_auth)
       printf '%s\n' "- 检查网络、gh / cursor-agent 登录与 PATH。"
+      ;;
+    agent_unavailable)
+      printf '%s\n' "- 这不是 QA/契约失败：cursor-agent 连不上后端（常见 gRPC UNAVAILABLE）。"
+      printf '%s\n' "- 短测：echo 回复 ok | cursor-agent -p --force --trust；恢复后重跑同一任务。"
+      printf '%s\n' "- 日志：${log_hint}"
       ;;
     pr_conflict|pr_unmerged)
       printf '%s\n' "- 打开未合并 PR，处理冲突或等 qa 变绿后再跑日修。"
