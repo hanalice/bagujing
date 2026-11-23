@@ -21,6 +21,7 @@ const REASON_TASK = {
   pr_conflict: '远端 PR 与 main 冲突，当日不开新任务',
   pr_unmerged: '远端 PR 未合并，当日不开新任务',
   agent_auth: '编码 agent 未登录或 CLI 不在 PATH',
+  agent_unavailable: '编码 agent 后端不可用（unavailable / 传输层失败），日修中断',
   scan_rejected: '周扫描结果越界（改了别的文件、超上限或待决未落盘）',
   unknown: '自动化以未归类原因失败',
   spec_failed: '规格阶段没有写上测试用例文档',

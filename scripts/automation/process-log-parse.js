@@ -37,6 +37,7 @@ const REASON_RECOMMENDATION = {
   pr_conflict: '先解决远端 PR 与 main 冲突，再开新日修',
   pr_unmerged: '推动未合并 PR 合入或关闭后重跑',
   agent_auth: '确认编码 agent 已登录且 CLI 在 PATH',
+  agent_unavailable: '等待 Cursor agent 后端恢复后重跑同一任务，勿改契约凑过',
   scan_rejected: '收紧周扫描越界（改文件/超上限/待决）后再扫',
   unknown: '归类失败原因后追加 assist/待决，禁止直接 auto',
   spec_failed: '补写测试用例文档后再进入编码阶段',

@@ -13,6 +13,7 @@ automation_classify_message() {
     *队列中没有可执行任务*) printf '%s' empty_queue ;;
     *缺少契约*|*契约冻结*) printf '%s' contract_missing ;;
     *未登录*|*不在\ PATH*|*登录态失效*) printf '%s' agent_auth ;;
+    *\[unavailable\]*|*UNAVAILABLE*|*unable\ to\ fetch\ user*) printf '%s' agent_unavailable ;;
     *Secret\ Scan*|*硬编码秘密*|*硬编码口令*|*硬编码密钥*) printf '%s' secret_scan ;;
     *Git\ Hook*|*commit-msg*|*钩子*拦截*|*提交已被取消*) printf '%s' commit_hook_failed ;;
     *门禁*) printf '%s' qa_failed ;;

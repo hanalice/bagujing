@@ -267,14 +267,35 @@ fi
 
 RUN_LOG="$LOG_DIR/daily-fix-$ID-$(date +%Y%m%d-%H%M%S).log"
 
+# 跑编码/规格 agent；非 0 时按日志归类（含 agent_unavailable），避免 set -e 静默丢 reason。
+run_engine_logged() {
+  local label="$1"
+  local build_fn="$2"
+  local out_rc=0
+  local statuses=""
+  echo "$label"
+  set +e
+  "$build_fn" | invoke_engine 2>&1 | tee -a "$RUN_LOG"
+  statuses="${PIPESTATUS[*]}"
+  out_rc=$(echo "$statuses" | awk '{ print ($2 != "" ? $2 : $1) }')
+  set -e
+  if [ "${out_rc:-1}" -ne 0 ]; then
+    RUN_REASON="$(automation_classify_log_tail "$RUN_LOG")"
+    if [ "$RUN_REASON" = "unknown" ]; then
+      RUN_REASON="$(automation_classify_message "$(tail -n 40 "$RUN_LOG" 2>/dev/null || true)")"
+    fi
+    die "编码引擎失败（exit=$out_rc，reason=${RUN_REASON}）"
+  fi
+}
+
 run_agent() {
-  echo "🤖 调用 $ENGINE 修复中（日志：$RUN_LOG）..."
-  build_prompt | invoke_engine 2>&1 | tee -a "$RUN_LOG"
+  RUN_STAGE="${RUN_STAGE:-implement}"
+  run_engine_logged "🤖 调用 $ENGINE 修复中（日志：$RUN_LOG）..." build_prompt
 }
 
 run_spec_agent() {
-  echo "📋 阶段 1：登记 docs/test_cases.md（日志：$RUN_LOG）..."
-  build_spec_prompt | invoke_engine 2>&1 | tee -a "$RUN_LOG"
+  RUN_STAGE="spec"
+  run_engine_logged "📋 阶段 1：登记 docs/test_cases.md（日志：$RUN_LOG）..." build_spec_prompt
 }
 
 on_spec_retry() {
