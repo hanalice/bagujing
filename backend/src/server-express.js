@@ -136,6 +136,14 @@ app.use((req, res, next) => {
 app.use(cors(aiGuard.corsOptions));
 app.use(express.json()); // 解析 JSON body
 
+/**
+ * 部署探活接口：供本机部署脚本、Nginx 与运维巡检使用，不鉴权、不访问数据库。
+ */
+app.get('/api/health', (_req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ ok: true, service: 'devask-api' });
+});
+
 const authenticateToken = asyncHandler(async (req, res, next) => {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
