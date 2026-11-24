@@ -1,0 +1,178 @@
+# 手动一键部署 DevAsk 到阿里云 ECS（Alibaba Cloud Linux 3 / 2C2G）
+# 职责：
+#   1. 仅支持手动触发（workflow_dispatch），不会在 push main 时自动发布；
+#   2. 前端打包与后端生产依赖安装（含 sqlite3 N-API 预编译二进制）全部在 GitHub Actions 完成，ECS 零编译；
+#   3. 打包为 release-<时间戳>-<sha>.tar.gz，可选保留 Artifact 并通过非 root deploy 账号一键推送更新。
+
+name: Deploy to Aliyun ECS (DevAsk)
+
+on:
+  workflow_dispatch:
+    inputs:
+      keep_artifact:
+        description: '保留发布产物包 Artifact（14天，便于手工下载或留档）'
+        type: boolean
+        default: true
+      dry_run:
+        description: '仅构建并打包产物，不推送到 ECS（备案期间演练可用）'
+        type: boolean
+        default: false
+
+concurrency:
+  group: deploy-aliyun-ecs
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    name: 构建产物并发布到阿里云 ECS
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 配置 Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            backend/package-lock.json
+
+      - name: 校验前端构建密钥
+        env:
+          VITE_AI_CLIENT_SECRET: ${{ secrets.VITE_AI_CLIENT_SECRET }}
+        run: |
+          if [ -z "${VITE_AI_CLIENT_SECRET}" ]; then
+            echo "::error::缺少 GitHub Secret: VITE_AI_CLIENT_SECRET（需与 ECS 本地 .env.production 中 AI_CLIENT_CREDENTIALS 的密钥段一致）"
+            exit 1
+          fi
+
+      - name: 安装依赖并构建前端静态产物
+        working-directory: frontend
+        env:
+          VITE_API_BASE_URL: /api
+          VITE_AI_CLIENT_ID: ${{ secrets.VITE_AI_CLIENT_ID || 'web' }}
+          VITE_AI_CLIENT_SECRET: ${{ secrets.VITE_AI_CLIENT_SECRET }}
+          VITE_SENTRY_DSN: ${{ secrets.VITE_SENTRY_DSN }}
+          VITE_TRACE_PROPAGATION_TARGETS: /api
+          VITE_RELEASE: ${{ github.sha }}
+        run: |
+          npm ci
+          npm run build
+
+      - name: 安装后端生产依赖并拉取预编译 sqlite3（兼容 Alibaba Cloud Linux 3）
+        working-directory: backend
+        run: |
+          npm ci --omit=dev --ignore-scripts
+          (cd node_modules/sqlite3 && npx --no-install prebuild-install -r napi --platform=linux --arch=x64)
+          test -f node_modules/sqlite3/build/Release/node_sqlite3.node
+          echo "==> 校验 sqlite3 二进制 glibc 符号上限"
+          objdump -T node_modules/sqlite3/build/Release/node_sqlite3.node | grep -oE 'GLIBC_[0-9.]+' | sort -Vu | tail -n 5
+          node -e "import('sqlite3').then(() => console.log('sqlite3 N-API 加载通过'))"
+
+      - name: 组装发布产物包（前端静态产物 + 后端运行包）
+        id: package
+        run: |
+          set -euo pipefail
+          RELEASE_ID="$(date -u +%Y%m%d%H%M%S)-${GITHUB_SHA::7}"
+          STAGE_DIR="${RUNNER_TEMP}/release-${RELEASE_ID}"
+          OUT_DIR=".release-out"
+          TARBALL="${OUT_DIR}/release-${RELEASE_ID}.tar.gz"
+
+          rm -rf "${OUT_DIR}"
+          mkdir -p "${STAGE_DIR}/frontend" "${STAGE_DIR}/backend" "${STAGE_DIR}/deploy" "${STAGE_DIR}/scripts" "${OUT_DIR}"
+
+          cp -a frontend/dist/. "${STAGE_DIR}/frontend/"
+          cp -a backend/src backend/scripts backend/package.json backend/package-lock.json backend/node_modules "${STAGE_DIR}/backend/"
+          rm -rf "${STAGE_DIR}/backend/src/tests"
+          cp -a deploy/ecosystem.ecs.cjs "${STAGE_DIR}/deploy/"
+          cp -a scripts/deploy-ecs.sh "${STAGE_DIR}/scripts/"
+          chmod +x "${STAGE_DIR}/scripts/deploy-ecs.sh"
+
+          cat > "${STAGE_DIR}/RELEASE_META" <<EOF
+          RELEASE_ID=${RELEASE_ID}
+          GIT_SHA=${GITHUB_SHA}
+          GIT_REF=${GITHUB_REF}
+          BUILT_AT_UTC=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          WORKFLOW_RUN_ID=${GITHUB_RUN_ID}
+          EOF
+
+          tar -czf "${TARBALL}" -C "${STAGE_DIR}" .
+          (cd "${OUT_DIR}" && sha256sum "release-${RELEASE_ID}.tar.gz" > "release-${RELEASE_ID}.tar.gz.sha256")
+          cp -a scripts/deploy-ecs.sh "${OUT_DIR}/deploy-ecs.sh"
+          chmod +x "${OUT_DIR}/deploy-ecs.sh"
+          ls -lh "${OUT_DIR}"
+
+          echo "release_id=${RELEASE_ID}" >> "${GITHUB_OUTPUT}"
+          echo "tarball=${TARBALL}" >> "${GITHUB_OUTPUT}"
+          echo "checksum=${TARBALL}.sha256" >> "${GITHUB_OUTPUT}"
+
+      - name: 上传发布产物 Artifact（留档/支持离线部署）
+        if: ${{ inputs.keep_artifact }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: devask-ecs-release-${{ steps.package.outputs.release_id }}
+          path: |
+            ${{ steps.package.outputs.tarball }}
+            ${{ steps.package.outputs.checksum }}
+          retention-days: 14
+
+      - name: 校验 ECS 部署连接 Secrets
+        if: ${{ !inputs.dry_run }}
+        env:
+          ECS_HOST: ${{ secrets.ECS_HOST }}
+          ECS_USER: ${{ secrets.ECS_USER }}
+          ECS_SSH_KEY: ${{ secrets.ECS_SSH_KEY }}
+        run: |
+          if [ -z "${ECS_HOST}" ] || [ -z "${ECS_USER}" ] || [ -z "${ECS_SSH_KEY}" ]; then
+            echo "::error::缺少 ECS_HOST / ECS_USER / ECS_SSH_KEY（GitHub Secrets）"
+            exit 1
+          fi
+
+      - name: SCP 推送发布产物包与部署脚本到 ECS
+        if: ${{ !inputs.dry_run }}
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.ECS_HOST }}
+          port: ${{ secrets.ECS_PORT || 22 }}
+          username: ${{ secrets.ECS_USER }}
+          key: ${{ secrets.ECS_SSH_KEY }}
+          timeout: 120s
+          source: ".release-out/*"
+          target: /opt/bagujing/incoming
+          strip_components: 1
+          overwrite: true
+
+      - name: SSH 触发 ECS 零编译原子部署
+        if: ${{ !inputs.dry_run }}
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          RELEASE_ID: ${{ steps.package.outputs.release_id }}
+        with:
+          host: ${{ secrets.ECS_HOST }}
+          port: ${{ secrets.ECS_PORT || 22 }}
+          username: ${{ secrets.ECS_USER }}
+          key: ${{ secrets.ECS_SSH_KEY }}
+          envs: RELEASE_ID
+          command_timeout: 5m
+          script: |
+            set -euo pipefail
+            chmod +x /opt/bagujing/incoming/deploy-ecs.sh
+            /opt/bagujing/incoming/deploy-ecs.sh "/opt/bagujing/incoming/release-${RELEASE_ID}.tar.gz"
+
+      - name: 写入部署摘要
+        if: always()
+        env:
+          RELEASE_ID: ${{ steps.package.outputs.release_id }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          {
+            echo "## DevAsk 阿里云 ECS 部署摘要"
+            echo ""
+            echo "- **发布版本**：\`${RELEASE_ID:-未生成}\`"
+            echo "- **代码提交**：\`${GITHUB_SHA}\` (\`${GITHUB_REF_NAME}\`)"
+            echo "- **演练模式 (dry_run)**：\`${DRY_RUN}\`"
+            echo "- **线上探活**：\`https://devask.hanalice.net/api/health\`"
+          } >> "${GITHUB_STEP_SUMMARY}"

@@ -154,7 +154,8 @@ node scripts/static-server.js
 
 ## 🌐 生产部署概览
 
-生产环境推荐采用 **AWS EC2 + Nginx 动静分离 + PM2 集群** 方案：
+- **阿里云 ECS（Alibaba Cloud Linux 3 / 2C2G / 手动一键零编译发布）**：通过 GitHub Actions（`workflow_dispatch`）构建前端与后端运行产物包，推送至非 root `deploy` 账号原子切换，支持同机多子域名隔离与每日 SQLite 压缩备份。详见 👉 **[阿里云 ECS 部署与运维手册 (docs/deploy-aliyun-ecs.md)](docs/deploy-aliyun-ecs.md)**。
+- **AWS EC2 本机脚本方案**：
 
 ```bash
 # 执行自动化一键部署
@@ -176,6 +177,7 @@ node scripts/static-server.js
 | 🔎 **[依赖漏洞扫描报告](docs/vulnerability-report.md)** | 月报 | 每月 OSV-Scanner 结果，滚动 PR 更新；不阻断合并，高危按后续 milestone 排期 |
 | 🔎 **[依赖漏洞扫描与修复](docs/dependency-vulnerability-scanning.md)** | 流程 | 月扫范围、凭证报告，以及从报告到 backlog、再到单独修复 PR 的步骤 |
 | 🌐 **[生产部署与运维工程白皮书](docs/deployment-and-operations.md)** | 工程指南 | AWS EC2 一键部署、Nginx 动静分离配置、PM2 集群调优与环境变量全量参数字典 |
+| ☁️ **[阿里云 ECS 部署与运维手册](docs/deploy-aliyun-ecs.md)** | 工程指南 | Alibaba Cloud Linux 3、GitHub Actions 手动一键打包零编译发布、单域名证书与每日备份 |
 | 📦 **[静态托管架构演进与 ADR](docs/why-custom-static-server.md)** | 架构决策 | 记录从 `pm2 serve` 到自研 `static-server.js` 的痛点演进与三层服务分工 |
 | 📋 **[文档维护规范与体系说明](docs/README.md)** | 规范指南 | 研发内部档案与公开技术文档的动静分层隔离规范 |
 

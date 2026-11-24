@@ -17,6 +17,7 @@ docs/
 ├── dependency-vulnerability-scanning.md # 依赖漏洞月扫与修复步骤（公开）
 ├── vulnerability-report.md         # 依赖漏洞月报（公开，滚动 PR 覆盖）
 ├── deployment-and-operations.md    # 生产部署与运维工程白皮书（公开）
+├── deploy-aliyun-ecs.md            # 阿里云 ECS（Alibaba Cloud Linux 3）手动一键部署手册（公开）
 ├── why-custom-static-server.md     # 静态托管架构决策记录 ADR（公开）
 │
 └── internal/                       # 🔴 内部研发档案目录（已被 .gitignore 忽略）

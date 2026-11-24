@@ -1,6 +1,8 @@
 # DevAsk 生产部署与运维工程白皮书 (Deployment & Operations)
 
 > 本文档详细记录了 DevAsk (职问AI) 在真实生产环境与发版验收阶段的完整运维架构、AWS EC2 部署指南、Nginx 动静分离配置、PM2 进程集群调优与定制静态服务器环境变量参数字典。
+>
+> 若使用阿里云 ECS（Alibaba Cloud Linux 3 / 2C2G / GitHub Actions 手动一键打包零编译发布与多子域名隔离），请参阅 [deploy-aliyun-ecs.md](deploy-aliyun-ecs.md)。
 
 ---
 
