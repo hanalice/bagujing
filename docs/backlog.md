@@ -129,7 +129,7 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | S19 | fix | scan | auto | todo | 100 | finalize/reject 审计贯通 actionName/pageTitle/userAgent/pagePath；CORS 放行对应页头 |
 | S20 | fix | scan | auto | todo | 110 | 助教 Markdown 消毒与答案区白名单对齐（ALLOWED_TAGS/ATTR） |
 | S21 | feat | scan | auto | todo | 120 | getMetrics 导出 latencyBuckets 四档延迟计数 |
-| S22 | fix | user | auto | todo | 10 | 401 清会话并离开设置页；无 token 访问 /settings 进入登录 |
+| S22 | fix | user | auto | done | 10 | 401 清会话并离开设置页；无 token 访问 /settings 进入登录 |
 | S23 | fix | user | auto | todo | 20 | 登录与注册支持 Tab 焦点与 Enter 提交 |
 | S24 | feat | user | auto | todo | 30 | 设置页暗色开关联动可见的 dark 样式 |
 | S25 | fix | user | auto | todo | 40 | generate 首次结构化解析失败时同请求再试一次上游 |
@@ -579,3 +579,4 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | 2026-11-23 | F22 完成：将审计提案只写入业务 backlog：调优先级数字或追加 assist（禁 auto；无提案则原文不变） |
 | 2026-11-24 | F23 完成：低频审计排行 CLI/cron 壳：调 F21+F22；支持 dry-run；与 F13/process-decide 并存 |
 | 2026-11-25 | 登记用户缺陷 S22–S25（auto+todo，优先级 10/20/30/40，排在 S19 之前）：401 离开设置页、登录注册键盘提交、暗色可见样式、generate 解析失败同请求再试一次 |
+| 2026-11-25 | S22 完成：401 清会话并离开设置页；无 token 访问 /settings 进入登录 |
