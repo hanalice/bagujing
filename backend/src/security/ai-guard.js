@@ -490,7 +490,8 @@ export function createAiGuard({
             payload.userIdentifier ?? null,
             payload.actionType || payload.route || null,
             payload.actionName ?? null,
-            payload.path ?? null,
+            // S19：page_path 优先 pagePath（客户端 x-page-path），缺省再回退 API path
+            payload.pagePath ?? payload.path ?? null,
             payload.pageTitle ?? null,
             payload.payloadPreview ?? null,
             payload.promptTokens ?? 0,
@@ -593,6 +594,13 @@ export function createAiGuard({
 
     const requestId = res.getHeader('X-Request-Id') || req.header('x-request-id') || '-';
     const rejectIp = getIpFromRequest(req);
+    // S19：拒答可能发生在 req.aiGuard 赋值前；页字段优先取已写入上下文，否则从头/路由推导
+    const pagePath = req.aiGuard?.pagePath
+      || (req.header('x-page-path') || req.path);
+    const pageTitle = req.aiGuard?.pageTitle
+      ?? (req.header('x-page-title') || '');
+    const actionName = req.aiGuard?.actionName
+      ?? (routeKey === 'chat' ? 'AI 助手对话' : routeKey ? '生成题目解析' : null);
     appendAudit({
       ts: new Date().toISOString(),
       requestId,
@@ -603,9 +611,12 @@ export function createAiGuard({
       clientId,
       userIdentifier: resolveAuditUserIdentifier(req, rejectIp, config.maxInputChars),
       ipHash: sha256Hex(rejectIp),
-      userAgent: req.header('user-agent'),
+      userAgent: req.aiGuard?.userAgent ?? req.header('user-agent'),
       method: req.method,
       path: req.path,
+      pagePath,
+      pageTitle,
+      actionName,
     });
 
     return res.status(status).json({ code: status, message });
@@ -1047,6 +1058,7 @@ export function createAiGuard({
         }
 
         // 审计入队并等到本次落盘，避免调用方结束后的补写盖住下一条用例的文件。
+        // S19：贯通 middleware 已写入的页上下文字段（actionName/pageTitle/userAgent/pagePath）
         await appendAudit({
           ts: new Date().toISOString(),
           requestId,
@@ -1059,6 +1071,10 @@ export function createAiGuard({
           ipHash: sha256Hex(ip),
           method: req.method,
           path: req.path,
+          pagePath: req.aiGuard.pagePath,
+          pageTitle: req.aiGuard.pageTitle,
+          actionName: req.aiGuard.actionName,
+          userAgent: req.aiGuard.userAgent,
           promptTokens: billedPromptTokens,
           completionTokens,
           totalTokens,
@@ -1094,6 +1110,10 @@ export function createAiGuard({
       'X-Signature',
       'X-Body-Sha256',
       'X-Maf-Mission-Id',
+      // S19：页上下文与匿名审计头，跨域预检须显式放行
+      'X-Page-Path',
+      'X-Page-Title',
+      'X-User-Id',
     ],
   };
 

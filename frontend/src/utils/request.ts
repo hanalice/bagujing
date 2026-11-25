@@ -131,7 +131,7 @@ service.interceptors.response.use(
 
     return res?.data;
   },
-  (error) => {
+  async (error) => {
     const config = error?.config as AxiosRequestConfig | undefined;
     const meta = getMeta(config);
     const durationMs = meta ? Date.now() - meta.startedAt : undefined;
@@ -144,6 +144,33 @@ service.interceptors.response.use(
       ok: false,
       message: 'http_error',
     });
+
+    // HTTP 401：清本地会话与 GET 缓存，必要时导航到登录页（动态 import 避免与 user store 静态环依）
+    if (error?.response?.status === 401) {
+      localStorage.removeItem('token');
+      localStorage.removeItem('user_profile');
+      clearCache();
+
+      try {
+        const { useUserStore } = await import('@/stores/user');
+        const userStore = useUserStore();
+        userStore.token = null;
+        userStore.profile = null;
+      } catch {
+        // Pinia 未就绪时至少已清 localStorage 与缓存
+      }
+
+      try {
+        const { default: router } = await import('@/router');
+        const path = String(router.currentRoute?.value?.path || '');
+        if (path !== '/login' && path !== '/register') {
+          await router.push('/login');
+        }
+      } catch {
+        // Router 未就绪时跳过导航
+      }
+    }
+
     return Promise.reject(error);
   }
 );
