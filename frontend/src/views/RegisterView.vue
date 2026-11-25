@@ -52,7 +52,11 @@ const handleRegister = async () => {
         </button>
       </div>
 
-      <div v-else class="bg-white py-8 px-8 shadow-[0_12px_50px_-12px_rgba(0,0,0,0.05)] rounded-[2.5rem] border border-white/50 space-y-6">
+      <form
+        v-else
+        class="bg-white py-8 px-8 shadow-[0_12px_50px_-12px_rgba(0,0,0,0.05)] rounded-[2.5rem] border border-white/50 space-y-6"
+        @submit.prevent="handleRegister"
+      >
         <div>
           <label for="username" class="block text-sm font-[700] text-slate-700 ml-1 mb-2">Username</label>
           <input
@@ -95,7 +99,7 @@ const handleRegister = async () => {
         </div>
 
         <button
-          @click="handleRegister"
+          type="submit"
           :disabled="userStore.loading"
           class="w-full flex justify-center py-4 px-4 rounded-2xl shadow-lg shadow-blue-500/20 text-sm font-[800] text-white bg-blue-500 hover:bg-blue-600 focus:outline-none transition-all disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.98]"
         >
@@ -109,7 +113,7 @@ const handleRegister = async () => {
             <RouterLink to="/login" class="text-blue-500 font-bold hover:underline">Sign in</RouterLink>
           </p>
         </div>
-      </div>
+      </form>
     </div>
   </div>
 </template>
