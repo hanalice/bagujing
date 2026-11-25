@@ -126,7 +126,7 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | F22 | feat | flywheel | auto | done | 60 | 将审计提案只写入业务 backlog：调优先级数字或追加 assist（禁 auto；无提案则原文不变） |
 | F23 | feat | flywheel | auto | done | 70 | 低频审计排行 CLI/cron 壳：调 F21+F22；支持 dry-run；与 F13/process-decide 并存 |
 | F24 | feat | flywheel | manual | todo | 80 | 本机任务计划/cron 挂载 F23（运维壳；禁止改代码默认强制跑） |
-| S19 | fix | scan | auto | todo | 100 | finalize/reject 审计贯通 actionName/pageTitle/userAgent/pagePath；CORS 放行对应页头 |
+| S19 | fix | scan | auto | done | 100 | finalize/reject 审计贯通 actionName/pageTitle/userAgent/pagePath；CORS 放行对应页头 |
 | S20 | fix | scan | auto | todo | 110 | 助教 Markdown 消毒与答案区白名单对齐（ALLOWED_TAGS/ATTR） |
 | S21 | feat | scan | auto | todo | 120 | getMetrics 导出 latencyBuckets 四档延迟计数 |
 | S22 | fix | user | auto | done | 10 | 401 清会话并离开设置页；无 token 访问 /settings 进入登录 |
@@ -578,5 +578,6 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | 2026-11-22 | 周扫描：新增 auto S19（审计页上下文贯通+CORS 页头）、S20（助教消毒白名单对齐）、S21（latencyBuckets 导出）；无逾期待决；待决表仍空；D3/D4/E15/E16 未拆 |
 | 2026-11-23 | F22 完成：将审计提案只写入业务 backlog：调优先级数字或追加 assist（禁 auto；无提案则原文不变） |
 | 2026-11-24 | F23 完成：低频审计排行 CLI/cron 壳：调 F21+F22；支持 dry-run；与 F13/process-decide 并存 |
+| 2026-11-25 | S19 完成：finalize/reject 审计贯通 actionName/pageTitle/userAgent/pagePath；CORS 放行对应页头 |
 | 2026-11-25 | 登记用户缺陷 S22–S25（auto+todo，优先级 10/20/30/40，排在 S19 之前）：401 离开设置页、登录注册键盘提交、暗色可见样式、generate 解析失败同请求再试一次 |
 | 2026-11-25 | S22 完成：401 清会话并离开设置页；无 token 访问 /settings 进入登录 |
