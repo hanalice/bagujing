@@ -158,15 +158,13 @@ describe('C41 / P1-4: 解析生成三字段 JSON 集成', () => {
 
     const after = await getProblemDetailById(pool, 42);
     assert.equal(after.answer, 'PRE-C41-OLD');
-    assert.equal(modelCalls.filter((c) => !c.stream).length, 1);
+    // S25：恒非法 stub 下首次解析失败会同请求再试 1 次，invoke 精确为 2
+    assert.equal(modelCalls.filter((c) => !c.stream).length, 2);
 
     const [audit] = await readAuditLines(1);
     assert.equal(audit.status, 'error');
     assert.notEqual(audit.reason, 'generated_answer');
-    assert.ok(
-      audit.reason === 'invalid_structured_answer' || audit.reason === 'empty_answer',
-      `失败 reason 须为校验失败等价值，实际: ${audit.reason}`,
-    );
+    assert.equal(audit.reason, 'invalid_structured_answer');
   });
 
   it('IT-ANSWER-JSON-03: 缺字段 / keyPoints 非字符串数组 → 502 不入库', async () => {
@@ -190,8 +188,10 @@ describe('C41 / P1-4: 解析生成三字段 JSON 集成', () => {
       assert.equal(response.callOrder.find((entry) => entry.op === 'json')?.payload.code, 502);
       const row = await getProblemDetailById(pool, 42);
       assert.equal(row.answer, 'PRE-C41-OLD');
+      assert.ok(modelCalls.filter((c) => !c.stream).length <= 2);
       const audits = await readAuditLines(1);
       assert.equal(audits.some((a) => a.reason === 'generated_answer'), false);
+      assert.equal(audits[0]?.reason, 'invalid_structured_answer');
     }
   });
 
@@ -256,6 +256,7 @@ describe('C41 / P1-4: 解析生成三字段 JSON 集成', () => {
     const json = response.callOrder.find((entry) => entry.op === 'json')?.payload;
     assert.equal(json.code, 502);
     assert.equal(json.data?.answer, undefined);
+    assert.ok(modelCalls.filter((c) => !c.stream).length <= 2);
 
     const row = await getProblemDetailById(pool, 42);
     assert.equal(row.answer, 'SAFE');

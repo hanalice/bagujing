@@ -10,10 +10,11 @@
 - **多轮对话窗口 (C31 / P1-1)**：`POST /api/chat` 接收 `messages[]`（`role` + `content`），只取最近 **N=6**（写死）并按条截断到 `AI_MAX_INPUT_CHARS`；当前 `problemId` 题面仍走固定槽；B1 三槽顺序不变（§2.24 / §3.13）。前端回传历史属 **S3**（§4.6 `UT-FE-CHAT-HIST-*` / `E2E-CHAT-HIST-*`），本层不测 `AiAssistant.vue`。
 - **助教前端回传最近 6 轮 (S3)**：`AiAssistant.vue` 调用 `POST /api/chat` 时 body 附带 `messages[]`（每项 `role` + `content`），只回传最近 **N=6**（与 C31 一致）；每条 `content` 按前端已有输入上限截断；**仍**发送当前 `message` 与 `context`（§4.6）。**不做**：改后端裁剪（C31）；改气泡渲染（S6）；滚动摘要。**residual**：后端未识别 `messages` 时行为与现在一致。
 - **助教助手气泡 Markdown + DOMPurify (S6)**：`AiAssistant.vue` 助手气泡把**已累积全文**当 Markdown 解析为 HTML，再经 DOMPurify 渲染；每个 SSE `delta` 对完整缓冲区重解析（禁止按单 chunk 独立解析）。用户气泡仍用文本插值（禁止用户消息走 Markdown）。单测/组件测锁：`**x**` → 加粗；围栏代码块 → `pre`/`code`；含 `<script>` 或 `javascript:` 的输入消毒后不进 DOM（§4.1 `E2E-MAIN-04` / `E2E-CHAT-MD-*`，§4.7 `UT-FE-CHAT-MD-*`）。**不做**：改 B22 Prompt；改题目解析页；把模型原文当 HTML 直接 `v-html`。**residual**：LaTeX / mermaid 不做。
-- **解析结构化输出 (C41 / P1-4)**：`POST /api/problems/:id/answer/generate` 在真实生成路径解析模型返回为 JSON `{ summary, keyPoints, nextStep }`（`keyPoints` 为字符串数组）；校验失败 HTTP **502** 且**不**把脏 HTML/原文写入 `details.answer`；后端契约见 §2.25 / §3.14。
+- **解析结构化输出 (C41 / P1-4)**：`POST /api/problems/:id/answer/generate` 在真实生成路径解析模型返回为 JSON `{ summary, keyPoints, nextStep }`（`keyPoints` 为字符串数组）；校验失败 HTTP **502** 且**不**把脏 HTML/原文写入 `details.answer`；后端契约见 §2.25 / §3.14。首次解析失败后同请求再试上游 1 次属 **S25**（§2.57 / §3.27），不放宽本项 schema。
 - **解析三字段前端渲染 (C42 / P1-4)**：题目详情「参考答案」面板按冻约字段 `summary` / `keyPoints` / `nextStep` 渲染，**禁止**对整篇模型 HTML/`answer` 字符串使用 `v-html`；旧库 HTML `answer` 走安全降级展示；其它字段 DOMPurify 保持不动（§4.1 `E2E-ANSWER-*` / §4.3 `UT-FE-ANSWER-*`）。
 - **真实 usage 回写审计 (C51 / P1-6)**：`finalize` 若收到上游 `usage.prompt_tokens` **与** `usage.completion_tokens` 则写入审计并标 `token_source=upstream`；否则沿用 `estimateTokensByText` 并标 `token_source=estimate`（§2.26 / §3.15）。**不做**供应商账单对账报表与按用户月结。
-- **同步生成有限重试 (D11 / P1-5)**：仅 `POST /api/problems/:id/answer/generate` 的同步 `invoke` 对上游 **429/5xx** 最多 **2** 次重试（合计至多 3 次调用），jitter 序列可注入/固定以便单测；`POST /api/chat` SSE **不重试**（§2.27 / §3.16）。**不做** chat 流式重试、改上游超时默认值。连续失败熔断见 **D12**（§2.28 / §3.17）；跨进程共享熔断态不在 D11 范围。
+- **同步生成有限重试 (D11 / P1-5)**：仅 `POST /api/problems/:id/answer/generate` 的同步 `invoke` 对上游 **429/5xx** 最多 **2** 次重试（合计至多 3 次调用），jitter 序列可注入/固定以便单测；`POST /api/chat` SSE **不重试**（§2.27 / §3.16）。**不做** chat 流式重试、改上游超时默认值。连续失败熔断见 **D12**（§2.28 / §3.17）；跨进程共享熔断态不在 D11 范围。与 **S25**（有正文但 `parseGeneratedAnswerJson` 失败后再 `invoke` 至多 1 次）正交，互不占用对方次数预算。
+- **generate 结构化解析失败同请求再试 (S25)**：`POST /api/problems/:id/answer/generate` 在上游已返回正文、但 `parseGeneratedAnswerJson` 失败时，**同一次请求**内再 `invoke` 上游最多 **1** 次；第二次解析成功则走现有入库与 `code: 0`；两次都失败仍 HTTP **502**、`reason` 仍为 `invalid_structured_answer`、不入库（§2.57 / §3.27）。**不做**：放宽 C41 三字段 schema；对 chat SSE 做同样重试；无限重试。**residual**：两次坏 JSON 客户端仍见 502；连接层冷启动失败（无正文可解析）不在本项。
 - **进程内连续失败熔断 (D12 / P1-5)**：进程内计数连续上游失败，达到可注入阈值后打开一段可注入时间窗口，打开期间**零次**上游调用即拒答；不依赖 Redis；单测可驱动时钟/阈值（§2.28 / §3.17）。**不做**跨 worker 共享熔断状态。**residual**：cluster 下每进程一份，文档写明。
 - **主备 Base URL failover (D21 / P1-5)**：若配置了备用 Base URL（契约名 `OPENAI_BASE_URL_FALLBACK`，实现等价别名须在测码注释写明），则主 URL 在**向客户端发出首字节 / 首条 SSE `delta` 之前**失败时改用备用发起上游；已开始向客户端推 `delta` 后**不得**再切。未配置备用时行为与仅 `OPENAI_BASE_URL` 时一致（§2.29 / §3.18）。**不做**跨请求会话级 failover、对用户伪装成一条已中断流的续传。**residual**：无。
 - **密码哈希 bcryptjs 与懒迁移 (D51 / P2-2)**：新注册写入 `bcryptjs` 哈希（禁止再写无盐 `sha256`）；登录先 `bcrypt.compare`，失败再回退旧 `sha256` 十六进制比对；命中旧哈希则**仅对该用户** `UPDATE` 写回 bcrypt（懒迁移），无批量 SQL 扫表。后端契约见 §2.30 / §3.19。**不做** argon2、离线翻写全表、强制失效已有会话。**residual**：从未再登录的存量用户仍为旧哈希，直到其下次登录。
@@ -251,7 +252,7 @@
 | `UT-HTML-SANITIZE-02` | 伪协议过滤：封杀 javascript 伪协议 | 输入 `<a href="javascript:alert(1)">点击</a>`、`<a href="  javascript :..."` 等伪协议。 | 1. 输出中**绝对无** `javascript:` 伪协议 URL；<br>2. 危险 `href` 被剔除或清空；<br>3. 安全协议（如 `http://`, `https://`, `#`）正常保留。 |
 | `UT-HTML-SANITIZE-03` | 行内事件属性过滤：封杀 on* 事件处理器 | 输入 `<p onclick="evil()" onmouseover="evil()">文本</p>`、`<img src="x" onerror="evil()">` 等带 `on*` 事件属性的标签。 | 1. 消毒后输出中不包含任何 `on[a-z]+=` 事件处理器；<br>2. 宿主标签正常保留，事件属性被剔除。 |
 | `UT-HTML-SANITIZE-04` | 白名单放行：保留常用安全富文本排版标签 | 输入包含 `<p>`, `<h1>`~`<h6>`, `<ul>`, `<ol>`, `<li>`, `<strong>`, `<code>`, `<pre>`, `<blockquote>`, `<table>` 等常见面试题排版标签。 | 1. 白名单内标签完整保留；<br>2. 正常文本与格式排版不损坏、不发生截断。 |
-| `IT-HTML-SANITIZE-01` | 生成路径拒收脏 HTML：502 且库内不落 script | 前置：题 `details.answer` 先快照为已知安全值（可为空或短旧文）；调用 `POST /api/problems/:id/answer/generate`（`force: true`）；Mock 上游 LLM 返回含 `<script>stealCookie()</script><p>解析正文</p><a href="javascript:xss()">链接</a>` 的**非 JSON** HTML 片段（对齐 **C41**：整篇 HTML 不再是合法生成产物）。 | 1. HTTP **502**，JSON `code === 502`（与 C41 校验失败契约一致），**不得** HTTP 200/`code === 0`；<br>2. 直接查询 SQLite：`details.answer` **等于**请求前快照（未写入脏 HTML）；字段中**绝对无**本次 mock 的 `<script>` / `javascript:`；<br>3. `upsertProblemAnswerById`（或等价写库）在失败路径调用次数为 0。白名单消毒函数本身仍由 UT-HTML-SANITIZE-01..04 覆盖。 |
+| `IT-HTML-SANITIZE-01` | 生成路径拒收脏 HTML：502 且库内不落 script | 前置：题 `details.answer` 先快照为已知安全值（可为空或短旧文）；调用 `POST /api/problems/:id/answer/generate`（`force: true`）；Mock 上游 LLM **每次**均返回含 `<script>stealCookie()</script><p>解析正文</p><a href="javascript:xss()">链接</a>` 的**非 JSON** HTML 片段（对齐 **C41**；恒非法以覆盖 **S25** 同请求再试）。 | 1. HTTP **502**，JSON `code === 502`（与 C41 校验失败契约一致），**不得** HTTP 200/`code === 0`；<br>2. 直接查询 SQLite：`details.answer` **等于**请求前快照（未写入脏 HTML）；字段中**绝对无**本次 mock 的 `<script>` / `javascript:`；<br>3. `upsertProblemAnswerById`（或等价写库）在失败路径调用次数为 0；`invoke` 允许为 **2**（S25），但仍不得入库。白名单消毒函数本身仍由 UT-HTML-SANITIZE-01..04 覆盖。 |
 
 ### 2.18 助教 system 不再要求仅 HTML 输出（B22 / P0-7）(`backend/src/tests/chat-system-prompt.test.js`)
 
@@ -412,7 +413,7 @@ C22 合入后 problems 关键字召回主路径改为 FTS（失败回退 LIKE）
 
 **不做**：改前端按三字段渲染 / 去掉整篇 `v-html`（属 **C42**，见 §4.1 / §4.3）；继续要求模型吐整篇 HTML（generate `systemPrompt` 不得再硬性要求「仅 body 内 HTML 片段」或强制 `<p>/<h3>/<ul>/<li>` 作为唯一输出形态）。
 
-**residual**：库内旧版整篇 HTML `answer` 如何展示由 C42 处理（§4.1 `E2E-ANSWER-03` / §4.3 `UT-FE-ANSWER-06`）。缓存早退（`cached_answer`）对**不可解析**的旧 HTML 仍原样回传 `answer` + `cached: true`（不强制升级、不得 502）；库内已是合法三字段 JSON 时须在响应顶层带回 `summary`/`keyPoints`/`nextStep`，属 **S10**（§2.35 / §3.22），本表不重复锁该契约。
+**residual**：库内旧版整篇 HTML `answer` 如何展示由 C42 处理（§4.1 `E2E-ANSWER-03` / §4.3 `UT-FE-ANSWER-06`）。缓存早退（`cached_answer`）对**不可解析**的旧 HTML 仍原样回传 `answer` + `cached: true`（不强制升级、不得 502）；库内已是合法三字段 JSON 时须在响应顶层带回 `summary`/`keyPoints`/`nextStep`，属 **S10**（§2.35 / §3.22），本表不重复锁该契约。上游已返回正文但首次 `parseGeneratedAnswerJson` 失败时，同请求内再 `invoke` 至多 1 次属 **S25**（§2.57 / §3.27）；本表锁 schema 与失败不入库，**不**因 S25 放宽三字段门。
 
 **测法**：纯函数解析/校验（可导出 `parseGeneratedAnswerJson` 或 handler 内同等模块）+ spy `upsertProblemAnswerById`；集成见 §3.14。允许剥离常见 markdown 代码围栏（`` ```json ... ``` ``）后再 `JSON.parse`。`it()` 标题须包含下表 ID。
 
@@ -427,7 +428,7 @@ C22 合入后 problems 关键字召回主路径改为 FTS（失败回退 LIKE）
 | UT-ANSWER-JSON-07 | summary/nextStep 非空字符串；keyPoints 允许空数组 | 前置：A) `summary: ""` 或仅空白；B) `nextStep: ""`；C) `summary`/`nextStep` 为 number/boolean；D) 合法非空 `summary`/`nextStep` 且 `keyPoints: []`。 | 1. A/B/C 失败；<br>2. D 成功（空要点数组合法，避免模型「无要点」时被误杀）；<br>3. `summary`/`nextStep` trim 后长度须 `> 0`。 |
 | UT-ANSWER-JSON-08 | 额外未知字段可忽略 | 前置：合法三字段 + 额外 `"html":"<p>x</p>"`、`"raw":"…"`. | 1. 解析成功；<br>2. 成功 `value` **仅**含三冻约字段（或明确忽略未知键，不得把 `html` 写入待入库载荷）。 |
 | UT-ANSWER-JSON-09 | generate systemPrompt 要求 JSON 三字段而非整篇 HTML | 前置：读取 `/api/problems/:id/answer/generate` 的 `systemPrompt`（源码字面量或导出常量；不得依赖模型回复）。 | 1. 文案要求输出 JSON，并点名 `summary`、`keyPoints`、`nextStep`（或等价 schema 说明 `keyPoints` 为数组）；<br>2. **不包含**「请直接输出可用于前端展示的 HTML 片段」「仅 body 内」类硬性 HTML 指令；<br>3. **不包含**「使用 `<p>/<h3>/<ul>/<li>`」作为唯一输出格式的强制句（允许在 JSON 字符串值内谈排版，但不得要求整篇 HTML 文档）。 |
-| UT-ANSWER-JSON-10 | 校验失败路径不得调用写库 | 前置：在可测 handler 片段或带 stub 的生成路径中，mock `invoke` 返回 UT-ANSWER-JSON-03 的 HTML；spy `upsertProblemAnswerById`（及任何 `UPDATE details SET answer`）；题已有旧 `answer='OLD-SAFE'`。 | 1. 写库 spy 调用次数为 **0**；<br>2. 随后读库 `answer === 'OLD-SAFE'`；<br>3. 与「失败不入库」完成标准一致（HTTP 层断言见 IT-ANSWER-JSON-02）。 |
+| UT-ANSWER-JSON-10 | 校验失败路径不得调用写库 | 前置：在可测 handler 片段或带 stub 的生成路径中，mock `invoke` **每次**均返回 UT-ANSWER-JSON-03 的 HTML（恒非法，对齐 **S25** 同请求再试后仍失败）；spy `upsertProblemAnswerById`（及任何 `UPDATE details SET answer`）；题已有旧 `answer='OLD-SAFE'`。 | 1. 写库 spy 调用次数为 **0**；<br>2. 随后读库 `answer === 'OLD-SAFE'`；<br>3. 与「失败不入库」完成标准一致；`invoke` 次数允许为 **2**（S25 再试 1 次），但**不得**因再试而入库（HTTP 层见 IT-ANSWER-JSON-02 / §2.57 UT-PARSE-RETRY-*）。 |
 
 ### 2.26 C51 上游 usage 回写审计与估算打标（P1-6）(`backend/src/tests/ai-guard-usage.test.js`)
 
@@ -466,7 +467,7 @@ C22 合入后 problems 关键字召回主路径改为 FTS（失败回退 LIKE）
 
 **不做**：为 chat 流式增加重试；修改 `buildLlmConfig` / Guard 的上游超时默认值（`upstreamTimeoutMs` / `timeout` 既有回退规则见 §2.1 UT-LLM-10..12）。
 
-**residual**：跨进程/跨 worker 共享熔断态不在本项；连续失败窗口与进程内熔断属 **D12**（§2.28 / §3.17），本表不得要求 Redis 共享熔断态。
+**residual**：跨进程/跨 worker 共享熔断态不在本项；连续失败窗口与进程内熔断属 **D12**（§2.28 / §3.17），本表不得要求 Redis 共享熔断态。上游已返回正文但结构化解析失败后再 `invoke` 1 次属 **S25**（§2.57），与本项 429/5xx 重试**正交**——S25 **不得**占用或扩大本表的「至多 3 次」预算；本表用例亦**不得**把「有正文解析失败」误写成须走 D11 jitter。
 
 **协议 / 调用序**（下一阶段 `it()` 须对齐）：
 
@@ -1507,6 +1508,44 @@ C22 合入后 problems 关键字召回主路径改为 FTS（失败回退 LIKE）
 | UT-AUDIT-CLI-15 | residual：不要求 F24 挂载 / 不要求日修默认串联审计排行 | 前置：只读 backlog F23 residual 与本小节断言范围；CLI 夹具已绿。 | 1. PASS **不**要求系统 crontab / 任务计划已挂载 F23；<br>2. PASS **不**要求改 `daily-fix.sh` 或部署文档把「每次日修必跑审计排行」写成仓库代码默认；<br>3. 以「未挂载 crontab / 日修未串联审计排行」判 FAIL 则本行失败——挂载属 **F24**。 |
 | UT-AUDIT-CLI-16 | 与 UT-LOG-CLI / UT-AUDIT-WRITE / UT-PROCESS 分界：不碰 process、不实施满 3 次、不抢 F13 | 前置：临时审计夹具可产出提案；业务 backlog 可写；process-backlog 哨兵；可选放置流水线 NDJSON 含 `qa_failed` 但**不应**被本入口消费；非 dry-run 跑 F23。 | 1. 仅业务 `backlog.md` 可变；process-backlog 哨兵 hash 不变；队列表变更语义属 F22（assist/调优先级），**不**因流水线 `qa_failed` 追加 process 行；<br>2. **不**调用 F13 CLI / F11/F12；**不**要求 NDJSON 满 3 次才写入（门控属 F21 样本/变化，非 decide 计次）；<br>3. 证明 F23 只是业务审计排行壳，与 §2.53 F13、§2.49 decide 入口并存且数据源/落盘目标分离。 |
 
+### 2.57 S25 generate 首次结构化解析失败时同请求再试一次上游（`backend/src/tests/answer-parse-retry.test.js` → generate handler / `parseGeneratedAnswerJson`；与 D11 `invokeWithRetry` 正交）
+
+对应 **S25**（`docs/backlog.md` §S25）。回归点：现状 `POST /api/problems/:id/answer/generate` 在上游已返回 `content` 后只调用一次 `parseGeneratedAnswerJson`；失败即 HTTP **502**、`reason: 'invalid_structured_answer'`、不入库（见 `server-express.js` 约 `parseGeneratedAnswerJson` → `finalize`/`res.status(502)`）。偶发坏 JSON / 围栏残缺会导致本可成功的请求直接 502。
+
+**做**：
+
+1. 触发条件：上游 **已返回正文**（`content` 为非空字符串或可拼接出文本），且对该正文的 `parseGeneratedAnswerJson`（或等价）返回失败；**同一次 HTTP 请求**内再调用上游 `invoke` **最多 1 次**（合计至多 2 次有正文的 `invoke`）。
+2. 第二次 `invoke` 返回的正文若解析成功：走现有入库（`upsertProblemAnswerById` 恰好 1 次）与成功响应——HTTP **200**，`code === 0`，`data.cached === false`，顶层 `summary` / `keyPoints` / `nextStep` / `answer` 与 C41 成功路径一致；`finalize` 恰好 1 次且 `status: 'ok'`、`reason: 'generated_answer'`。
+3. 两次正文均解析失败：仍 HTTP **502**，`code === 502`；审计/上下文 `reason` 仍为 **`invalid_structured_answer`**（不得改成新 reason 名）；写库次数为 **0**；`finalize` 为 error 且不得 `generated_answer`。
+4. 与 **D11** 正交：本项再试**不**计入、**不**扩大 D11 对 429/5xx 的「至多 3 次」预算；D11 的 jitter sleep **不得**套用到「有正文解析失败」路径（解析再试可立即二次 `invoke`，或仅允许实现声明的固定短间隔，但测码须证明不是 D11 jitter 序列）。
+5. 再试须复用**同一次请求**已构建的上游 messages（B1 三槽 / 题面 / 用户原文不变）；禁止另开客户端 HTTP 请求才算「再试」。
+
+**不做**：放宽 **C41** 三字段 schema（缺字段 / `keyPoints` 非字符串数组等仍失败）；对 `POST /api/chat` SSE 做同样「解析失败再 stream」；无限重试（第 3 次及以后 `invoke` 禁止）；把网关/进程外的 502、或连接层冷启动（`invoke` reject / 无正文）当成已被本项修好。
+
+**residual**：两次都是坏 JSON 时客户端仍看到 502，需再发一次 generate；上游连接层冷启动失败若不是「有正文但解析失败」，不在本项（仍走 D11/D12/D21 等既有路径）。
+
+**协议 / 调用序**（下一阶段 `it()` 须对齐）：
+
+1. `circuit 判定` →（closed）`invoke`（可经 D11）→ 得 `content` → `parseGeneratedAnswerJson`；
+2. 若 `ok === true`：入库 → `finalize(generated_answer)` → `res.json(code:0)`（**不再**二次 invoke）；
+3. 若 `ok === false`：同请求再 `invoke` 1 次（messages 与首次同构）→ 再 parse；成功则同步骤 2；仍失败则 `finalize({ status:'error', reason:'invalid_structured_answer', upstreamReached:true })` → HTTP **502**；
+4. 触发门：仅「resolve 且有可解析文本但 schema/JSON 失败」；`invoke` reject（429/5xx/网络错）、空 `content`、熔断 `circuit_open` **不得**误走本项再试计数。
+
+**测法**：优先 handler 级 stub `model.invoke` 按调用序号返回不同 `content`（或 reject）；spy `upsertProblemAnswerById` / `finalize` / `parseGeneratedAnswerJson`；集成见 §3.27。`it()` 标题须包含下表 ID。
+
+| ID | 用例标题 | 场景描述 | 预期结果 |
+| :--- | :--- | :--- | :--- |
+| UT-PARSE-RETRY-01 | 首次非法 JSON、第二次合法 → 200 且只入库一次 | 前置：题无缓存或 `{ "force": true }`；spy 写库与 `finalize`；stub `invoke`：第 1 次 resolve `content` 为非合法三字段（如 `<p>bad</p>` 或截断 `{ "summary": "断`），第 2 次 resolve 合法 `{"summary":"ok","keyPoints":["k"],"nextStep":"n"}`。 | 1. `invoke` 次数精确为 **2**；<br>2. 写库恰好 **1** 次；读库可还原同构三字段；<br>3. HTTP **200**，`code === 0`，`data.cached === false`，三字段可读；`finalize` 恰好 1 次且 `reason === 'generated_answer'`。 |
+| UT-PARSE-RETRY-02 | 两次均非法 → 502、reason 仍为 invalid_structured_answer、不入库 | 前置：`details.answer` 预置 `'PRE-S25-OLD'`；`force: true`；stub `invoke` 两次均返回非法正文（可同为 HTML，或第一次 HTML、第二次缺字段 JSON）。 | 1. `invoke` 次数精确为 **2**（无第 3 次）；<br>2. HTTP **502**，`code === 502`；写库 **0**；读库 `answer === 'PRE-S25-OLD'`；<br>3. `finalize` 为 error 且 `reason === 'invalid_structured_answer'`（禁止改名）；不得 `generated_answer`。 |
+| UT-PARSE-RETRY-03 | 首次即合法：不触发二次 invoke | 前置：stub `invoke` 第 1 次即合法三字段 JSON；任意后续 stub 若被调用则记 fail。 | 1. `invoke` 次数 === **1**；<br>2. HTTP 200 / `code === 0`，写库 1 次；<br>3. 证明成功短路，不浪费上游配额。 |
+| UT-PARSE-RETRY-04 | 与 D11 正交：解析再试不占用 429/5xx 预算 | 前置：注入 D11 jitter `[0,0]`；stub：`invoke` 第 1 次 reject `status: 429`，第 2 次 resolve 非法正文，第 3 次 resolve 合法三字段（调用序：D11 一次重试拿到正文 → S25 解析再试）。 | 1. 最终 HTTP **200**、`code === 0`，写库 1 次；<br>2. `invoke` 总次数精确为 **3**（1 次 429 + 1 次坏正文 + 1 次好正文），**不得**因 S25 再把 D11 扩到第 4 次；<br>3. 429→二次之间可有 D11 sleep；坏正文→好正文之间**不得**要求再消耗一条 D11 jitter 才算 PASS（证明两套重试解耦）。 |
+| UT-PARSE-RETRY-05 | 不做：chat SSE 解析/形态失败不套用本项再试 | 前置：合法 `chat_ai`；stub `model.stream` 产出非空 delta 后正常结束（或首包即结束）；**不**经过 generate 的解析再试封装。 | 1. `stream` 调用次数精确为 **1**；<br>2. **零次**因「正文不像 JSON」而二次 `stream`/`invoke`；<br>3. 与 backlog「不做：对 chat SSE 做同样重试」一致。 |
+| UT-PARSE-RETRY-06 | 不做：不放宽 C41 schema（再试成功仍须三字段合法） | 前置：stub 第 1 次非法；第 2 次返回 `{"summary":"s","keyPoints":"不是数组","nextStep":"n"}`（仍 schema 失败）。 | 1. HTTP **502**，`code === 502`；写库 0；`invoke === 2`；<br>2. `reason === 'invalid_structured_answer'`；<br>3. 证明 S25 **只**多一次上游机会，不把非法 `keyPoints` 类型放行。 |
+| UT-PARSE-RETRY-07 | 触发门：无正文 / reject 不走解析再试计数 | 前置：分别覆盖：A) `invoke` 单次 reject `status: 400`（非 D11 可重试）；B) resolve `{ content: '' }` 或 `content` 缺失导致无可解析文本（若实现将空串直接判非法并再试，则 B 改为「连接层 throw 无 content」并在测码注释写明）。 | 1. A：`invoke` 次数 === **1**，走既有错误路径（非本项 `invalid_structured_answer` 双次 invoke）；<br>2. B：不得把「无正文的冷启动/空响应」当成已由 S25 修复的 502（与 residual 一致）；若空串被当作解析失败，`invoke` 至多 **2**，但仍 502 不入库；<br>3. 本行 PASS **不得**要求「任意上游失败都再试一次」。 |
+| UT-PARSE-RETRY-08 | 再试复用同请求 messages，不新开客户端请求 | 前置：捕获两次 `invoke` 的 messages 参数；第 1 次非法、第 2 次合法。 | 1. 两次调用的 messages 条数与三角色顺序一致（system → context → user）；<br>2. user 槽题面/原文与首次全等（或深相等）；<br>3. 单次 HTTP handler 内完成，探针侧客户端请求次数仍为 **1**。 |
+| UT-PARSE-RETRY-09 | finalize / 配额：成功路径仅一次成功记账 | 前置：同 UT-PARSE-RETRY-01；spy `finalize` 与 Guard 准入 `next`。 | 1. 单次请求：`next` 一次；`finalize` 恰好 **1** 次且 `generated_answer`；<br>2. 不得在首次解析失败时先 `finalize(invalid_structured_answer)` 再成功 finalize（禁止双记账）；<br>3. 写库 1 次。 |
+| UT-PARSE-RETRY-10 | residual / 不做边界：不把网关外 502 当已修；禁止无限重试 | 前置：只读 backlog S25 **不做**与 residual；stub 恒非法正文。 | 1. `invoke` ≤ **2**；客户端仍收 502，需再请求才能重试（本表不模拟第二次 HTTP）；<br>2. PASS **不**要求放宽 schema、不要求 chat SSE 同逻辑、不要求消灭所有进程外 502；<br>3. 以「必须第 3 次 invoke / 必须自动消除一切 502」为 FAIL 条件则本行设计错误。 |
+
 ---
 
 ## 3. 安全防护与集成测试用例 (Security & Integration)
@@ -1649,16 +1688,16 @@ Prompt 内容来自数据库，不能只依赖客户端 `AI_MAX_INPUT_CHARS` 防
 
 ### 3.14 C41 解析生成三字段 JSON 与失败不入库集成 (`backend/src/tests/answer-structured-json-integration.test.js`)
 
-对应 **C41 / P1-4** 完成标准：经 `app.handle`（鉴权 → Guard → generate handler）走真实生成路径；stub `model.invoke` 返回可控 `content`；成功则 HTTP 200 且响应/库内为三字段；失败则 HTTP **502** 且 `details.answer` 保持请求前快照。前端渲染属 **C42**（§4.1 `E2E-ANSWER-*` / §4.3 `UT-FE-ANSWER-*`），本表禁止断言 Vue/`v-html`。旧 HTML 缓存展示属 residual/C42；配额向的 `cached_answer` 早退仍由 §2.10 / §3.3 覆盖；**库内三字段 JSON 缓存命中顶层带回 summary/keyPoints/nextStep** 属 **S10**（§2.35 / §3.22），本表 IT-ANSWER-JSON-05 只锁旧 HTML residual。`it()` 标题须包含下表 ID。
+对应 **C41 / P1-4** 完成标准：经 `app.handle`（鉴权 → Guard → generate handler）走真实生成路径；stub `model.invoke` 返回可控 `content`；成功则 HTTP 200 且响应/库内为三字段；失败则 HTTP **502** 且 `details.answer` 保持请求前快照。前端渲染属 **C42**（§4.1 `E2E-ANSWER-*` / §4.3 `UT-FE-ANSWER-*`），本表禁止断言 Vue/`v-html`。旧 HTML 缓存展示属 residual/C42；配额向的 `cached_answer` 早退仍由 §2.10 / §3.3 覆盖；**库内三字段 JSON 缓存命中顶层带回 summary/keyPoints/nextStep** 属 **S10**（§2.35 / §3.22），本表 IT-ANSWER-JSON-05 只锁旧 HTML residual。首次解析失败同请求再 `invoke` 1 次的成功/耗尽时序属 **S25**（§2.57 / §3.27）；本表失败行在恒非法 stub 下允许 `invoke === 2`，但 schema 与 `reason: 'invalid_structured_answer'` 不放宽。`it()` 标题须包含下表 ID。
 
 | ID | 用例标题 | 场景描述 | 预期结果 |
 | :--- | :--- | :--- | :--- |
-| IT-ANSWER-JSON-01 | 合法 JSON 生成入库并回传三字段 | 前置：有效登录且 `study`；题 `42` 无非空缓存或 body `{ "force": true }`；stub `invoke` 返回 `content` 为 `{"summary":"结论","keyPoints":["a","b"],"nextStep":"下一步"}`；spy 写库。 | 1. HTTP **200**，JSON `code === 0`、`data.cached === false`；<br>2. `data.summary === '结论'`、`Array.isArray(data.keyPoints)` 且深等于 `['a','b']`、`data.nextStep === '下一步'`；<br>3. 写库恰好 1 次；读 SQLite `details.answer` 可 `JSON.parse` 还原出同构三字段（不得仍是整篇 `<p>/<ul>` HTML 文档）；<br>4. `finalize` 一次：`status: 'ok'`、`reason: 'generated_answer'`、`upstreamReached !== false`。 |
-| IT-ANSWER-JSON-02 | 模型吐 HTML：502 且 answer 不更新 | 前置：同登录；题 `42` 的 `details.answer` 预置 `'PRE-C41-OLD'`；`force: true`；stub `invoke` 返回 `<p>旧式整篇解析</p><ul><li>x</li></ul>`。 | 1. HTTP **502**，`code === 502`，`message` 表明解析/校验失败（非空可读串即可，禁止静默 200）；<br>2. 读库 `answer === 'PRE-C41-OLD'`（**未**被 HTML 覆盖）；<br>3. 写库调用次数为 0；上游 `invoke` 仍为 1 次（已触达）；`finalize` 为 error（reason 如 `invalid_structured_answer` / `empty_answer` 等价），且不得 `reason: 'generated_answer'`。 |
-| IT-ANSWER-JSON-03 | 缺字段 / keyPoints 非字符串数组 → 502 不入库 | 前置：同 IT-ANSWER-JSON-02 的库快照；分别 stub：A) `{"summary":"s","nextStep":"n"}`（缺 keyPoints）；B) `{"summary":"s","keyPoints":"不是数组","nextStep":"n"}`。 | 1. A/B 均 HTTP **502**、`code === 502`；<br>2. 两次后库内 `answer` 仍为预置快照；<br>3. 无 `generated_answer` 成功审计。 |
+| IT-ANSWER-JSON-01 | 合法 JSON 生成入库并回传三字段 | 前置：有效登录且 `study`；题 `42` 无非空缓存或 body `{ "force": true }`；stub `invoke` 返回 `content` 为 `{"summary":"结论","keyPoints":["a","b"],"nextStep":"下一步"}`；spy 写库。 | 1. HTTP **200**，JSON `code === 0`、`data.cached === false`；<br>2. `data.summary === '结论'`、`Array.isArray(data.keyPoints)` 且深等于 `['a','b']`、`data.nextStep === '下一步'`；<br>3. 写库恰好 1 次；读 SQLite `details.answer` 可 `JSON.parse` 还原出同构三字段（不得仍是整篇 `<p>/<ul>` HTML 文档）；<br>4. `finalize` 一次：`status: 'ok'`、`reason: 'generated_answer'`、`upstreamReached !== false`；`invoke` 恰好 **1** 次（首次即合法，不触发 S25 再试）。 |
+| IT-ANSWER-JSON-02 | 模型吐 HTML：502 且 answer 不更新 | 前置：同登录；题 `42` 的 `details.answer` 预置 `'PRE-C41-OLD'`；`force: true`；stub `invoke` **每次**均返回 `<p>旧式整篇解析</p><ul><li>x</li></ul>`（恒非法，覆盖 S25 同请求再试）。 | 1. HTTP **502**，`code === 502`，`message` 表明解析/校验失败（非空可读串即可，禁止静默 200）；<br>2. 读库 `answer === 'PRE-C41-OLD'`（**未**被 HTML 覆盖）；<br>3. 写库调用次数为 0；上游 `invoke` 次数精确为 **2**（首次解析失败 + S25 同请求再试 1 次；**不得**第 3 次）；`finalize` 为 error 且 `reason === 'invalid_structured_answer'`（不得 `generated_answer`）。 |
+| IT-ANSWER-JSON-03 | 缺字段 / keyPoints 非字符串数组 → 502 不入库 | 前置：同 IT-ANSWER-JSON-02 的库快照；分别 stub **每次**返回：A) `{"summary":"s","nextStep":"n"}`（缺 keyPoints）；B) `{"summary":"s","keyPoints":"不是数组","nextStep":"n"}`（S25 再试后仍同构非法）。 | 1. A/B 均 HTTP **502**、`code === 502`；`reason` 仍为 `invalid_structured_answer`（若响应/审计暴露）；<br>2. 两次后库内 `answer` 仍为预置快照；写库 0；每条路径 `invoke` ≤ **2**；<br>3. 无 `generated_answer` 成功审计；证明 C41 schema **未**因 S25 放宽。 |
 | IT-ANSWER-JSON-04 | 围栏 JSON 成功路径与 prompt 契约 | 前置：`force: true`；stub 返回带 `` ```json `` 围栏的合法三字段；捕获发往模型的 `messages[0]` system。 | 1. HTTP 200、`code === 0`，三字段正确；<br>2. system content 满足 UT-ANSWER-JSON-09（要求 JSON 三字段、无整篇 HTML 硬性指令）；<br>3. 入库成功 1 次。 |
 | IT-ANSWER-JSON-05 | 缓存早退不强制重解析旧 HTML（residual） | 前置：题已有非空旧 HTML `answer`（形如 `<p>legacy</p>`）；body **无** `force` / `force: false`；spy `invoke`。 | 1. HTTP 200，`data.cached === true`，`data.answer` 等于库内旧 HTML 原文；顶层**无**可用 `summary`/`keyPoints`/`nextStep`（与 **S10** residual / UT-CACHE-STRUCT-02 一致）；<br>2. **零次** `invoke`；`finalize` `reason: 'cached_answer'`、`upstreamReached: false`；<br>3. 本用例**不**要求把旧 HTML 升级为三字段；亦不得因旧 HTML 形状对缓存路径返回 502。库内已是三字段 JSON 的缓存顶层回传见 §3.22 **IT-CACHE-STRUCT-***。 |
-| SEC-ANSWER-JSON-01 | 校验失败不得用模型原文污染 answer | 前置：预置 `answer='SAFE'`；`force: true`；stub 返回含 `<script>alert(1)</script>` 与 `javascript:xss()` 的非 JSON 脏串。 | 1. HTTP 502；<br>2. 读库仍为 `'SAFE'`，且**不含** `<script>` / `javascript:`；<br>3. 响应 body（若含 `message`）不得回显完整脏 HTML 作为成功 `data.answer`。 |
+| SEC-ANSWER-JSON-01 | 校验失败不得用模型原文污染 answer | 前置：预置 `answer='SAFE'`；`force: true`；stub **每次**均返回含 `<script>alert(1)</script>` 与 `javascript:xss()` 的非 JSON 脏串（覆盖 **S25** 再试后仍失败）。 | 1. HTTP 502；`reason` 为 `invalid_structured_answer`（若暴露）；`invoke` ≤ **2**；<br>2. 读库仍为 `'SAFE'`，且**不含** `<script>` / `javascript:`；写库 0；<br>3. 响应 body（若含 `message`）不得回显完整脏 HTML 作为成功 `data.answer`。 |
 
 ### 3.15 C51 上游 usage 经路由回写审计集成（P1-6）(`backend/src/tests/ai-guard-usage-integration.test.js`)
 
@@ -1675,7 +1714,7 @@ Prompt 内容来自数据库，不能只依赖客户端 `AI_MAX_INPUT_CHARS` 防
 
 ### 3.16 D11 同步 generate 429/5xx 有限重试路由集成（P1-5）(`backend/src/tests/upstream-retry-integration.test.js`)
 
-对应 **D11 / P1-5** 完成标准在 **鉴权 → Guard → `answer/generate` handler → 上游 invoke** 链路上的闭环：须经 `app.handle`（或 `invokeRoute` 等价完整中间件链）打 `POST /api/problems/:id/answer/generate`；stub/spy 上游 `model.invoke` 按调用序号抛带 HTTP 状态的错误或返回合法三字段 JSON；断言 **invoke 次数、最终 HTTP 状态/业务 JSON、写库次数**。对照路径：同进程打 `POST /api/chat`，stub `model.stream` 遇 429/5xx 证明 **不重试**。禁止只单测纯函数却不验证 handler 已挂上重试。**不做**：chat 流式重试、改超时默认。**residual**：熔断见 **D12**（§2.28 / §3.17）。`it()` 标题须包含下表 ID。
+对应 **D11 / P1-5** 完成标准在 **鉴权 → Guard → `answer/generate` handler → 上游 invoke** 链路上的闭环：须经 `app.handle`（或 `invokeRoute` 等价完整中间件链）打 `POST /api/problems/:id/answer/generate`；stub/spy 上游 `model.invoke` 按调用序号抛带 HTTP 状态的错误或返回合法三字段 JSON；断言 **invoke 次数、最终 HTTP 状态/业务 JSON、写库次数**。对照路径：同进程打 `POST /api/chat`，stub `model.stream` 遇 429/5xx 证明 **不重试**。禁止只单测纯函数却不验证 handler 已挂上重试。**不做**：chat 流式重试、改超时默认。**residual**：熔断见 **D12**（§2.28 / §3.17）。与 **S25** 解析失败再试正交（§2.57 / §3.27）；本表 stub 返回合法 content 时不得误触发「解析再试」导致 invoke 次数断言漂移。`it()` 标题须包含下表 ID。
 
 | ID | 用例标题 | 场景描述 | 预期结果 |
 | :--- | :--- | :--- | :--- |
@@ -1832,6 +1871,21 @@ Prompt 内容来自数据库，不能只依赖客户端 `AI_MAX_INPUT_CHARS` 防
 | IT-RATE-TTL-01 | hour / ip 窗口挂载点回归 | 前置：无 Redis；分别将 `AI_RATE_LIMIT_CLIENT_PER_HOUR=2`（分钟/IP 很大）与 `AI_RATE_LIMIT_IP_PER_MINUTE=2`（client 限额很大）跑触顶 + 过期淘汰各一条（可复用 §2.48 UT-RATE-TTL-06/07 时序）。 | 1. 窗口内超限 reason 分别为 `rate_client_hour` / `rate_ip_minute`，HTTP **429**；<br>2. 过期后对应 Map 键已删除（同 SEC-RATE-TTL-03 观测法）；<br>3. 证明三条 store 均挂到 middleware，而非只测纯函数 Map。 |
 | IT-RATE-TTL-02 | 有 Redis 对照：仍 INCR+TTL，不测内存淘汰 | 前置：`createAiGuard({ redis: mock })`；client 分钟 limit=2；连续 3 次 chat。 | 1. 第三次 429 `rate_client_minute`；mock `incr`/`pexpire` 符合 §2.20（`rl:cmin:` + 60000）；<br>2. **不**断言内存三 Map 淘汰；<br>3. 不连真实 Redis。 |
 | IT-RATE-TTL-03 | 不做 / residual 边界 | 前置：只读 backlog S17 **不做**与 residual。 | 1. PASS **不**要求改默认 10/100/30、改 Redis 键格式、真 Redis 集成、通用 LRU；<br>2. 承认无 Redis 时仅单进程有效；<br>3. 公开用例不写刷量利用步骤。 |
+
+### 3.27 S25 generate 结构化解析失败同请求再试上游集成（`backend/src/tests/answer-parse-retry-integration.test.js`）
+
+对应 **S25** 完成标准在 **鉴权 → Guard → `answer/generate` handler →（可选 D11）`invoke` → `parseGeneratedAnswerJson` →（失败则同请求再 `invoke` 1 次）→ 入库/`finalize`** 链路上的闭环：须经 `app.handle`（或 `invokeRoute` 等价完整中间件链）打 `POST /api/problems/:id/answer/generate`；stub `model.invoke` 按调用序号返回非法/合法 `content`；断言 **invoke 次数、HTTP 状态/业务 JSON、写库次数、`finalize.reason`**。单元时序与正交边界见 §2.57。**不做**：放宽 C41 schema；chat SSE 同逻辑；无限重试。**residual**：两次坏 JSON 仍 502。`it()` 标题须包含下表 ID。
+
+| ID | 用例标题 | 场景描述 | 预期结果 |
+| :--- | :--- | :--- | :--- |
+| IT-PARSE-RETRY-01 | generate：首调非法 JSON、次调合法 → 200 入库一次 | 前置：合法登录且 `study`；题无缓存或 `{ "force": true }`；stub `invoke`：第 1 次 resolve 非合法三字段正文，第 2 次 resolve `{"summary":"结论","keyPoints":["a"],"nextStep":"下一步"}`；spy 写库与 `finalize`。 | 1. HTTP **200**，`code === 0`，`data.cached === false`；`data.summary === '结论'`、`data.keyPoints` 深等于 `['a']`、`data.nextStep === '下一步'`；<br>2. `invoke` 次数 === **2**；写库恰好 **1** 次；读库可 `JSON.parse` 还原同构三字段；<br>3. `finalize` 一次：`status: 'ok'`、`reason: 'generated_answer'`、`upstreamReached !== false`；<br>4. 调用序：准入 → invoke(坏正文) → parse 失败 → invoke(好正文) → parse 成功 → 写库 → finalize → JSON 响应。 |
+| IT-PARSE-RETRY-02 | generate：两次均非法 → 502 且不入库 | 前置：同鉴权；`details.answer` 预置 `'PRE-S25-IT-OLD'`；`force: true`；stub `invoke` 两次均返回非法正文（如 HTML 或截断 JSON）。 | 1. HTTP **502**，`code === 502`；**不得** HTTP 200/`code === 0`；<br>2. `invoke` 次数精确为 **2**；写库 **0**；读库 `answer === 'PRE-S25-IT-OLD'`；<br>3. `finalize` 为 error 且 `reason === 'invalid_structured_answer'`；不得 `generated_answer`。 |
+| IT-PARSE-RETRY-03 | 与 D11 合取：429 后再解析失败再试一次仍可成功 | 前置：合法 `study`；`force: true`；jitter `[0,0]`；stub 调用序：① reject `status: 429`；② resolve 非法正文；③ resolve 合法三字段。 | 1. HTTP **200**，`code === 0`，三字段可读；写库 1 次；<br>2. `invoke` 总次数 === **3**；无第 4 次；<br>3. `finalize` 一次 `generated_answer`；证明 S25 未扩大 D11「至多 3 次 429/5xx」预算，亦未吞掉解析再试。 |
+| IT-PARSE-RETRY-04 | chat SSE：不做解析失败再 stream | 前置：合法 `chat_ai`；`POST /api/chat`；stub `model.stream` 正常产出至少 1 个 delta 后结束；探针记录 `stream`/`invoke` 次数。 | 1. `stream` 次数 === **1**；generate 解析再试封装调用次数为 **0**；<br>2. SSE 按既有协议结束（可含 `done`）；<br>3. 与 backlog「不做：对 chat SSE 做同样重试」一致。 |
+| IT-PARSE-RETRY-05 | 对照：首次合法仍单次 invoke（回归 C41 成功路径） | 前置：同 IT-ANSWER-JSON-01 夹具；stub 第 1 次即合法三字段。 | 1. HTTP 200，`code === 0`；`invoke === 1`；写库 1；<br>2. 与 §3.14 IT-ANSWER-JSON-01 合取；<br>3. 证明 S25 不改变「首次即合法」热路径。 |
+| IT-PARSE-RETRY-06 | 不做：schema 未放宽（再试仍拒非法 keyPoints） | 前置：预置旧 `answer`；stub 第 1 次 HTML；第 2 次 `{"summary":"s","keyPoints":[1],"nextStep":"n"}`（数组元素非 string）。 | 1. HTTP **502**；写库 0；`invoke === 2`；<br>2. `reason === 'invalid_structured_answer'`；<br>3. 与 C41 / UT-PARSE-RETRY-06 合取。 |
+| SEC-PARSE-RETRY-01 | 解析再试不得绕过 Guard 或双次 finalize / 双计配额 | 前置：`AI_REQUIRE_SIGNED_HEADERS=false`；合法 study；stub 第 1 次非法、第 2 次合法；spy `finalize` 与 middleware `next`。 | 1. 单次 HTTP 仅 **一次** Guard 准入（`next` 一次）与 **一次** `finalize`（成功 `generated_answer`）；<br>2. 再试只发生在 handler 内 `invoke`，不得重新走限流/配额预扣导致双计；<br>3. 审计成功行恰好 1 条；首次解析失败路径**不得**先落 `invalid_structured_answer` 成功/失败双行后再成功行（禁止双记账）。 |
+| SEC-PARSE-RETRY-02 | 两次非法时脏正文不得入库 | 前置：预置 `answer='SAFE'`；`force: true`；stub 两次均返回含 `<script>alert(1)</script>` 的非 JSON 脏串。 | 1. HTTP 502；读库仍为 `'SAFE'`，不含 `<script>`；<br>2. 响应成功体不得把脏串当作 `data.answer`；<br>3. 与 §3.14 SEC-ANSWER-JSON-01 / B21 合取：再试失败仍不污染库。 |
 
 ---
 
