@@ -1,8 +1,10 @@
 import { defineConfig, presetUno, presetAttributify, presetIcons } from 'unocss'
 
 export default defineConfig({
+  // S24：与 document.documentElement 上的 `dark` class 对齐（settings store 切换时写入）
+  darkMode: 'class',
   presets: [
-    presetUno(),
+    presetUno({ dark: 'class' }),
     presetAttributify(),
     presetIcons(),
   ],

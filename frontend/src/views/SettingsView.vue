@@ -69,10 +69,10 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="px-7 py-8 space-y-9 bg-[#F8FAFC] min-h-full pb-20">
+  <div class="px-7 py-8 space-y-9 bg-[#F8FAFC] dark:bg-slate-900 min-h-full pb-20">
     <!-- Header -->
     <header class="flex items-center justify-between">
-      <h1 class="text-3xl font-[900] text-[#0F172A] tracking-tight">Settings</h1>
+      <h1 class="text-3xl font-[900] text-[#0F172A] dark:text-slate-100 tracking-tight">Settings</h1>
     </header>
 
     <!-- User Information Card -->

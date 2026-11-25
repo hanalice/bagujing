@@ -46,13 +46,13 @@ const categoryTo = computed(() => ({
   <!-- overflow-hidden: 防止圆角溢出 -->
    <!-- 外层容器固定视口为h-full -->
   <div
-    class="bg-gray-50 w-full h-full md:max-w-[1280px] md:mx-auto md:my-4 md:h-[calc(100vh-2rem)] shadow-2xl rounded-xl overflow-hidden flex flex-col relative border-x border-gray-100"
+    class="bg-gray-50 dark:bg-slate-900 w-full h-full md:max-w-[1280px] md:mx-auto md:my-4 md:h-[calc(100vh-2rem)] shadow-2xl rounded-xl overflow-hidden flex flex-col relative border-x border-gray-100"
   >
 
     <!-- 顶部导航栏 (Header) -->
     <header v-if="route.name !== 'settings'" class="bg-white border-b border-gray-200 sticky top-0 z-10">
       <div class="h-12 flex items-center justify-center px-4">
-        <h1 class="text-lg font-bold text-gray-800">面试题库</h1>
+        <h1 class="text-lg font-bold text-gray-800 dark:text-slate-100">面试题库</h1>
       </div>
 
       <div v-if="showBreadcrumb" class="h-8 border-t border-gray-100 flex items-center justify-center px-4">
