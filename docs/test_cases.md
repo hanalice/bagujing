@@ -21,6 +21,8 @@
 - **Guard 非 debug 路径去掉常开 console.log (S2)**：`backend/src/security/ai-guard.js` 在未开 `AI_GUARD_DEBUG` 时，禁止模块加载标记、SQL 审计成功、换票验签失败等常开 `console.log` / `console.info`；需要时仅走既有 debug 开关（`console.debug` + `[ai-guard-debug]` 属 **A6** / §2.9）。单测 stub `console.log`/`info` 断言上述前缀/文案零出现（§2.32）。**不做**：改审计落库逻辑；扩展新日志平台。**residual**：A6 已覆盖 `[ai-guard-debug]` 前缀通道，本项只收常开噪音。
 - **换票 fetch URL 与签名 path 对齐 (S7)**：`frontend/src/utils/ai-auth.ts` 的 `fetchAiSessionToken`：实际 `fetch` 的 URL pathname 与 HMAC 签名基串中的 path **均为** `/api/auth/token`（与后端 `POST /api/auth/token` 的 Express `req.path` 一致）；`getApiBase()` 在 `VITE_API_BASE_URL` 未设置时回退与 axios 相同（`/api`），避免拼出裸 `/auth/token`。Vitest 锁发出 URL 与签名 path（§4.8 `UT-FE-TOKEN-URL-*`）。**不做**：改换票 JWT claims / 权限面（S1）；改 AI 路由六头注入（B33）；改后端换票验签算法或路由挂载点。**residual**：机调票权限隔离仍见 S1；登录态/受保护路径 HMAC 六头仍见 B33。
 - **设置页暗色开关联动可见 dark 样式 (S24)**：设置里暗色开关打开后主题须可见变化。`uno.config.ts` 写明 `darkMode: 'class'`（与 `document.documentElement` 上的 `dark` class 一致；`settings` store 的 `toggleDarkMode` / `applyDarkMode` 已在切换时 `classList.toggle('dark', enabled)`）。`SettingsView.vue`、`LoginView.vue`、`BasicLayout.vue` 的**页面底色**与**主标题文字**须补 `dark:` 变体，不再只有浅色硬编码。单测锁：`toggleDarkMode` 后 `document.documentElement` 含 `dark`；上述三视图源码含面向底色/主标题的 `dark:` 类（§4.9 `UT-FE-DARK-*`）。**不做**：把默认改成暗色；重绘审计页、题目详情、虚拟列表；新做一套设计 token。**residual**：未改到的次级页面在 `html.dark` 下仍可能是浅色块。
+- **登录与注册 Tab 焦点与 Enter 提交 (S23)**：`LoginView.vue` / `RegisterView.vue` 凭据区改为 `<form @submit.prevent>`，提交按钮 `type="submit"`，沿用 `handleLogin` / `handleRegister`；用户名/密码/确认密码为原生可 Tab 的 `input`（禁止 `tabindex="-1"`），保留可见焦点环（如现网 `focus:ring-2`）；密码框按 Enter 必须触发表单提交。组件测：对 form 派发 `submit` 调用对应 store 方法；密码框 `keydown` Enter 会提交（§4.9 `UT-FE-AUTH-FORM-*`）。**不做**：改助教 `Ctrl+Enter`；给题目列表、设置开关、底栏重做整套键盘方案；改登录/注册接口与校验文案。**residual**：设置页、题目 Tab、列表项方向键与快捷键另条。
+- **401 清会话并离开设置页 (S22)**：`frontend/src/utils/request.ts` 响应错误拦截在 HTTP **401** 时清除 `localStorage` 的 `token` 与 `user_profile`、调用 `clearCache()` 清空 GET 内存缓存，并导航到 `/login`；用**动态 import** 避免与 `stores/user.ts` 静态循环依赖；当前路径已是 `/login` 或 `/register` 时不得再跳一次。**403** 与无响应网络错误不清 token、不导航。无 token 时 `router.beforeEach` 把 `/settings` 送到 `login`（§4.9 `UT-FE-401-*`；E2E 对齐 §4.1 `E2E-MAIN-01`）。**不做**：把 HTTP 200 且 `code !== 0` 的业务错误一律登出；改登录成功落点（仍是 `/settings`）；改后端 401 文案；改 `fetchProfile` 非 401 失败也会 `logout` 的现有行为。**residual**：本地仍有 token 且接口未返回 401 时守卫继续放行；过期 JWT 要等一次 401 才离页。
 - **对齐 security-ai-guard 与签名默认/会话验签/前端 env 名 (S8)**：只改公开文档 `docs/security-ai-guard.md`，与当前代码对齐：验签开关 `AI_REQUIRE_SIGNED_HEADERS` 代码默认 `false`；为 `true` 时有登录会话也验签（**B31**）；前端密钥环境变量名为 `VITE_AI_CLIENT_SECRET`；限流/并发有 Redis 已落地（**B51/B52**）；§5.3 不得写成 HMAC 已全面注入。静态读文档锁约见 §2.33 `UT-DOC-GUARD-*`。用户/角色配额假表述对齐属 **S11**（§2.36）。**有 Redis 时日配额计数**落地属 **S13**（§2.43；合入后清单可标已完成，见 `UT-DOC-GUARD-08` 修订）。**不做**：改任何代码或默认值；打开生产签名开关（**B32**）；改 B33/S1/S2 实现范围。**residual**：WAF、自动封禁、成本告警、审计报表仍属未来项；公开文档不写利用步骤。
 - **登录态审计 userIdentifier 取会话主键 (S9)**：`backend/src/security/ai-guard.js` 写入审计/上下文的 `userIdentifier`：当 `req.user` 存在且有稳定主键（如 `id`）时取 `String(id)`，**忽略**客户端 `x-user-id` 覆盖；无登录会话时非空 `x-user-id` 可用（可按现有输入上限截断），否则 IP 哈希短前缀回退（现网 `sha256Hex(ip).slice(0, 16)`）。单测锁上下文与审计行一致（§2.34 `UT-AUDIT-UID-*`）；安全回归见 §3.21 `SEC-AUDIT-UID-*`。**不做**：按用户日配额；改审计表列名/NDJSON 字段名；回填历史行；改签名/换票/限流。**residual**：匿名仍可能只有 IP 哈希；配额仍全局 + `ai_clients` / 进程内（见 **S11**）。
 - **cached_answer 三字段顶层回传 (S10)**：`POST /api/problems/:id/answer/generate` 在 SQLite 业务缓存早退（未触达上游、`cached: true`）时：若库内 `details.answer` 能被与 **C41** 同构的 `parseGeneratedAnswerJson`（或等价）解析为三字段，则响应 `data` **同时**返回 `summary` / `keyPoints` / `nextStep` / `answer` / `cached: true`（与未缓存成功路径顶层字段对齐）；解析失败则保持现状，只返回 `answer` + `cached: true`（旧 HTML）。不调模型；不计配额语义仍属 **A7**（`upstreamReached: false`）。单测/集成见 §2.35 / §3.22。**不做**：改 `force` 重生成；批量改写库内旧 HTML；改前端 `normalizeStructuredAnswer` 优先级；改配额判据。**residual**：存量整篇 HTML 缓存仍无顶层三字段；近似/语义缓存见 D4。
@@ -30,9 +32,10 @@
 - **对齐 security-ai-guard 月配额措辞 (S14)**：只改公开文档 `docs/security-ai-guard.md`（及锁文档的只读单测，风格对齐 **S8/S11**）：凡「日/月配额」等暗示**月**配额已计数或已有月限额 env 的措辞，改为与代码一致——仅有按 UTC `nowDayKey` 的**日**配额（全局 env + `ai_clients` / 审计汇总）；不得写月限额已落地；文末「配额迁移到 Redis / 配额完全态」若仍含「日/月」字样须改为「日配额」（S13 合入后日计数可 `[x]`，月配额仍未完成）。静态读文档锁约见 §2.45 `UT-DOC-MONTH-*`。**不做**：改 `ai-guard.js` 或任何运行时代码；实现月配额或用户/角色配额；打开签名默认值；抢做 S13 的 Redis 配额实现。**residual**：真要做月限额或用户级配额需另开条目（含产品口径与 schema）；公开文档不写利用步骤。
 - **可选 AI_METRICS_TOKEN 保护 /api/metrics (S16)**：新增可选 env `AI_METRICS_TOKEN`；**非空**时 `GET /api/metrics` 必须携带匹配令牌（`Authorization: Bearer <token>`，或实现选定的等价约定头），否则 HTTP **401** 且响应正文**不得**含 `ai_guard_requests_total` 等指标行；**未设置或空字符串**时保持现网可匿名拉取（既有 `qa-verify.js` **MON-01** 仍过）。单测锁「未配置可匿名 / 已配置缺令牌 401 / 令牌正确 200 且含 `ai_guard_requests_total`」（§2.47 `UT-METRICS-*` / §3.25 `SEC-METRICS-*`）。可同步 `backend/.env.example`、部署文档 §3 与 `docs/security-ai-guard.md` 一句现状（满足 **E17** 三方一致）。**不做**：把未配置时的默认改成强制鉴权；改指标字段名或语义；要求生产必须配置该变量；引入真 Prometheus 集群。**residual**：生产是否设令牌、网络层隔离属运维，不改代码默认开放行为。
 - **无 Redis 时限流内存 Map 淘汰已过期窗口键 (S17)**：`backend/src/security/ai-guard.js` 在**无 Redis** 走 `takeFixedWindow` 的三条内存限流 Map（`routeClientMinute` / `routeClientHour` / `routeIpMinute`）上，已过期窗口键必须被淘汰——访问时删除重建，并惰性扫掉其它 `now >= resetAt` 的条目，**或**在 `resetAt` 用 `setTimeout` 删除该键（二选一即可）。单测注入假时钟后，过期键不再留在 Map 内（**即使不再 take 同一 key**）（§2.48 `UT-RATE-TTL-*` / §3.26 `SEC-RATE-TTL-*`）。有 Redis 时仍只走现有 `INCR`+TTL（**B51**），本项不改。**不做**：改默认限流数字；改 Redis 键格式；引入真 Redis 集成测；扩大为通用 LRU 框架。**residual**：无 Redis 时限流仍单进程有效；公开表不写刷量步骤。
+- **finalize/reject 审计页上下文贯通 + CORS 页头 (S19)**：`ai-guard.js` 的 `finalize`（allow）与 `reject` 调用 `appendAudit` 时，须带上 middleware 已写入 `req.aiGuard` 的 `actionName`、`pageTitle`、`userAgent`，以及 `pagePath`（非空 `x-page-path` 用其，否则回退 `req.path`）。SQL `page_path` 绑定优先 `payload.pagePath`，缺省再回退 `payload.path`；NDJSON 同步含上述字段。`corsOptions.allowedHeaders` 补齐 `X-Page-Path`、`X-Page-Title`、`X-User-Id`（大小写与现有六头风格一致）。单测见 §2.57 `UT-AUDIT-PAGE-*` / `UT-CORS-*`；安全回归见 §3.27。既有 **S9** identifier 用例（§2.34 / §3.21）不破。**不做**：改表 schema/列名；强制前端必发 `x-page-*`；把这些头当鉴权凭据；改 S9 登录态忽略伪造 `x-user-id`；改 reason 名。**residual**：前端未发 `x-page-path` 时 `page_path` 仍为 API `req.path`；助教/解析是否主动附带页头另条。
 - **前端多层级质量保障体系 (Frontend QA Strategy)**：
   - **端到端测试 (Frontend E2E - Playwright)**：覆盖核心用户链路（Main Path / Happy Path），利用 `page.route` 对大模型流式 SSE 接口进行轻量 Mock，保障真实路由鉴权、题目浏览及 AI 交互界面的稳定可用；**C42** 另锁解析面板三字段可见性与无整篇 `v-html`；**S6** 另锁助教助手气泡安全 Markdown（§4.1 `E2E-MAIN-04` / `E2E-CHAT-MD-*`）。
-  - **状态机与单元测试 (Frontend UT/IT - Vitest)**：针对 Pinia Store（`user`、`settings`、`breadcrumb`）、题目解析归一化/渲染辅助及工具函数，快速验证状态迁移、本地持久化与边界容错；**B33** 另锁登录态 `chat` / `answer/generate` 的 HMAC 六头注入（§4.5 `UT-FE-SIG-*`）；**S3** 另锁助教 `POST /api/chat` 请求体 `messages[]` 尾窗与截断（§4.6 `UT-FE-CHAT-HIST-*`）；**S6** 另锁助手气泡 Markdown→DOMPurify 与用户气泡纯文本（§4.7 `UT-FE-CHAT-MD-*`）；**S7** 另锁换票 `fetch` URL 与签名 path 均为 `/api/auth/token`（§4.8 `UT-FE-TOKEN-URL-*`）；**S24** 另锁设置暗色开关 → `html.dark` 与三视图 `dark:` 底色/主标题（§4.9 `UT-FE-DARK-*`）。**S8** / **S11** / **S14** 只锁公开文档（§2.33 / §2.36 / §2.45），本层不新增前端测码。
+  - **状态机与单元测试 (Frontend UT/IT - Vitest)**：针对 Pinia Store（`user`、`settings`、`breadcrumb`）、题目解析归一化/渲染辅助及工具函数，快速验证状态迁移、本地持久化与边界容错；**B33** 另锁登录态 `chat` / `answer/generate` 的 HMAC 六头注入（§4.5 `UT-FE-SIG-*`）；**S3** 另锁助教 `POST /api/chat` 请求体 `messages[]` 尾窗与截断（§4.6 `UT-FE-CHAT-HIST-*`）；**S6** 另锁助手气泡 Markdown→DOMPurify 与用户气泡纯文本（§4.7 `UT-FE-CHAT-MD-*`）；**S7** 另锁换票 `fetch` URL 与签名 path 均为 `/api/auth/token`（§4.8 `UT-FE-TOKEN-URL-*`）；**S22** 另锁 axios 响应 **401** 清会话+导航 `/login`、**403**/无响应不清、无 token 访问 `/settings` 守卫送登录（§4.9 `UT-FE-401-*`）；**S23** 另锁登录/注册凭据区 `<form @submit.prevent>`、Tab 可聚焦与密码框 Enter 提交（§4.9 `UT-FE-AUTH-FORM-*`）；**S24** 另锁设置暗色开关 → `html.dark` 与三视图 `dark:` 底色/主标题（§4.9 `UT-FE-DARK-*`）。**S8** / **S11** / **S14** 只锁公开文档（§2.33 / §2.36 / §2.45），本层不新增前端测码。
   - **静态类型与代码质量 (Static Check - vue-tsc & ESLint)**：基于 `vue-tsc` 严格类型推断与 ESLint 规范，在编译期杜绝类型断言失误与样式违规。
 - **登录态 AI 请求 HMAC 头 (B33 / P0-5)**：`AI_REQUIRE_SIGNED_HEADERS=true` 时，已登录用户的 `POST /api/chat` 与 `POST /api/problems/:id/answer/generate` 也须带齐与 `ai-guard.js` 一致的六头；后端有会话也验签见 **B31**（§2.19 / §3.1），生产开开关见 **B32**。
 - **提交说明校验脚本共用 (E11)**：抽出可单独喂消息文件的校验脚本；`.githooks/commit-msg` 与 `scripts/automation/lib/git-sandbox.sh`（日修沙盒）共用同一入口。`feat` 四段、`refactor` 三段、轻量 type 须有非空正文；对齐 `docs/git-commit-convention.md`。单测见 §2.37 `UT-COMMIT-MSG-*`。**不做**：PR/CI（**E12**）；密钥扫描（**E13**）。**residual**：`COMMIT_MSG_GATE=off` 跳过保持。
@@ -154,14 +157,16 @@
 
 ### 2.11 CORS 跨域预检与允许请求头契约 (`backend/src/tests/ai-guard-cors.test.js`)
 
-对应 **B4 / P2-1**：`backend/src/security/ai-guard.js` 中的 `corsOptions.allowedHeaders` 必须显式包含 `'Authorization'`（当前仅配置了 `Content-Type`, `Accept`, `X-*` 等自定义签名头）。当客户端在跨域直连场景（如 Vite 前端独立端口直连后端服务，请求头携带 `Authorization: Bearer <jwt>`）触发浏览器 `OPTIONS` 预检请求时，若 `allowedHeaders` 未显式允许 `Authorization`，浏览器将拦截跨域通信导致请求失败。完成标准：CORS `allowedHeaders` 显式补齐 `'Authorization'`；跨域 `OPTIONS` 预检返回 HTTP 204/200 且响应头 `Access-Control-Allow-Headers` 包含 `Authorization`；白名单 Origin 与非法 Origin 规则正常生效。测试通过断言 `corsOptions` 配置对象及通过 `cors(corsOptions)` 中间件模拟 `OPTIONS` 预检报文进行验证。`it()` 标题须包含下表 ID。
+对应 **B4 / P2-1**，并承接 **S19** 页头放行：`backend/src/security/ai-guard.js` 中的 `corsOptions.allowedHeaders` 必须显式包含 `'Authorization'`，以及 **S19** 的 `'X-Page-Path'`、`'X-Page-Title'`、`'X-User-Id'`（大小写与现有六头 `X-*` 风格一致）。当客户端在跨域直连场景（如 Vite 前端独立端口直连后端服务，请求头携带 `Authorization: Bearer <jwt>` 或页上下文头）触发浏览器 `OPTIONS` 预检请求时，若 `allowedHeaders` 未显式允许上述头，浏览器将拦截跨域通信导致请求失败。完成标准：CORS `allowedHeaders` 显式补齐 `'Authorization'` 与三页头；跨域 `OPTIONS` 预检返回 HTTP 204/200 且响应头 `Access-Control-Allow-Headers` 包含上述字段；白名单 Origin 与非法 Origin 规则正常生效。审计页字段贯通细节见 §2.57。测试通过断言 `corsOptions` 配置对象及通过 `cors(corsOptions)` 中间件模拟 `OPTIONS` 预检报文进行验证。`it()` 标题须包含下表 ID。
 
 | ID | 用例标题 | 场景描述 | 预期结果 |
 | :--- | :--- | :--- | :--- |
-| UT-CORS-01 | corsOptions 配置显式包含 Authorization | 直接读取 `createAiGuard().corsOptions.allowedHeaders` 数组。 | 1. 数组包含 `'Authorization'`（精确字符串匹配）；<br>2. 保留原有的全部必要头：`Content-Type`、`Accept`、`X-Request-Id`、`X-Client-Id`、`X-Client-Token`、`X-Ts`、`X-Nonce`、`X-Signature`、`X-Body-Sha256`、`X-Maf-Mission-Id`；<br>3. `methods` 包含 `GET`, `POST`, `OPTIONS`。 |
+| UT-CORS-01 | corsOptions 配置显式包含 Authorization 与 S19 页头 | 直接读取 `createAiGuard().corsOptions.allowedHeaders` 数组。 | 1. 数组包含 `'Authorization'`（精确字符串匹配）；<br>2. 保留原有的全部必要头：`Content-Type`、`Accept`、`X-Request-Id`、`X-Client-Id`、`X-Client-Token`、`X-Ts`、`X-Nonce`、`X-Signature`、`X-Body-Sha256`、`X-Maf-Mission-Id`；<br>3. **S19**：数组同时精确包含 `'X-Page-Path'`、`'X-Page-Title'`、`'X-User-Id'`（大小写与现有六头 `X-*` 风格一致）；<br>4. `methods` 包含 `GET`, `POST`, `OPTIONS`。 |
 | UT-CORS-02 | 白名单 Origin 预检 Authorization 放行 | 前置：设置允许的 Origin（如 `http://localhost` 或 `*`）；使用 `cors(corsOptions)` 处理 `OPTIONS /api/chat` 预检请求；请求头携带 `Origin: http://localhost`、`Access-Control-Request-Method: POST`、`Access-Control-Request-Headers: authorization, content-type`。 | 1. 响应状态码为 HTTP 204 或 200；<br>2. 响应头 `Access-Control-Allow-Origin: http://localhost`；<br>3. 响应头 `Access-Control-Allow-Headers` 包含 `authorization`（不区分大小写匹配）；<br>4. 响应头 `Access-Control-Allow-Methods` 包含 `POST`。 |
 | UT-CORS-03 | 混合签名头与 Authorization 预检联合放行 | 前置：同 UT-CORS-02；发送 OPTIONS 预检，`Access-Control-Request-Headers: authorization, x-signature, x-client-id, x-ts, x-nonce, content-type`。 | 1. 响应状态码为 HTTP 204 或 200；<br>2. 响应头 `Access-Control-Allow-Headers` 允许列表中包含全部所请求的头部字段；<br>3. 中间件不抛出 CORS 拦截异常。 |
 | UT-CORS-04 | 非法 Origin 跨域预检拦截 | 前置：Origin 配置为具体白名单规则（如 `http://localhost`）；客户端携带未授权源 `Origin: http://unauthorized-domain.com` 发送 OPTIONS 预检请求（含 `Access-Control-Request-Headers: authorization`）。 | 1. 触发 `origin` 校验失败，中间件回调返回 `Error('Not allowed by CORS')`；<br>2. 响应头中**不包含** `Access-Control-Allow-Origin: http://unauthorized-domain.com`。 |
+| UT-CORS-05 | S19：页头三件套预检放行 | 前置：同 UT-CORS-02 白名单 Origin；`OPTIONS /api/chat`，`Access-Control-Request-Headers: x-page-path, x-page-title, x-user-id, content-type`（大小写不敏感）。 | 1. 响应 HTTP 204 或 200；<br>2. `Access-Control-Allow-Headers` 同时包含 `x-page-path`、`x-page-title`、`x-user-id`（不区分大小写）；<br>3. 中间件不抛 CORS 拦截异常；与 §2.57 / backlog S19「CORS 名单含上述三头」合取。 |
+| UT-CORS-06 | S19：页头 + Authorization + 签名头联合预检 | 前置：同 UT-CORS-02；`Access-Control-Request-Headers: authorization, x-page-path, x-page-title, x-user-id, x-signature, x-client-id, content-type`。 | 1. HTTP 204/200；<br>2. `Access-Control-Allow-Headers` 覆盖全部所请求字段（含三页头与 `authorization`）；<br>3. 证明补齐页头**不**挤掉既有 Authorization/签名头放行（与 UT-CORS-01/03 回归）。 |
 
 ### 2.12 C1 Prompt 预算构建与裁剪 (`backend/src/tests/prompt-budget.test.js` -> `prompt-budget.js`，由 `server-express.js` 调用)
 
@@ -1508,6 +1513,47 @@ C22 合入后 problems 关键字召回主路径改为 FTS（失败回退 LIKE）
 | UT-AUDIT-CLI-15 | residual：不要求 F24 挂载 / 不要求日修默认串联审计排行 | 前置：只读 backlog F23 residual 与本小节断言范围；CLI 夹具已绿。 | 1. PASS **不**要求系统 crontab / 任务计划已挂载 F23；<br>2. PASS **不**要求改 `daily-fix.sh` 或部署文档把「每次日修必跑审计排行」写成仓库代码默认；<br>3. 以「未挂载 crontab / 日修未串联审计排行」判 FAIL 则本行失败——挂载属 **F24**。 |
 | UT-AUDIT-CLI-16 | 与 UT-LOG-CLI / UT-AUDIT-WRITE / UT-PROCESS 分界：不碰 process、不实施满 3 次、不抢 F13 | 前置：临时审计夹具可产出提案；业务 backlog 可写；process-backlog 哨兵；可选放置流水线 NDJSON 含 `qa_failed` 但**不应**被本入口消费；非 dry-run 跑 F23。 | 1. 仅业务 `backlog.md` 可变；process-backlog 哨兵 hash 不变；队列表变更语义属 F22（assist/调优先级），**不**因流水线 `qa_failed` 追加 process 行；<br>2. **不**调用 F13 CLI / F11/F12；**不**要求 NDJSON 满 3 次才写入（门控属 F21 样本/变化，非 decide 计次）；<br>3. 证明 F23 只是业务审计排行壳，与 §2.53 F13、§2.49 decide 入口并存且数据源/落盘目标分离。 |
 
+### 2.57 S19 finalize/reject 审计贯通 `actionName`/`pageTitle`/`userAgent`/`pagePath`；CORS 放行页头（`backend/src/tests/ai-guard-audit-page.test.js` → `ai-guard.js` middleware / `finalize` / `reject` / `appendAudit` / `corsOptions`；CORS 预检可并入 `ai-guard-cors.test.js`）
+
+对应 **S19**（`docs/backlog.md` §S19）。回归点：middleware 已把 `pagePath`/`pageTitle`/`actionName`/`userAgent` 写入 `req.aiGuard`，但 `finalize`（allow）与部分 `reject` 的 `appendAudit` 载荷若只写 `path`、漏传页上下文字段，则 NDJSON 缺键、SQL `page_path` 绑成 API `req.path` 而丢掉客户端 `x-page-path`；跨域前端若发 `X-Page-Path` / `X-Page-Title` / `X-User-Id`，旧 `allowedHeaders` 不含这三头会导致 OPTIONS 预检失败。
+
+**做**：
+
+1. **middleware 上下文**（准入成功后）：`req.aiGuard.pagePath === (非空 x-page-path || req.path)`；`req.aiGuard.pageTitle === (x-page-title || '')`；`req.aiGuard.actionName` 按路由：`routeKey === 'chat'` → `'AI 助手对话'`，否则（如 `answer/generate`）→ `'生成题目解析'`；`req.aiGuard.userAgent === req.header('user-agent')`（可为空串若客户端未发，但 allow 路径单测须用非空 UA 锁「贯通」）。
+2. **`finalize`（allow）**：`appendAudit` 载荷须含 `actionName`、`pageTitle`、`userAgent`、`pagePath`（值与同请求 `req.aiGuard` 全等）；NDJSON 同步写出同名字段（camelCase：`actionName` / `pageTitle` / `userAgent` / `pagePath`）；仍可保留既有 `path`（API `req.path`）供兼容。
+3. **`reject`**：调用 `appendAudit` 时同样带上 `userAgent`，以及 `pagePath`（优先非空 `x-page-path`，否则 `req.path`）与可得的 `pageTitle`/`actionName`（若拒答发生在 `req.aiGuard` 已赋值之后，须取自 `req.aiGuard`；若发生在赋值前，允许直接从头/路由推导，但 `pagePath`/`userAgent` 仍须可判定写入）。**不**改既有 `reason` 字面量。
+4. **SQL**：`INSERT INTO ai_audit_logs` 的 `page_path` 绑定优先 `payload.pagePath`，缺省再回退 `payload.path`；`page_title` / `action_name` / `user_agent` 分别绑定 `payload.pageTitle` / `payload.actionName` / `payload.userAgent`（列名不变）。**不做**改表 schema 或列名。
+5. **CORS**：`corsOptions.allowedHeaders` 精确补齐 `'X-Page-Path'`、`'X-Page-Title'`、`'X-User-Id'`；预检见 §2.11 `UT-CORS-05`/`06`。
+6. **S9 回归**：登录态忽略伪造 `x-user-id` 的既有 `UT-AUDIT-UID-*` / `SEC-AUDIT-UID-*` 不得因本项而破；`X-User-Id` 仅 CORS 放行与匿名审计可用，**不得**把该头升级为鉴权凭据。
+
+**不做**：改表 schema 或列名；强制前端必发 `x-page-*`；把 `x-page-path` / `x-page-title` / `x-user-id` 当鉴权凭据（缺头不得单独导致 401/403）；改 S9「有会话忽略伪造 `x-user-id`」；改 reason 名。
+
+**residual**：前端未发 `x-page-path` 时 `page_path`/`pagePath` 仍为 API `req.path`（允许且须用对照用例锁住）；是否在助教/解析请求里主动附带页头另条——本表 PASS **不**要求前端已发头。
+
+**协议 / 时序**（下一阶段 `it()` 须对齐）：
+
+1. 前置：`AI_REQUIRE_SIGNED_HEADERS=false`；独立 `AI_AUDIT_FILE_PATH`；白名单 Origin；`mockHttp` 可注入 `header('x-page-path')` / `header('x-page-title')` / `header('user-agent')` / `req.path`。
+2. `middleware(req, res, next)` → 断言 `req.aiGuard` 四字段已定值 → `finalize({ status: 'ok', reason: 'stream_done', completionText: 'page', upstreamReached: true })`（或等价 allow）。
+3. 读 NDJSON 末行：含非空 `actionName`、`userAgent`（测码故意发非空 UA）；带 `x-page-path` 时 `pagePath ===` 该头字面。
+4. 可选注入 fake `dbPool`：捕获 `INSERT` 参数，断言 `page_path` 位等于 `pagePath`（优先），`action_name`/`page_title`/`user_agent` 同位绑定。
+5. 拒答路径：触发一次可判定 `reject`（如 Origin 非法 / 缺权限等价既有 reason），断言审计行含 `decision: 'reject'` 且 `pagePath`/`userAgent` 规则同上；**reason 名不变**。
+
+**测法**：优先 `backend/src/tests/ai-guard-audit-page.test.js`（复用 `ai-guard-user-identifier.test.js` / `ai-guard-cache.test.js` 的 `mockHttp` + 审计文件隔离）；CORS 名单与预检可落在同文件或扩展 `ai-guard-cors.test.js`。禁止连真实 Redis/外网。`it()` 标题须包含下表 ID。
+
+| ID | 用例标题 | 场景描述 | 预期结果 |
+| :--- | :--- | :--- | :--- |
+| UT-AUDIT-PAGE-01 | allow：actionName 与 userAgent 非空贯通 | 前置：`AI_REQUIRE_SIGNED_HEADERS=false`；独立审计文件；`POST /api/chat`；`User-Agent: S19-UA-Chat/1.0`；可不设 `x-page-*`；middleware `next()` 后 `finalize({ status: 'ok', reason: 'stream_done', completionText: 'ok', upstreamReached: true })`。 | 1. `req.aiGuard.actionName === 'AI 助手对话'`（非空）；`req.aiGuard.userAgent === 'S19-UA-Chat/1.0'`（非空）；<br>2. NDJSON 末行 `decision: 'allow'`，`actionName === 'AI 助手对话'`，`userAgent === 'S19-UA-Chat/1.0'`（键名 camelCase，不得缺失）；<br>3. 与 backlog「allow 路径 actionName/userAgent 非空」字面一致。 |
+| UT-AUDIT-PAGE-02 | allow：带 x-page-path 时 pagePath 等于该头 | 前置：同 UT-AUDIT-PAGE-01；`x-page-path: /assistant`（或 `/problem-detail`）；`req.path` 为 `/api/chat`（与页路径不同）；`finalize` allow。 | 1. `req.aiGuard.pagePath === '/assistant'`；<br>2. NDJSON 末行 `pagePath === '/assistant'`（**不等于** `/api/chat`）；<br>3. 若注入 SQL：`page_path` 绑定值 === `'/assistant'`（优先 `payload.pagePath`，不得只绑 `payload.path` 导致仍为 `/api/chat`）。 |
+| UT-AUDIT-PAGE-03 | allow：无 x-page-path 时 pagePath 回退 req.path | 前置：不设或空串 `x-page-path`；`POST /api/chat`，`req.path === '/api/chat'`；`finalize` allow。 | 1. `req.aiGuard.pagePath === '/api/chat'`；<br>2. NDJSON `pagePath === '/api/chat'`；<br>3. 证明 residual：前端未发头时仍为 API path，**不得**以「缺页头」单独 4xx。 |
+| UT-AUDIT-PAGE-04 | allow：pageTitle 从头贯通（可空） | 前置：A) `x-page-title: 职问助手`；B) 不设该头；两次 chat + `finalize`。 | 1. A：`req.aiGuard.pageTitle === '职问助手'`，NDJSON `pageTitle` 同值；SQL `page_title` 同值（若测 SQL）；<br>2. B：`pageTitle === ''`（或实现写空串；不得因缺头抛错或拒答）；<br>3. 证明**不强制**前端必发 `x-page-title`。 |
+| UT-AUDIT-PAGE-05 | allow：generate 路由 actionName 为生成题目解析 | 前置：`POST /api/problems/1/answer/generate`；非空 `User-Agent: S19-UA-Gen/1.0`；middleware + `finalize` allow（`reason: 'generated_answer'` 或 `cached_answer` 均可）。 | 1. `req.aiGuard.actionName === '生成题目解析'`；`userAgent === 'S19-UA-Gen/1.0'`；<br>2. NDJSON 同行两字段同值；<br>3. 不得只修 chat 而漏 generate。 |
+| UT-AUDIT-PAGE-06 | reject：审计同样带 pagePath/userAgent | 前置：独立审计文件；请求带 `User-Agent: S19-UA-Rej/1.0`、`x-page-path: /settings`；触发一次 Guard `reject`（如非法 Origin → `origin_blocked`，或其它既有可稳定复现的拒答；测码注释写明 reason）。 | 1. 审计行 `decision: 'reject'`，`reason` 为该既有字面量（**不改 reason 名**）；<br>2. 同行 `userAgent === 'S19-UA-Rej/1.0'`，`pagePath === '/settings'`；<br>3. HTTP 状态为该拒答既有码（如 Origin 非法为 **403**），业务 `next()` 不被调用。 |
+| UT-AUDIT-PAGE-07 | SQL：page_path 优先 pagePath，回退 path | 前置：注入 fake `dbPool.withConnection`，捕获 `INSERT INTO ai_audit_logs` 参数；A) `finalize` 载荷含 `pagePath: '/assistant'` 且 `path: '/api/chat'`；B) 仅有 `path: '/api/chat'`、无 `pagePath`（或 `null`/`undefined`）。 | 1. A：`page_path` 绑定 === `'/assistant'`（优先 `payload.pagePath`）；<br>2. B：`page_path` 绑定 === `'/api/chat'`（回退 `payload.path`）；<br>3. SQL 文本仍含列名 **`page_path`** / **`page_title`** / **`action_name`** / **`user_agent`**（**不做**改列名）。 |
+| UT-AUDIT-PAGE-08 | CORS 名单含 X-Page-Path / X-Page-Title / X-User-Id | 前置：读取 `createAiGuard().corsOptions.allowedHeaders`（可与 §2.11 UT-CORS-01 同断言或本文件复述）。 | 1. 数组精确包含 `'X-Page-Path'`、`'X-Page-Title'`、`'X-User-Id'`；<br>2. 仍包含既有 `'Authorization'` 与六头集合；<br>3. 与 backlog「CORS 名单含上述三头」及 UT-CORS-05 预检合取。 |
+| UT-AUDIT-PAGE-09 | S9 回归：登录态伪造 x-user-id 仍忽略 | 前置：`req.user = { id: 42, clientId: 'web' }`；`x-user-id: attacker-spoof`；同时带 `x-page-path: /assistant`、非空 UA；middleware + `finalize`。 | 1. `req.aiGuard.userIdentifier === '42'`，**不等于** `'attacker-spoof'`（与 UT-AUDIT-UID-02/03 一致）；<br>2. 同时 `pagePath === '/assistant'`、`actionName`/`userAgent` 非空贯通；<br>3. 证明 S19 **不**改 S9 规则；既有 identifier 用例预期仍成立。 |
+| UT-AUDIT-PAGE-10 | 不做：缺页头不得当鉴权失败；不改 schema/reason | 前置：A) 无任何 `x-page-*`，合法 chat 准入；B) 只读 backlog S19 **不做**。 | 1. A：middleware `next()`，**不得**因缺 `x-page-path`/`x-page-title` 返回 401/403；<br>2. B：本表**不**要求 `ALTER TABLE`、重命名列、改 reason 字符串、强制前端必发头；<br>3. `X-User-Id` 放行≠鉴权：缺该头不单独拒答（匿名规则仍见 S9）。 |
+| UT-AUDIT-PAGE-11 | residual：未发 x-page-path 时 page_path 为 API path 可接受 | 前置：同 UT-AUDIT-PAGE-03；对照 backlog residual。 | 1. 允许审计 `pagePath`/`page_path` 仅为 `/api/chat`（或 generate 的 API path）；<br>2. 本表**不得**以「前端必须已附带页头」为 FAIL；<br>3. 助教/解析是否主动附带页头属另条，本项不锁前端发头。 |
+
 ---
 
 ## 3. 安全防护与集成测试用例 (Security & Integration)
@@ -1546,14 +1592,15 @@ C22 合入后 problems 关键字召回主路径改为 FTS（失败回退 LIKE）
 | :--- | :--- | :--- | :--- |
 | IT-QUOTA-CACHE-01 | 连续 POST generate 命中缓存不 429 | 前置：同一 `clientId`；日 token 配额仅够约 1～2 次保守预扣；目标题 `details.answer` 已是长非空 HTML；已登录且具备 `study`；连续 ≥3 次 `POST /api/problems/:id/answer/generate`（body 无 `force` 或 `force: false`）；上游 LLM 可用 stub 断言未被调用。 | 1. 每次 HTTP 200，body `code === 0` 且 `data.cached === true`；2. 全程无 HTTP 429 / `Quota exceeded`；3. 审计中可数出 ≥3 条 `reason === 'cached_answer'`，且每条 `totalTokens === 0`。 |
 
-### 3.4 CORS 跨域直连与反代配置验证（B4 / P2-1）
+### 3.4 CORS 跨域直连与反代配置验证（B4 / P2-1；承接 S19 页头）
 
-对应 **B4 / P2-1** 完成标准「跨域预检 200；确认 Nginx 反代不丢签名头」。在集成测试环境（`backend/src/tests/ai-guard-cors.test.js`）及反代配置（`deploy/nginx.conf`）层级验证端到端跨域请求放行与反向代理请求头透传契约。`it()` 标题须包含下表 ID。
+对应 **B4 / P2-1** 完成标准「跨域预检 200；确认 Nginx 反代不丢签名头」，并承接 **S19** 对 `X-Page-Path` / `X-Page-Title` / `X-User-Id` 的 CORS 放行。在集成测试环境（`backend/src/tests/ai-guard-cors.test.js`）及反代配置（`deploy/nginx.conf`）层级验证端到端跨域请求放行与反向代理请求头透传契约。单元名单见 §2.11 / §2.57。`it()` 标题须包含下表 ID。
 
 | ID | 用例标题 | 场景描述 | 预期结果 |
 | :--- | :--- | :--- | :--- |
 | IT-CORS-01 | 跨域 OPTIONS 预检后发起携带 Authorization 的 POST 请求 | 前置：集成挂载 `cors(aiGuard.corsOptions)` 的 Express 应用；模拟前端跨域客户端：<br>Step 1: 发送 `OPTIONS /api/chat`（带 `Origin: http://localhost`，`Access-Control-Request-Headers: authorization, content-type`，`Access-Control-Request-Method: POST`）；<br>Step 2: 紧接着发送 `POST /api/chat`（带 `Origin: http://localhost`，`Authorization: Bearer <token>`，`Content-Type: application/json`）。 | 1. Step 1 预检响应 HTTP 204/200，且含合规 `Access-Control-Allow-Headers` 与 `Access-Control-Allow-Origin`；<br>2. Step 2 POST 请求响应头包含 `Access-Control-Allow-Origin: http://localhost`，请求正常进入下游鉴权处理，无 CORS 拦截报错。 |
 | IT-CORS-02 | Nginx 反代配置签名头与 Authorization 透传合规性 | 审查 `deploy/nginx.conf` 中 `/api/` 代理段配置。 | 1. `proxy_pass` 正常转发至本地 Node.js 集群；<br>2. 不存在显式清空或覆盖 `Authorization`、`X-Signature`、`X-Client-Id`、`X-Ts`、`X-Nonce`、`X-Body-Sha256` 等请求头的指令；<br>3. 确保跨域直连与反代路径均保留完整认证与签名头。 |
+| IT-CORS-03 | S19：预检放行页头后 POST 可携带 X-Page-* / X-User-Id | 前置：同 IT-CORS-01 应用挂载；Step 1: `OPTIONS /api/chat`，`Access-Control-Request-Headers: authorization, x-page-path, x-page-title, x-user-id, content-type`；Step 2: `POST /api/chat` 带 `Origin: http://localhost`、`Authorization: Bearer <token>`、`X-Page-Path: /assistant`、`X-Page-Title: 职问助手`、`X-User-Id: guest-it`（及 JSON body）。 | 1. Step 1 HTTP 204/200，`Access-Control-Allow-Headers` 含三页头与 `authorization`（大小写不敏感）；<br>2. Step 2 响应含 `Access-Control-Allow-Origin`，**无** CORS 拦截；请求进入下游（鉴权/Guard），不得因这三头未在名单而浏览器侧失败；<br>3. 本行**不**把页头当鉴权：缺 `X-Page-Path` 的对照 POST 仍可进入下游（与 UT-AUDIT-PAGE-10 合取）。 |
 
 ### 3.5 C1 Prompt 预算与模型调用/审计集成 (`backend/src/tests/prompt-budget-integration.test.js`)
 
@@ -1834,6 +1881,20 @@ Prompt 内容来自数据库，不能只依赖客户端 `AI_MAX_INPUT_CHARS` 防
 | IT-RATE-TTL-02 | 有 Redis 对照：仍 INCR+TTL，不测内存淘汰 | 前置：`createAiGuard({ redis: mock })`；client 分钟 limit=2；连续 3 次 chat。 | 1. 第三次 429 `rate_client_minute`；mock `incr`/`pexpire` 符合 §2.20（`rl:cmin:` + 60000）；<br>2. **不**断言内存三 Map 淘汰；<br>3. 不连真实 Redis。 |
 | IT-RATE-TTL-03 | 不做 / residual 边界 | 前置：只读 backlog S17 **不做**与 residual。 | 1. PASS **不**要求改默认 10/100/30、改 Redis 键格式、真 Redis 集成、通用 LRU；<br>2. 承认无 Redis 时仅单进程有效；<br>3. 公开用例不写刷量利用步骤。 |
 
+### 3.27 S19 审计页上下文贯通与 CORS 页头安全回归（`backend/src/tests/ai-guard-audit-page-integration.test.js` 或扩展 §2.57 / `ai-guard-cors.test.js` 同文件）
+
+对应 **S19** 在 **CORS 预检 → Guard middleware → finalize/reject → appendAudit（NDJSON + SQL）** 链路上的集成与安全回归：allow 路径审计须含非空 `actionName`/`userAgent`；带 `x-page-path` 时 NDJSON `pagePath` 与 SQL `page_path` 等于该头；CORS 名单与预检放行三页头；**不得**把页头当鉴权凭据；**不得**破坏 S9「登录态忽略伪造 `x-user-id`」。单元细节见 §2.57 / §2.11；本表锁可判定的 HTTP/审计字段与「不做/residual」边界。`it()` 标题须包含下表 ID。
+
+| ID | 用例标题 | 场景描述 | 预期结果 |
+| :--- | :--- | :--- | :--- |
+| SEC-AUDIT-PAGE-01 | 页头不是鉴权凭据：缺 x-page-* 仍可准入 | 前置：`AI_REQUIRE_SIGNED_HEADERS=false`；白名单 Origin；合法会话或匿名可过验签门；`POST /api/chat` **不**带 `x-page-path`/`x-page-title`；短 body。 | 1. middleware `next()` 或 HTTP 进入业务/SSE（非因缺页头 401/403）；<br>2. 审计 allow 行 `pagePath` 回退为 API `req.path`（如 `/api/chat`）；<br>3. 证明「不做：强制前端必发 / 把页头当鉴权」。 |
+| SEC-AUDIT-PAGE-02 | 伪造 x-user-id 在登录态仍不能覆盖 identifier（S9 合取） | 前置：登录 `id: 42`；同时带 `x-user-id: victim-999`、`x-page-path: /assistant`、`User-Agent: S19-Sec/1.0`；完成一次 `finalize`。 | 1. 审计 `userIdentifier === '42'`，**不等于** `'victim-999'`（与 SEC-AUDIT-UID-01 一致）；<br>2. 同行 `pagePath === '/assistant'`，`userAgent === 'S19-Sec/1.0'`，`actionName` 非空；<br>3. 证明 S19 贯通页字段时 **不**改 S9。 |
+| SEC-AUDIT-PAGE-03 | reject 路径审计含 pagePath 且 reason 名不变 | 前置：带 `x-page-path: /assistant`、非空 UA；触发既有拒答（如非法 Origin → `origin_blocked`）；读审计。 | 1. `decision: 'reject'`，`reason` 仍为既有字面（如 `origin_blocked`），**未**被重命名；<br>2. `pagePath === '/assistant'`，`userAgent` 等于所发 UA；<br>3. 不调用业务 `next()`。 |
+| IT-AUDIT-PAGE-01 | chat allow：NDJSON+SQL 页字段闭环 | 前置：独立审计文件；可选 fake `dbPool`；`POST /api/chat` 带 `x-page-path: /assistant`、`x-page-title: 职问助手`、`User-Agent: S19-IT/1.0`；middleware + `finalize` allow。 | 1. NDJSON：`actionName === 'AI 助手对话'`，`pagePath === '/assistant'`，`pageTitle === '职问助手'`，`userAgent === 'S19-IT/1.0'`；<br>2. SQL（若注入）：`page_path`/`page_title`/`action_name`/`user_agent` 绑定同值；`page_path` **优先** pagePath 而非仅 `path`；<br>3. 调用序：middleware 写入 `req.aiGuard` → `finalize` → `appendAudit`（NDJSON 与可选 SQL）。 |
+| IT-AUDIT-PAGE-02 | generate allow：actionName 为生成题目解析 | 前置：`POST /api/problems/:id/answer/generate`；非空 UA；带或不带 `x-page-path`；触发 `finalize`（缓存早退或 stub 生成均可）。 | 1. 审计 `actionName === '生成题目解析'`，`userAgent` 非空且等于请求 UA；<br>2. 若带 `x-page-path` 则 `pagePath` 等于该头，否则等于该 API `req.path`；<br>3. 与 chat IT-AUDIT-PAGE-01 合取覆盖两条 AI 路由。 |
+| IT-AUDIT-PAGE-03 | CORS 预检三页头 + 真实 POST 不拦 | 前置：挂载 `cors(corsOptions)`；按 IT-CORS-03 做 OPTIONS → POST（含三页头）。 | 1. OPTIONS 204/200 且 Allow-Headers 含三页头；<br>2. POST 无 CORS 失败；<br>3. 与 §2.11 UT-CORS-05/06、§3.4 IT-CORS-03 合取。 |
+| IT-AUDIT-PAGE-04 | 不做 / residual 边界 | 前置：只读 backlog S19 **不做**与 residual。 | 1. PASS **不**要求改表 schema/列名、强制前端发头、把页头当鉴权、改 S9、改 reason 名；<br>2. 承认未发 `x-page-path` 时 `page_path` 为 API path；助教/解析是否附带页头另条；<br>3. 以「前端未发页头」或「未改 schema」判 FAIL 则本行失败。 |
+
 ---
 
 ## 4. 前端测试用例规范 (Frontend Test Suites)
@@ -1842,7 +1903,7 @@ Prompt 内容来自数据库，不能只依赖客户端 `AI_MAX_INPUT_CHARS` 防
 
 | ID | 用例标题 | 业务场景与前置步骤 | Mock / 交互策略 | 预期结果 |
 | :--- | :--- | :--- | :--- | :--- |
-| `E2E-MAIN-01` | 认证与受保护路由拦截 | 匿名访问受保护路由 `/` 或 `/settings` | 拦截 `/api/auth/login` 模拟成功登录返回 | 自动拦截并重定向到 `/login`；填入账号密码提交后成功保存登录凭证并跳转回主页面 |
+| `E2E-MAIN-01` | 认证与受保护路由拦截（对齐 S22：无 token → `/settings` 进登录） | 前置：清除浏览器 `localStorage` 的 `token` 与 `user_profile`（或全新匿名上下文）；直接打开受保护路由 `/settings`（可另测 `/`） | 拦截 `/api/auth/login`：成功体含 `token` 与 `user`；登录提交后凭证写入 `localStorage` | 1. 无 token 时 `router.beforeEach` 将 `/settings` **重定向到** `/login`（URL pathname 为 `/login`，对齐 **S22** / `UT-FE-401-07`，防止守卫分支被拿掉）；<br>2. 填入账号密码提交后 `localStorage.token` 非空且含 `user_profile`；<br>3. 登录成功落点仍为 `/settings`（S22 **不做**改登录成功落点；本行不断言 401 拦截器清会话，细断言见 §4.9） |
 | `E2E-MAIN-02` | 题库浏览与技术栈分类联动 | 已登录状态下进入首页分类列表 (`/`) | 拦截 `/api/categories` 与 `/api/problems` | 页面正确渲染分类标签树；切换分类标签时即时刷新题目列表并重置分页 |
 | `E2E-MAIN-03` | 题目详情浏览与解析切换 | 在列表中点击具体题目卡片 | 拦截 `GET /api/problems/:id`：`code === 0`，`data.answer` 为合法三字段 JSON 字符串 `{"summary":"主路径结论","keyPoints":["要点A"],"nextStep":"去练题"}`（或顶层同构三字段）；`analysis`/`moreAsk` 为短安全 HTML | 1. 路由跳转至 `/problem-detail`（或等价详情路由），呈现题面背景与难度徽标；<br>2. 「参考答案」面板**按三字段**展示：可见文本含 `主路径结论`、`要点A`、`去练题`（对齐 **C42** / `E2E-ANSWER-01`）；<br>3. 答案面板 DOM **不**出现整篇 `answer` JSON 原始串作为单一 `v-html` 块；切换「分析/拓展」仍可渲染 `analysis`/`moreAsk`。 |
 | `E2E-MAIN-04` | AI 面试助手流式交互主流程（对齐 S6） | 已登录导航至 `/assistant`；输入框发送非空提问（可与登录主路径同测） | `page.route` 拦截 **`POST /api/chat`**（非 `/api/chat/stream`）：`Content-Type: text/event-stream`；至少两帧 `delta` 后 `done`；首帧可含 Markdown 片段（如半截 `**加`），次帧补全为 `粗**` 或完整 `**加粗**` + 短正文，并可夹带 `<script>window.__s6main=1</script>` 以轻量证明消毒；证明全文缓冲重解析 | 1. 发送后 textarea `disabled`、发送钮文案为「生成中…」（或等价加载态）；<br>2. `[aria-label="Chat messages"]` 内助手气泡最终可见加粗节点（`strong`/`b`，文本含「加粗」）且流结束后加载态解除；<br>3. 用户气泡仍以纯文本展示提问原文（若用户输入含 `**字面**`，DOM **无**对应用户侧 `strong`）；助手气泡无 `<script>` 子节点且 `window.__s6main` 为 `undefined`（细断言见 `E2E-CHAT-MD-*`）。 |
@@ -2096,3 +2157,95 @@ Prompt 内容来自数据库，不能只依赖客户端 `AI_MAX_INPUT_CHARS` 防
 | `UT-FE-DARK-12` | residual：次级页面浅色块不构成本表 FAIL | 前置：只读 backlog S24 **residual**；本表 ID 列表。 | 1. 本表**不**断言「`html.dark` 下全站无浅色块」；<br>2. residual 页面保持浅色**不得**单独导致本表失败；<br>3. PASS 范围仅限 uno `darkMode: 'class'`、store 根 class、三视图底色/主标题 `dark:`。 |
 | `UT-FE-DARK-13` | 与设置页开关 UI 触发路径对齐（可选组件） | 前置：挂载 `SettingsView`（stub `user` store 为已登录以免跳转）；清根 `dark`；点击暗色开关按钮（现网 `@click="settingsStore.toggleDarkMode()"`）。 | 1. 点击后 `settingsStore.darkMode === true`；<br>2. `document.documentElement.classList.contains('dark') === true`；<br>3. 证明设置页可见开关与 store 契约同一路径（若挂载成本高，本行可与 UT-FE-DARK-01 合测并在测码注释写明「直接调 store 等价」；但不得删掉 01 的 store 契约）。 |
 | `UT-FE-DARK-14` | 边界：本表不断言截图像素 / E2E 截图对比 | 前置：只读本小节测法。 | 1. PASS 以 classList、配置字段、源码 `dark:` 子串为据；<br>2. **不**要求 Playwright 截图像素差分或视觉回归基线；<br>3. 「页面能看出主题变了」在单测层落实为「根 class + 底色/标题 `dark:` 变体存在」的可判定契约。 |
+### 4.9 登录与注册 Tab 焦点与 Enter 提交（S23）（`frontend/src/views/LoginView.vue` / `RegisterView.vue`）
+
+对应 **S23**（`docs/backlog.md` §S23）。回归点：现网凭据区用独立 `div` + 按钮 `@click="handleLogin"` / `@click="handleRegister"`（`type` 缺省为 `submit` 以外的按钮行为），密码框按 **Enter** 不会触发表单提交；键盘用户无法用原生表单语义完成登录/注册。本项只锁两视图的可访问提交与 Tab 焦点，不扩到助教/列表/设置整套键盘方案。
+
+**做**：
+
+1. `LoginView.vue` 与 `RegisterView.vue` 的凭据输入区改为包裹在 **`<form @submit.prevent="…">`**（或 `@submit.prevent` 绑定到 `handleLogin` / `handleRegister`）内。
+2. 提交按钮显式 **`type="submit"`**（禁止仅靠 `@click` 作为唯一提交路径；允许 `@click` 与 submit 并存，但 `submit` 事件必须能触发同一处理函数）。
+3. 沿用现有 **`handleLogin` / `handleRegister`**（成功仍走现有路由/`registered` 态）；**不**改写 store API 签名。
+4. 用户名、密码、确认密码保持原生 `<input>`，**不得**设 `tabindex="-1"`（可缺省或 `tabindex="0"`）；须保留可见焦点环（源码 class 含 `focus:ring-2` 或等价可见 ring，禁止 `focus:outline-none` 且无替代焦点样式）。
+5. 在密码框（注册另含确认密码框）按 **Enter**（`keydown`/`keypress` 且 `key === 'Enter'` 或 `code === 'Enter'`）必须触发表单 `submit`，进而调用对应 store 方法。
+
+**不做**：改助教 `AiAssistant.vue` 的 `Ctrl+Enter` 发送（`@keydown.ctrl.enter.prevent="send()"` 保持）；给题目列表、设置开关、底栏重做整套键盘方案；改 `POST /api/auth/login` / `POST /api/auth/register` 的请求体字段、状态码契约或前端校验文案（如 `Passwords do not match`）。
+
+**residual**：设置页、题目 Tab、列表项的方向键与快捷键另条；本表不得以「设置/列表未支持方向键」对本项判 FAIL。
+
+**交互 / 时序**（下一阶段 `it()` 须对齐）：
+
+1. 挂载 `LoginView` / `RegisterView`（Pinia + `vue-router` stub；`userStore.login` / `userStore.register` 用 `vi.fn` 可解析）。
+2. 填写原生 input（`setValue` 或 `element.value` + `input` 事件）。
+3. **路径 A**：对包裹凭据的 `form` 派发 `submit`（`wrapper.find('form').trigger('submit')` 或 `HTMLFormElement.requestSubmit()`）→ 须调用 `handleLogin`/`handleRegister` → 进而调用 `userStore.login(username, password)` / `userStore.register(username, password)`（注册在密码不一致时仍先本地校验，**零次** `register`，与现网一致）。
+4. **路径 B**：焦点在 `input[type=password]`（登录）或确认密码框（注册）上，派发 `keydown`：`{ key: 'Enter', code: 'Enter' }` → 浏览器/Vue 触发表单 `submit`（测码可断言 `submit` 监听被触发 **或** 直接断言 store 方法被调用；不得只断言「有 @click」）。
+5. Tab 契约：查询凭据区内全部 `input`（登录 2 个；注册未成功态 3 个），逐个断言 `getAttribute('tabindex') !== '-1'`；按钮为 `type="submit"`。
+
+**测法**：Vitest + `@vue/test-utils`；建议文件 `frontend/src/views/LoginView.auth-form.spec.ts` 与 `frontend/src/views/RegisterView.auth-form.spec.ts`（或同目录合并为 `auth-form.spec.ts`，但 `it()` 标题须含下表 ID）。stub `useRouter` 的 `push`；spy/mock `useUserStore().login` / `.register`。静态源码断言可用于「有 `<form` / `type="submit"` / 无 `tabindex="-1"` / 保留 `focus:ring`」的快速锁。`it()` 标题须包含下表 ID。
+
+| ID | 用例标题 | 场景描述 | 预期结果 |
+| :--- | :--- | :--- | :--- |
+| `UT-FE-AUTH-FORM-01` | LoginView：凭据区为 form 且按钮 type=submit | 前置：挂载 `LoginView`；查询凭据区 DOM（用户名 `#username`、密码 `#password`、Sign In 按钮）。 | 1. 存在恰好 **1** 个包裹两 input 与提交按钮的 `form` 元素；<br>2. 提交按钮 `type` 属性精确为 `submit`（`getAttribute('type') === 'submit'`）；<br>3. form 上存在 `@submit.prevent`（或等价：`submit` 监听调用 `handleLogin` 且默认刷新被阻止——测码可用 `submit` 事件的 `defaultPrevented === true`）。 |
+| `UT-FE-AUTH-FORM-02` | LoginView：对 form 派发 submit 调用 userStore.login | 前置：`userStore.login` = `vi.fn().mockResolvedValue(true)`；挂载后 `username` 填 `alice`、`password` 填 `secret-s23`；对 `form` `trigger('submit')`。 | 1. `userStore.login` 被调用 **恰好 1** 次；<br>2. 调用参数为 `('alice', 'secret-s23')`（或实现 trim 后的等价全等）；<br>3. **不**要求本行断言 `router.push('/settings')`（成功跳转属现有 store/视图行为，可另测，但不得因未跳转否定 submit→login 链路）。 |
+| `UT-FE-AUTH-FORM-03` | LoginView：密码框 keydown Enter 触发表单提交 | 前置：同 UT-FE-AUTH-FORM-02 填好凭据；对 `#password` 派发 `keydown`：`{ key: 'Enter', code: 'Enter' }`（若实现依赖原生 `requestSubmit`，允许先 `trigger('keydown.enter')` 再断言；或断言 form 的 submit handler 被调用）。 | 1. `userStore.login` 调用次数 **≥1**（与 Enter 路径对应的那次参数仍为填入的用户名/密码）；<br>2. **FAIL 条件**：仅存在按钮 `@click`、密码框 Enter 后 `login` 仍为 **0** 次（旧回归）；<br>3. 不得因 Enter 导致整页导航卸载（`submit` 须 `.prevent`）。 |
+| `UT-FE-AUTH-FORM-04` | LoginView：用户名/密码可 Tab 且保留焦点环 | 前置：挂载 `LoginView`；读取 `#username`、`#password` 的 `tabindex` 与 `class`（或 computed class 字符串）。 | 1. 两 input 的 `getAttribute('tabindex')` **均不等于** `'-1'`（`null`/`undefined`/`'0'` 均可）；<br>2. 两 input 的 class 字符串均含 `focus:ring-2`（或项目统一的可见焦点 ring 类名，测码注释写明）；<br>3. **禁止**两 input 同时出现「无 ring 且 `focus:outline-none`」导致焦点不可见。 |
+| `UT-FE-AUTH-FORM-05` | RegisterView：凭据区为 form 且按钮 type=submit | 前置：挂载 `RegisterView`（`registered === false` 初始态）；查询 `#username`、`#password`、`#confirm`、Create Account 按钮。 | 1. 存在包裹三 input 与提交按钮的 `form`；<br>2. 提交按钮 `type === 'submit'`；<br>3. form `submit` 默认行为被阻止（`defaultPrevented` 或 `@submit.prevent` 源码/行为可证）。 |
+| `UT-FE-AUTH-FORM-06` | RegisterView：form submit 调用 userStore.register | 前置：`userStore.register` = `vi.fn().mockResolvedValue(true)`；填 `username=bob`、`password=p@ss-1`、`confirmPassword=p@ss-1`；对 `form` `trigger('submit')`。 | 1. `userStore.register` 被调用 **恰好 1** 次，参数 `('bob', 'p@ss-1')`；<br>2. **零次**因本操作改写后端 URL（请求仍由 store 既有 `register` 发出，本行只锁视图→store）；<br>3. 若 mock 返回 `true`，组件可进入 `registered` 成功态（可见「Request Sent!」或等价），但本行以 store 调用为硬断言。 |
+| `UT-FE-AUTH-FORM-07` | RegisterView：确认密码框 Enter 触发表单提交 | 前置：同 UT-FE-AUTH-FORM-06 填好且密码一致；对 `#confirm`（确认密码）派发 Enter `keydown`。 | 1. `userStore.register` 调用次数 **≥1**，参数与填入值一致；<br>2. 对 `#password` 派发 Enter 的等价路径亦须能提交（可同 `it` 内二次挂载或分断言）；<br>3. **FAIL**：Enter 后 register 仍为 0 次。 |
+| `UT-FE-AUTH-FORM-08` | RegisterView：三 input 可 Tab、保留焦点环；密码不一致仍本地校验 | 前置：A) 断言 `#username`/`#password`/`#confirm` 均无 `tabindex="-1"` 且 class 含 `focus:ring-2`；B) 填密码 `a`、确认 `b`，`userStore.register` spy；对 form `submit`。 | 1. A：三 input Tab 与焦点环契约同 UT-FE-AUTH-FORM-04；<br>2. B：`userStore.register` 调用次数为 **0**；`userStore.error`（或页面错误区文本）为现网文案 `Passwords do not match`（**不做**改校验文案——本行锁「保持」）；<br>3. 证明 S23 只改提交载体，不改校验语义。 |
+| `UT-FE-AUTH-FORM-09` | 不做：助教 Ctrl+Enter 发送保持不变 | 前置：只读 `frontend/src/views/AiAssistant.vue` 模板；检索 `@keydown.ctrl.enter`（或等价 `ctrl+enter` 发送绑定）。 | 1. 源码仍含 `@keydown.ctrl.enter.prevent="send()"`（或语义等价：Ctrl+Enter 调用 `send`）；<br>2. 本表**不**要求把助教改为「仅 Enter 发送」或删除 Ctrl+Enter；<br>3. 证明 S23 **不做**改助教键盘方案。 |
+| `UT-FE-AUTH-FORM-10` | 不做：不改登录/注册接口与列表/设置键盘 | 前置：只读本小节断言与 backlog S23 **不做**；可选 grep 测文件 import。 | 1. 本表 PASS **不**断言改 `POST /api/auth/login` / `register` 的 body 字段名、HTTP 状态码或错误码文案；<br>2. **不**挂载 `ProblemList` / `SettingsView` / 底栏并要求方向键/整套快捷键；<br>3. 测码不得以「设置开关未支持键盘」为本表 FAIL。 |
+| `UT-FE-AUTH-FORM-11` | residual：设置页 / 题目 Tab / 列表项快捷键另条 | 前置：只读 backlog S23 **residual** 与本表 ID 列表。 | 1. 本表**不**断言 `SettingsView` 开关、`ProblemItem` Tab（含现网 `tabindex` 切换）、列表项方向键；<br>2. residual 未覆盖不得对本表判 FAIL；<br>3. 与 UT-FE-AUTH-FORM-09/10 合取划清范围。 |
+| `UT-FE-AUTH-FORM-12` | 静态源码：Login/Register 均含 form@submit.prevent 与 type=submit | 前置：只读 `LoginView.vue` 与 `RegisterView.vue` 单文件源码字符串（不启动浏览器）。 | 1. 两文件均能匹配 `<form` 与 `@submit.prevent`（或 `v-on:submit.prevent`）；<br>2. 两文件提交按钮均能匹配 `type="submit"`；<br>3. 凭据 `input` 源码中**不出现** `tabindex="-1"`；登录/注册按钮路径不再是「无 form 仅有 `@click`」作为唯一提交入口（允许 `@click` 保留，但 form+submit 必须存在）。 |
+### 4.9 401 清会话并离开设置页；无 token 访问 `/settings` 进登录（S22）（`frontend/src/utils/request.ts` 响应错误拦截 / `frontend/src/router/index.ts` `beforeEach`）
+
+对应 **S22**（`docs/backlog.md` §S22）。回归点：过期/无效 JWT 仍留在 `localStorage` 时用户可停在 `/settings`；响应层若收到 HTTP **401** 却不清会话、不导航，则设置页「假登录」态残留。另须防止无 token 时路由守卫把 `/settings` 送到 `login` 的现有分支被拿掉。
+
+**做**：
+
+1. `frontend/src/utils/request.ts` 的 axios **响应错误拦截**（`service.interceptors.response` 的 reject 分支）：当 `error.response?.status === 401` 时：
+   - `localStorage.removeItem('token')` 与 `localStorage.removeItem('user_profile')`；
+   - 调用已导出的 `clearCache()` 清空 GET 内存 `cacheMap`；
+   - 导航到 `/login`（`router.push('/login')` 或 `router.replace('/login')`，测码对调用参数断言 pathname/`name` 为 login 即可）。
+2. **避免静态循环依赖**：`stores/user.ts` 已静态 `import` `request`；拦截器内若需 `useUserStore` / `router`，须用 **动态** `import()`（或等价延迟加载），**禁止**在 `request.ts` 顶层静态 `import` `@/stores/user`。
+3. 当前路由已是 `/login` 或 `/register`（`router.currentRoute.value.path` 或等价）时：**仍须**清 `token`/`user_profile` 与 `clearCache()`，但**不得**再发起一次去登录的导航（`push`/`replace` 调用次数为 0，或目标已是 login 时短路）。
+4. **403**（`error.response?.status === 403`）与**无响应**网络错误（`error.response` 为 `undefined`/`null`，如超时、断网、CORS 失败）：**不得**清除 `token`/`user_profile`，**不得**调用导航。
+5. 回归：`router.beforeEach` 在 `!userStore.isAuthenticated`（无 token）且目标为受保护页（含 `name: 'settings'` / path `/settings`）时 `next({ name: 'login' })`（或等价送 `/login`）。
+
+**不做**：
+
+- 把 HTTP **200** 且业务体 `code !== 0` 的成功通道业务错误一律登出 / 清 token / 导航（现网成功拦截器只 `Promise.reject(businessError)`，S22 不扩大）。
+- 改登录成功后的落点（`LoginView` 仍 `router.push('/settings')`）。
+- 改后端 401 文案或鉴权规则。
+- 改 `fetchProfile` 在非 401 失败时也会 `logout` 的现有行为（属 user store 既有逻辑，本表不改其契约）。
+
+**residual**：本地仍有 token、且接口**没有**返回 401 时，守卫继续放行（含过期 JWT 在首个 401 到达前仍可停留 `/settings`）。过期 JWT 要等一次 401 才离页——本表不得以「未发请求即主动踢出」为 FAIL。
+
+**时序**（实现与测码须一致）：
+
+1. axios 发出请求 → 服务端（或 mock adapter）返回 HTTP **401**（或 stub 构造 `AxiosError` 且 `error.response.status === 401`）。
+2. 进入响应**错误**拦截器（非成功分支的 `code !== 0` 路径）。
+3. 判定 `status === 401` → 同步清除 `localStorage` 两项 → `clearCache()` → 若当前 path ∉ {`/login`,`/register`} 则动态拿到 router 后导航 `/login` → `Promise.reject(error)`（调用方仍收到拒绝）。
+4. 对照：`status === 403` 或无 `response` → 跳过步骤 3 的清会话与导航，直接 `reject`。
+
+**测法**：Vitest；建议文件：
+
+- `frontend/src/utils/request.auth-401.spec.ts`（或 `request.401.spec.ts`）：用 `axios-mock-adapter` / stub `service.defaults.adapter` / 直接调用已注册的响应错误 handler（若导出测试钩子）触发拦截；spy `localStorage`、`clearCache`、`router.push`/`replace`；动态 import 路径可用 spy 断言模块加载方式或只读源码证明无顶层 `import … from '@/stores/user'`。
+- `frontend/src/router/auth-guard.spec.ts`（或扩展既有 router 测）：挂载 `createRouter` + Pinia，无 token 时 `router.push('/settings')` 断言最终落在 `login`。
+
+`it()` 标题须包含下表 ID。
+
+| ID | 用例标题 | 场景描述 | 预期结果 |
+| :--- | :--- | :--- | :--- |
+| `UT-FE-401-01` | 401 清掉 token 并触发去登录的导航 | 前置：`localStorage.token = 'jwt-stale-s22'`、`user_profile = '{"id":1,"username":"alice"}'`；当前路由 path 为 `/settings`（stub `router.currentRoute`）；spy `clearCache` 与 `router.push`/`replace`；触发任意经 `service` 的请求使响应错误拦截收到 `error.response = { status: 401, data: { code: 401, message: 'Unauthorized' } }`（message 文案可变，本行不断言后端文案）。 | 1. `localStorage.getItem('token') === null` 且 `getItem('user_profile') === null`；<br>2. `clearCache` 被调用 **≥1** 次；<br>3. 导航被调用 **恰好 1** 次，目标为 `/login` 或 `{ name: 'login' }` / path `'/login'`；<br>4. 原 Promise 仍 `reject`（调用方可 catch），不得吞掉错误。 |
+| `UT-FE-401-02` | 403 不清 token、不导航 | 前置：同 UT-FE-401-01 写入合法 `token`/`user_profile`；当前 path `/settings`；触发响应 `error.response.status === 403`（可附 `data: { code: 403, message: 'Forbidden' }`）。 | 1. `localStorage.getItem('token')` 仍为写入值；`user_profile` 仍在；<br>2. **零次**因本错误调用 `clearCache` 作为「登出清缓存」（若其它路径误清则 FAIL；允许请求前本就空的 cache 不被触碰）；更硬判据：spy 导航调用次数 **0**，且 token 键仍存在；<br>3. Promise `reject`，不导航到 `/login`。 |
+| `UT-FE-401-03` | 无响应的网络错误不清 token、不导航 | 前置：同 UT-FE-401-01 写入凭证；构造 axios 网络错误：`error.response` 为 `undefined`（可设 `error.message = 'Network Error'` / `error.code = 'ERR_NETWORK'`，**无** `status`）；走同一错误拦截器。 | 1. `token` 与 `user_profile` **均保留**；<br>2. 导航调用次数 **0**；<br>3. 不得把「无 response」误判为 401 清会话；Promise 仍 `reject`。 |
+| `UT-FE-401-04` | 已在 `/login`：401 清凭证但不再跳一次 | 前置：凭证同 UT-FE-401-01；stub 当前 path 为 `/login`；触发 401。 | 1. `token`/`user_profile` 已清除；`clearCache` ≥1 次；<br>2. 去登录的 `push`/`replace` 调用次数为 **0**（或实现显式短路且测码断言未改变 `currentRoute`）；<br>3. 证明「当前已是登录页不得再跳一次」。 |
+| `UT-FE-401-05` | 已在 `/register`：401 清凭证但不再跳一次 | 前置：同 UT-FE-401-04，当前 path 为 `/register`；触发 401。 | 1. `token`/`user_profile` 已清除；<br>2. 导航调用次数 **0**；<br>3. 与 UT-FE-401-04 合取覆盖公开页短路。 |
+| `UT-FE-401-06` | 实现用动态 import，禁止与 `user` store 顶层静态环依 | 前置：只读 `frontend/src/utils/request.ts` 源码（及拦截器内可能拆出的 helper）；对照 `stores/user.ts` 已 `import { get, post, clearCache } from '@/utils/request'`。 | 1. `request.ts` **顶层** import 列表**不含** `@/stores/user` / `stores/user`（可用文本断言：无 `from '@/stores/user'` / `from \"@/stores/user\"`）；<br>2. 若拦截器需要 store/router，源码须出现动态 `import(`（如 `await import('@/router')` 或 `import('@/stores/user')`）；<br>3. 模块加载 `request.ts` 时不得因静态环依抛循环依赖初始化错误（测码可 `await import('@/utils/request')` 断言 resolve）。 |
+| `UT-FE-401-07` | 无 token 时路由守卫把 `/settings` 送到 login | 前置：`localStorage` 无 `token`（或 Pinia `user.token === null`，`isAuthenticated === false`）；安装真实 `router`（`frontend/src/router/index.ts`）+ `createPinia`；执行 `router.push('/settings')` 或 `router.push({ name: 'settings' })` 并 `await router.isReady()` / 等待导航完成。 | 1. 最终 `router.currentRoute.value.name === 'login'`（或 path === `/login`）；<br>2. **不得**停留在 `name === 'settings'`；<br>3. 证明现有 `beforeEach` 中 `authRequired && !userStore.isAuthenticated → next({ name: 'login' })` 分支仍在（S22 回归，防止被拿掉）；与 §4.1 `E2E-MAIN-01` 同向。 |
+| `UT-FE-401-08` | 不做：HTTP 200 且 `code !== 0` 不走 401 清会话 | 前置：写入 `token`/`user_profile`；当前 path `/settings`；mock 成功响应 HTTP **200**，body `{ code: 1001, message: 'biz-fail-s22', data: null }`（走成功拦截器的业务错误分支）。 | 1. 成功拦截器 `Promise.reject` 业务 Error（message 含 `biz-fail-s22` 或等价）；<br>2. `localStorage.token` **仍在**；导航次数 **0**；<br>3. 证明 S22 **不做**「业务 code≠0 一律登出」。 |
+| `UT-FE-401-09` | 不做：不改登录成功落点仍为 `/settings` | 前置：只读 `LoginView.vue`（或登录成功导航测）；可选 stub `userStore.login` resolve true 后触发提交。 | 1. 登录成功导航目标仍为 `/settings`（`router.push('/settings')` 或等价）；<br>2. 本表**不得**以「登录后改去 `/` 或其它页」为 PASS；<br>3. 与 S22 **不做**列表一致。 |
+| `UT-FE-401-10` | 不做：不改后端 401 文案 / `fetchProfile` 非 401 logout | 前置：只读 backlog S22 **不做**与本表断言范围。 | 1. 本表**不**断言后端 JSON `message` 精确文案，不要求改鉴权规则；<br>2. **不**要求删除或改写 `user.ts` `fetchProfile` catch 里「失败即 `logout`」的现有行为；<br>3. PASS 仅约束 axios 错误拦截的 HTTP 状态分流与守卫回归。 |
+| `UT-FE-401-11` | residual：有 token 且无 401 时守卫仍放行 `/settings` | 前置：`localStorage.token = 'still-present'`（可为过期 JWT 字面量）；`isAuthenticated === true`；**不**触发任何 401 响应；`router.push('/settings')`。 | 1. 最终路由为 `settings`（path `/settings`）；<br>2. **不**被重定向到 `login`；<br>3. 证明 residual：过期 JWT 要等一次 401 才离页，守卫不因「看起来像过期」主动踢出。 |
+| `UT-FE-401-12` | 401 后 GET 内存缓存已空（clearCache 生效） | 前置：先经 `get`/`request` 写入至少 1 条 GET 缓存（同用户 key）；再触发 401 拦截；随后用**同一** URL+params 再 `get` 并 stub 网络层计数。 | 1. 401 路径调用了 `clearCache()`（或 `cacheMap` 在拦截后 `size === 0`）；<br>2. 再次 `get` 时网络/adapter 被调用 **≥1** 次（证明未命中旧缓存）；<br>3. 与 UT-FE-401-01 合取：清会话含内存缓存，避免登出后串用户数据。 |
