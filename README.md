@@ -1,189 +1,83 @@
 # DevAsk (职问AI)
 
-> **DevAsk (职问AI)** 是一个面试题库驱动的 AI 智能问答与练习平台。面向开发者提供高频面试题库检索、基于大语言模型（LLM）的智能助教实时解析与模拟面试，并内置了面向生产环境的工业级 AI 安全防护网关。
+面试题库驱动的 AI 问答与练习。检索高频真题，用大模型做流式解析和模拟面试；请求先过一层签名、防重放和配额网关。
 
----
+## 能做什么
 
-## 📑 目录
+- **题库检索**：SQLite 本地存储，按技术栈、分类、标签、公司找题。
+- **AI 助教**：兼容 OpenAI / DeepSeek，SSE 流式解析与答题评估。
+- **AI 网关**：HMAC-SHA256 签名、时钟与 Nonce 防重放、按客户端 / IP 限流、日配额、审计日志。
+- **可观测**：Sentry 报错、慢 API 告警、Trace 贯穿前后端。
 
-- [核心特性](#-核心特性)
-- [技术栈与环境要求](#️-技术栈与环境要求)
-- [项目架构与目录结构](#-项目架构与目录结构)
-- [快速开始（本地开发）](#-快速开始本地开发)
-- [测试与质量校验](#-测试与质量校验)
-- [生产部署概览](#-生产部署概览)
-- [架构文档与技术白皮书](#-架构文档与技术白皮书)
-- [开源协议与声明](#-开源协议与声明)
+## 本地跑起来
 
----
-
-## ✨ 核心特性
-
-- 📚 **分类题库与精准检索**：基于本地轻量化 SQLite 存储，支持按技术栈、分类、高频标签与公司维度检索面试真题。
-- 🤖 **AI 助教与智能解析**：兼容 OpenAI / DeepSeek 等大模型标准接口，提供低延迟 Server-Sent Events (SSE) 流式回答与答题评估。
-- 🛡️ **工业级 AI 网关防护**：内置签名鉴权（HMAC-SHA256）、时钟偏差与 Nonce 防重放校验、多维速率限制（Client/IP）、日配额熔断及请求审计日志。
-- 📊 **全链路监控与可观测性**：前端集成 Sentry 运行时报错捕获、慢 API 自动告警与分布式全链路追踪（Trace Propagation）。
-- 🚀 **针对低配置主机深度调优**：适配 AWS EC2 (t3.small 2C2G) 等低资源实例，采用 PM2 Cluster 负载均衡与 Nginx 动静分离。
-
----
-
-## 🛠️ 技术栈与环境要求
-
-### 前置环境要求 (Prerequisites)
-
-- **Node.js**：`^18.18.0` 或 `>=20.0.0`（推荐 LTS 版本，需支持原生 ESM 与 `crypto`）
-- **包管理器**：`npm` (`>= 9.0.0`) 或 `pnpm`
-- **OpenSSL**：用于生成本地自签名 HTTPS 证书
-- **Redis** *(可选)*：若启用分布式速率限制与会话缓存，需提供 Redis 6.0+
-
-### 技术选型一览
-
-| 模块 | 核心技术 | 说明 |
-| :--- | :--- | :--- |
-| **前端 (Frontend)** | Vue 3 + Vite 7 + TypeScript + Pinia | 单页应用 (SPA)，采用 UnoCSS 原子化样式 |
-| **后端 (Backend)** | Node.js + Express 5 + SQLite3 + LangChain | RESTful API 服务，支持 SSE 流式传输 |
-| **安全网关** | 自研 AI Guard 中间件 | HMAC 签名校验、时钟容差防重放、动态配额 |
-| **进程守护** | PM2 (Cluster Mode) | 实例数动态调度、600MB/实例内存水位保护 |
-| **反向代理** | Nginx + 自研静态文件服务器 | HTTPS 终止、Gzip/Brotli 预压缩、SPA 路由回退 |
-| **监控上报** | Sentry (Vue & Browser Tracing) | 错误收集、慢请求告警与链路追踪 |
-
----
-
-## 📁 项目架构与目录结构
-
-```
-bagujing/
-├── backend/                  # 后端服务源码 (Node.js + Express + SQLite)
-├── frontend/                 # 前端应用源码 (Vue 3 + Vite + UnoCSS)
-├── scripts/                  # 部署与运维脚本
-│   ├── deploy.sh             # AWS EC2 / Linux 生产环境一键部署脚本
-│   ├── static-server.js      # 定制化静态文件服务器 (支持反向代理与 CSP)
-│   ├── restart-services.sh   # 服务安全重启脚本
-│   ├── stop-services.sh      # 优雅停机脚本
-│   └── generate-certs.sh     # 本地开发自签名 SSL/TLS 证书生成
-├── deploy/
-│   └── nginx.conf            # Nginx 生产环境推荐配置模板
-├── docs/                     # 架构设计与技术白皮书
-│   ├── security-ai-guard.md  # AI 网关安全防护专项设计白皮书
-│   ├── dependency-vulnerability-scanning.md # 依赖漏洞月扫与修复步骤
-│   ├── vulnerability-report.md # 依赖漏洞月报（滚动 PR 覆盖）
-│   ├── deployment-and-operations.md # 生产部署与运维工程白皮书
-│   └── why-custom-static-server.md  # 自研静态服务器选型与设计考量 ADR
-└── ecosystem.config.example.cjs  # PM2 进程集群管理模板
-```
-
-> ⚠️ **重要配置规范**：为了保证代码与私密信息安全，本项目所有包含数据密钥、API Key、环境参数的文件均采用 `.example` 模板方案。**在本地运行或生产部署前，必须基于模板复制一份并填入您的配置。**
-
----
-
-## 🚀 快速开始（本地开发）
-
-### 第一步：拷贝配置文件
-
-本项目遵循**单一数据源 (SSOT)** 设计原则：所有业务密钥与参数统一由 `.env` 文件管理。
+需要 Node.js `^18.18.0` 或 `>=20`，npm `>=9`。密钥只放在从 `.example` 复制出来的文件里。
 
 ```bash
-# 1. PM2 进程配置 (根目录下)
 cp ecosystem.config.example.cjs ecosystem.config.cjs
-
-# 2. 后端业务环境配置 (配置大模型 Key 与客户端凭证)
 cp backend/.env.example backend/.env
-
-# 3. 前端本地开发环境配置
 cp frontend/.env.example frontend/.env.local
-```
 
-### 第二步：一键初始化开发环境与 Git Hooks
-
-新成员克隆仓库后，运行以下一键脚本即可自动完成 **Git Hooks 挂载、前后端依赖安装及 Playwright 浏览器下载**：
-
-```bash
 ./scripts/setup-dev.sh
 ```
 
-*(可选) 如需本地安全通信证书：*
 ```bash
-./scripts/generate-certs.sh
+# 终端 1
+cd backend && npm run start          # :3000
+
+# 终端 2
+cd frontend && npm run dev           # 通常 https://localhost:5173，/api 代理到后端
 ```
 
-### 第三步：安装依赖与启动服务
+## 技术栈
 
-#### 方式 A：前后端独立启动（推荐，支持源码热更新）
+| 前端 | 后端 | 运行 |
+| --- | --- | --- |
+| Vue 3 · Vite 7 · TypeScript · Pinia · UnoCSS | Node.js · Express 5 · SQLite · LangChain | PM2 Cluster · Nginx 或 `scripts/static-server.js` · Sentry |
 
-```bash
-# 终端 1：启动后端 API 服务 (监听 3000 端口)
-cd backend
-npm run start
+Redis 6+ 可选，用于分布式限流和会话缓存。
 
-# 终端 2：启动前端 Vite 开发服务器 (支持热重载，自动代理 /api 至后端)
-cd frontend
-npm run dev
+## 测试与部署
+
+- 质量门禁：[QA workflow](https://github.com/hanalice/bagujing/actions/workflows/qa.yml)。用例矩阵见 [docs/test_cases.md](docs/test_cases.md)。本地报告 `./scripts/qa-report.sh`（生成 `docs/qa_report.md`，不入库）。
+- 阿里云 ECS：[docs/deploy-aliyun-ecs.md](docs/deploy-aliyun-ecs.md)。AWS 本机：`./scripts/deploy.sh`，参数与 Nginx / PM2 见 [docs/deployment-and-operations.md](docs/deployment-and-operations.md)。
+
+## 协议
+
+源码 [MIT](LICENSE)。题库与题目详情不随仓库发布。
+
+<details>
+<summary>目录、生产形态模拟、文档索引</summary>
+
+```text
+bagujing/
+├── backend/          # Express + SQLite
+├── frontend/         # Vue 3 + Vite
+├── scripts/          # setup-dev、deploy、static-server、证书
+├── deploy/nginx.conf
+├── docs/
+└── ecosystem.config.example.cjs
 ```
-打开浏览器访问控制台输出的地址（通常为 `https://localhost:5173`）。
 
-#### 方式 B：本地模拟生产环境（验证编译产物与 CSP 拦截）
+本地验收打包产物与 CSP（需要先 `./scripts/generate-certs.sh` 时再跑）：
 
 ```bash
-# 构建前端
-cd ../frontend && npm run build && cd ..
-
-# 启动 PM2 后端集群
+cd frontend && npm run build && cd ..
 pm2 start ecosystem.config.cjs
-
-# 启动静态服务器托管前端 dist 并代理 API
-PM2_SERVE_PATH=./frontend/dist \
-PM2_SERVE_PORT=8080 \
-PM2_SERVE_SPA=true \
-STATIC_API_PROXY_ENABLED=true \
-STATIC_API_PROXY_TARGET=http://127.0.0.1:3000 \
-node scripts/static-server.js
-```
-打开浏览器访问 `https://localhost:8080` 验证生产打包产物。
-
----
-
-## 🧪 测试与质量校验
-本项目秉持严格的质量标准，针对核心业务逻辑与关键交互实现 100% 自动化测试覆盖。
-
-- **质量门禁**：[![QA](https://github.com/hanalice/bagujing/actions/workflows/qa.yml/badge.svg)](https://github.com/hanalice/bagujing/actions/workflows/qa.yml) 打开最新一次 Run 的 Job Summary / Artifact 即可查看报告（`docs/qa_report.md` 由脚本生成，不入库）。
-- **本地报告**：`./scripts/qa-report.sh` 会在工作区生成 `docs/qa_report.md`，请勿提交。
-- **[测试用例设计 (Test Case Design)](docs/test_cases.md)**：深入了解测试策略矩阵、覆盖率映射以及端到端集成测试场景。
-- **依赖漏洞月报**：[![Vulnerability report](https://github.com/hanalice/bagujing/actions/workflows/vulnerability-report.yml/badge.svg)](https://github.com/hanalice/bagujing/actions/workflows/vulnerability-report.yml) 每月扫描一次，**不阻断合并**。报告单独放在 [docs/vulnerability-report.md](docs/vulnerability-report.md)，由分支 `chore/vulnerability-report` 的滚动 PR 覆盖更新。其中的严重与高危列入后续 milestone，排期以当时计划为准。步骤见 [docs/dependency-vulnerability-scanning.md](docs/dependency-vulnerability-scanning.md)。
-
----
-
-## 🌐 生产部署概览
-
-- **阿里云 ECS（Alibaba Cloud Linux 3 / 2C2G / 手动一键零编译发布）**：通过 GitHub Actions（`workflow_dispatch`）构建前端与后端运行产物包，推送至非 root `deploy` 账号原子切换，支持同机多子域名隔离与每日 SQLite 压缩备份。详见 👉 **[阿里云 ECS 部署与运维手册 (docs/deploy-aliyun-ecs.md)](docs/deploy-aliyun-ecs.md)**。
-- **AWS EC2 本机脚本方案**：
-
-```bash
-# 执行自动化一键部署
-./scripts/deploy.sh
+PM2_SERVE_PATH=./frontend/dist PM2_SERVE_PORT=8080 PM2_SERVE_SPA=true \
+  STATIC_API_PROXY_ENABLED=true STATIC_API_PROXY_TARGET=http://127.0.0.1:3000 \
+  node scripts/static-server.js
+# https://localhost:8080
 ```
 
-> 📖 **完整部署指南**：关于生产环境配置清单、Nginx 动静分离配置、PM2 内存水位调度策略与静态服务器全量环境变量字典，请参阅：
-> 👉 **[生产部署与运维工程白皮书 (docs/deployment-and-operations.md)](docs/deployment-and-operations.md)**
+| 文档 | 内容 |
+| --- | --- |
+| [security-ai-guard.md](docs/security-ai-guard.md) | 签名、防重放、限流、配额、审计 |
+| [vulnerability-report.md](docs/vulnerability-report.md) | 依赖漏洞月报（不阻断合并） |
+| [dependency-vulnerability-scanning.md](docs/dependency-vulnerability-scanning.md) | 月扫到修复 PR 的步骤 |
+| [deployment-and-operations.md](docs/deployment-and-operations.md) | AWS、Nginx、PM2、环境变量 |
+| [deploy-aliyun-ecs.md](docs/deploy-aliyun-ecs.md) | 阿里云 ECS 一键发布 |
+| [why-custom-static-server.md](docs/why-custom-static-server.md) | 自研静态服务器的 ADR |
+| [docs/README.md](docs/README.md) | 公开文档与 `docs/internal/` 的分层 |
 
----
-
-## 📚 架构文档与技术白皮书
-
-为了让系统架构设计可溯源，项目在 [`docs/`](docs/) 目录下提供了详尽的技术白皮书与架构决策记录（ADR）：
-
-| 文档名称 | 类型 | 核心内容 |
-| :--- | :---: | :--- |
-| 🛡️ **[AI 安全防护网关设计白皮书](docs/security-ai-guard.md)** | 技术白皮书 | HMAC-SHA256 签名鉴权、防重放、分布式速率限制、Token 配额管控与审计日志设计 |
-| 🔎 **[依赖漏洞扫描报告](docs/vulnerability-report.md)** | 月报 | 每月 OSV-Scanner 结果，滚动 PR 更新；不阻断合并，高危按后续 milestone 排期 |
-| 🔎 **[依赖漏洞扫描与修复](docs/dependency-vulnerability-scanning.md)** | 流程 | 月扫范围、凭证报告，以及从报告到 backlog、再到单独修复 PR 的步骤 |
-| 🌐 **[生产部署与运维工程白皮书](docs/deployment-and-operations.md)** | 工程指南 | AWS EC2 一键部署、Nginx 动静分离配置、PM2 集群调优与环境变量全量参数字典 |
-| ☁️ **[阿里云 ECS 部署与运维手册](docs/deploy-aliyun-ecs.md)** | 工程指南 | Alibaba Cloud Linux 3、GitHub Actions 手动一键打包零编译发布、单域名证书与每日备份 |
-| 📦 **[静态托管架构演进与 ADR](docs/why-custom-static-server.md)** | 架构决策 | 记录从 `pm2 serve` 到自研 `static-server.js` 的痛点演进与三层服务分工 |
-| 📋 **[文档维护规范与体系说明](docs/README.md)** | 规范指南 | 研发内部档案与公开技术文档的动静分层隔离规范 |
-
----
-
-## 📄 开源协议与声明
-
-- **代码许可**：本项目程序源码遵循 [MIT License](LICENSE) 开源协议。
-- **数据声明**：题库与题目详情数据属于私有财产，不随开源代码一同发布与分发。
+</details>
