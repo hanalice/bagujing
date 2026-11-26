@@ -120,7 +120,7 @@ flowchart TD
 
 - 同一 ID 在队列表只留一行。`done` / `split` 胜出 `todo`。
 - 修订记录出现「ID 完成」而队列表仍是 `todo` 时，收回为 `done`。选单同样跳过这种 ID。
-- 日修 cron 在选任务前跑 `reconcile-backlog.sh --commit`，有变化才提交并推 `main`。
+- 日修 cron 在选任务前跑 `reconcile-backlog.sh --commit`。`main` 不能直推，这次提交留在本地，由紧接着的日修 PR 带上 origin。
 - 自动合并时，多于一条日修 PR 仍全部留下。恰好一条且**只有** `docs/backlog.md` 冲突时，用两边的队列表和修订记录做上述收回，再合并。契约或其它文件有分歧则停，并按原路径通知人。
 - 不要在 GitHub 上逐行手改这张表的状态。手改错了，下一轮 cron 仍会按完成记录收回，避免再修一次已完成的项。
 

@@ -82,12 +82,9 @@ if ! git diff --quiet -- docs/backlog.md; then
   automation_record daily-fix-cron "" cron backlog_reconcile_failed 1 "" ""
   exit 1
 fi
-if git rev-parse --verify HEAD >/dev/null 2>&1 && [ "$(git rev-list --count origin/main..HEAD 2>/dev/null || echo 0)" != "0" ]; then
-  if ! git push origin main; then
-    echo "队列表收回已提交，但 push main 失败。本次不新开日修。"
-    automation_record daily-fix-cron "" cron backlog_reconcile_failed 1 "" ""
-    exit 1
-  fi
+# main 禁止直推，收回提交留在本地 main，由紧接着的日修分支带进 PR。
+if [ "$(git rev-list --count origin/main..HEAD 2>/dev/null || echo 0)" != "0" ]; then
+  echo "队列表收回已提交在本地 main，将随下一条日修 PR 进入 origin。"
 fi
 # shellcheck source=lib/git-sandbox.sh
 source "$PROJECT_ROOT/scripts/automation/lib/git-sandbox.sh"
