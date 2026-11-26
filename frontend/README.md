@@ -21,7 +21,7 @@ frontend/
 │   ├── layouts/            # 基础布局 (移动端 Tabbar / PC 端自适应容器)
 │   ├── stores/             # Pinia 全局状态管理
 │   │   ├── user.ts         # 用户登录态、角色 (Admin/User) 与配额信息
-│   │   ├── settings.ts     # 深色模式与个性化偏好
+│   │   ├── settings.ts     # 字号、助教开关与分类偏好
 │   │   └── breadcrumb.ts   # 顶部导航面包屑状态
 │   ├── utils/              # 辅助工具函数库
 │   │   ├── request.ts      # Axios 网络请求封装 (统一拦截、错误提示)
