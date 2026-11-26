@@ -96,6 +96,13 @@ done
 
 agent_prepare_cli_path
 agent_resolve_engine
+# 已有未合并的日修 PR 时不再开下一条。四条 PR 从同一版队列切开后，人工解决 backlog 冲突会把 done 写回 todo。
+if [ "$DO_PUSH" = "1" ] && [ "${ALLOW_CONCURRENT_AUTO:-}" != "1" ] && command -v gh >/dev/null 2>&1; then
+  OPEN_AUTO="$(gh pr list --base main --state open --limit 20 --json headRefName --jq '[.[] | select(.headRefName | test("^auto-(fix|feat)/"))] | .[].headRefName' 2>/dev/null || true)"
+  if [ -n "$OPEN_AUTO" ]; then
+    die "已有未合并的日修 PR，拒绝再开一条：${OPEN_AUTO//$'\n'/, }"
+  fi
+fi
 if [ "$QUEUE" = "process" ]; then
   BACKLOG_PATH="$PROJECT_ROOT/docs/process-backlog.md"
 elif [ "$QUEUE" != "product" ]; then

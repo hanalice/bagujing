@@ -11,7 +11,9 @@
 #   chore/weekly-scan-<日期>  不看 qa，可合并则直接 merge。
 #   auto-fix/<id>-<日期>、auto-feat/<id>-<日期>
 #     0 条：不处理
+#     多于 1 条：一条都不合，退出 1（避免并发日修互相覆盖队列表）
 #     1 条且检查名 qa 为 SUCCESS、GitHub 判定可合并：merge
+#     1 条但只有 docs/backlog.md 冲突：按 done 胜出规则收回后再 merge
 #     其余：一条都不合，退出 1
 # ==============================================================================
 
@@ -110,6 +112,36 @@ merge_weekly_scans() {
   done <<< "$raw"
 }
 
+# 仅 docs/backlog.md 冲突时，用两边的队列表和修订记录收回后再推回 PR 分支。
+# 契约或其它文件有分歧则失败，不替人改那些章节。
+resolve_backlog_conflict() {
+  local head="$1"
+  local work
+  work="$(mktemp -d)"
+  git fetch origin "$head"
+  git worktree add --detach "$work" origin/main
+  set +e
+  (
+    set -euo pipefail
+    cd "$work"
+    git merge --no-commit --no-ff "origin/$head" >/dev/null 2>&1 || true
+    conflicts="$(git diff --name-only --diff-filter=U)"
+    [ "$conflicts" = "docs/backlog.md" ]
+    git show :2:docs/backlog.md >"$work/ours.md"
+    git show :3:docs/backlog.md >"$work/theirs.md"
+    node "$AUTOMATION_DIR/backlog-reconcile.js" union "$work/ours.md" "$work/theirs.md" "$work/docs/backlog.md"
+    git add docs/backlog.md
+    merge_msg="$(git rev-parse --git-path MERGE_MSG)"
+    git commit -F "$merge_msg"
+    git push origin "HEAD:refs/heads/$head"
+  )
+  local code=$?
+  set -e
+  git worktree remove --force "$work" >/dev/null 2>&1 || true
+  rm -rf "$work"
+  return "$code"
+}
+
 # 日修 PR：0 条跳过；多于 1 条全部留下；恰好 1 条且 qa 已通过才合并。
 merge_auto_prs() {
   local -a rows=()
@@ -149,7 +181,16 @@ merge_auto_prs() {
       merge_and_ff "$url"
       ;;
     CONFLICTING)
-      die "日修 #$number 与 main 冲突，不合并：$url"
+      echo "⚠️ 日修 #$number 与 main 冲突，尝试只收回 docs/backlog.md：$url"
+      if ! resolve_backlog_conflict "$head"; then
+        die "日修 #$number 的冲突不能按队列表规则收回，不合并：$url"
+      fi
+      mergeable="$(pr_mergeable "$url")"
+      if [ "$mergeable" != "MERGEABLE" ]; then
+        die "日修 #$number 收回队列表后仍是 ${mergeable:-空}，本次不合并：$url"
+      fi
+      echo "🔀 队列表已收回，合并日修 #$number $head"
+      merge_and_ff "$url"
       ;;
     *)
       die "日修 #$number 合并状态为 ${mergeable:-空}，本次不合并：$url"
