@@ -129,7 +129,7 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | S19 | fix | scan | auto | done | 100 | finalize/reject 审计贯通 actionName/pageTitle/userAgent/pagePath；CORS 放行对应页头 |
 | S20 | fix | scan | auto | todo | 110 | 助教 Markdown 消毒与答案区白名单对齐（ALLOWED_TAGS/ATTR） |
 | S21 | feat | scan | auto | todo | 120 | getMetrics 导出 latencyBuckets 四档延迟计数 |
-| S22 | fix | user | auto | todo | 10 | 401 清会话并离开设置页；无 token 访问 /settings 进入登录 |
+| S22 | fix | user | auto | done | 10 | 401 清会话并离开设置页；无 token 访问 /settings 进入登录 |
 | S23 | fix | user | auto | todo | 20 | 登录与注册支持 Tab 焦点与 Enter 提交 |
 | S24 | feat | user | auto | done | 30 | 设置页暗色开关联动可见的 dark 样式 |
 | S23 | fix | user | auto | done | 20 | 登录与注册支持 Tab 焦点与 Enter 提交 |

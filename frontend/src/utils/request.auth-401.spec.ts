@@ -197,6 +197,7 @@ describe('S22 request 401 清会话 (request.auth-401)', () => {
     expect(topLevel).not.toMatch(/from\s+['"]@\/stores\/user['"]/)
     expect(topLevel).not.toMatch(/from\s+['"]@\/router['"]/)
     expect(src).toMatch(/import\(['"]@\/router['"]\)/)
+    expect(src).toMatch(/import\(['"]@\/stores\/user['"]\)/)
     await expect(import('@/utils/request')).resolves.toBeTruthy()
   })
 
