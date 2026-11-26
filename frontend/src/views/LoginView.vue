@@ -18,12 +18,12 @@ const handleLogin = async () => {
 </script>
 
 <template>
-  <div class="min-h-full bg-[#F8FAFC] dark:bg-slate-900 flex flex-col justify-center px-7 py-12">
+  <div class="min-h-full bg-[#F8FAFC] flex flex-col justify-center px-7 py-12">
     <div class="sm:mx-auto sm:w-full sm:max-w-md">
       <div class="w-20 h-20 bg-blue-500 rounded-3xl mx-auto flex items-center justify-center shadow-lg shadow-blue-500/20 mb-8">
         <div class="i-carbon-user-avatar text-4xl text-white"></div>
       </div>
-      <h2 class="text-center text-3xl font-[900] text-[#0F172A] dark:text-slate-100 tracking-tight">Welcome Back</h2>
+      <h2 class="text-center text-3xl font-[900] text-[#0F172A] tracking-tight">Welcome Back</h2>
       <p class="mt-2 text-center text-sm font-medium text-slate-400">
         Login to sync your study progress
       </p>

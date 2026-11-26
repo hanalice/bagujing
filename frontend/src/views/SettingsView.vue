@@ -69,10 +69,10 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="px-7 py-8 space-y-9 bg-[#F8FAFC] dark:bg-slate-900 min-h-full pb-20">
+  <div class="px-7 py-8 space-y-9 bg-[#F8FAFC] min-h-full pb-20">
     <!-- Header -->
     <header class="flex items-center justify-between">
-      <h1 class="text-3xl font-[900] text-[#0F172A] dark:text-slate-100 tracking-tight">Settings</h1>
+      <h1 class="text-3xl font-[900] text-[#0F172A] tracking-tight">Settings</h1>
     </header>
 
     <!-- User Information Card -->
@@ -140,41 +140,14 @@ onMounted(() => {
       </div>
     </section>
 
-    <!-- General Settings -->
-    <section class="space-y-5">
+    <!-- General Settings：暗色开关已撤销，仅在有助教权限时保留 AI 开关 -->
+    <section v-if="userStore.profile?.permissions?.includes('chat_ai')" class="space-y-5">
       <div class="flex items-center justify-between px-1">
         <h3 class="text-lg font-[800] text-[#0F172A] tracking-tight">General Settings</h3>
       </div>
       <div class="bg-white rounded-[2rem] shadow-[0_12px_50px_-12px_rgba(0,0,0,0.05)] overflow-hidden border border-white/50">
-        <!-- Dark Mode -->
-        <div class="p-6 flex items-center justify-between border-b border-slate-50">
-          <div class="flex items-center gap-5">
-            <div class="w-12 h-12 rounded-2xl bg-slate-50/80 flex items-center justify-center border border-slate-100/50">
-              <div class="i-carbon-moon text-xl text-slate-600"></div>
-            </div>
-            <div>
-              <p class="font-[700] text-[#0F172A]">Dark Mode</p>
-              <p class="text-xs font-medium text-slate-400 mt-0.5">Enable dark theme personalization</p>
-            </div>
-          </div>
-          <button
-            @click="settingsStore.toggleDarkMode()"
-            :class="[
-              'relative inline-flex h-6 w-11 items-center rounded-full transition-all duration-300 focus:outline-none border-none outline-none p-0',
-              settingsStore.darkMode ? 'bg-blue-500 shadow-[0_0_15px_-3px_rgba(59,130,246,0.4)]' : 'bg-slate-200'
-            ]"
-          >
-            <span
-              :class="[
-                'inline-block h-5 w-5 transform rounded-full bg-white shadow-sm transition-transform duration-300 ring-0',
-                settingsStore.darkMode ? 'translate-x-[22px]' : 'translate-x-[2px]'
-              ]"
-            />
-          </button>
-        </div>
-
         <!-- AI Assistant -->
-        <div v-if="userStore.profile?.permissions?.includes('chat_ai')" class="p-6 flex items-center justify-between">
+        <div class="p-6 flex items-center justify-between">
           <div class="flex items-center gap-5">
             <div class="w-12 h-12 rounded-2xl bg-blue-50/80 flex items-center justify-center border border-blue-100/30">
               <div class="i-carbon-chat text-xl text-blue-600"></div>
@@ -206,7 +179,6 @@ onMounted(() => {
     <section class="space-y-5">
       <div class="flex items-center justify-between px-1">
         <h3 class="text-lg font-[800] text-[#0F172A] tracking-tight">Problem Preferences</h3>
-        <p class="text-[10px] font-black text-slate-300 uppercase tracking-widest">Global Filter</p>
       </div>
       <div class="flex flex-wrap gap-2.5">
         <!-- All Categories Toggle -->

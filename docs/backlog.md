@@ -129,9 +129,8 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | S19 | fix | scan | auto | done | 100 | finalize/reject 审计贯通 actionName/pageTitle/userAgent/pagePath；CORS 放行对应页头 |
 | S20 | fix | scan | auto | todo | 110 | 助教 Markdown 消毒与答案区白名单对齐（ALLOWED_TAGS/ATTR） |
 | S21 | feat | scan | auto | todo | 120 | getMetrics 导出 latencyBuckets 四档延迟计数 |
-| S22 | fix | user | auto | done | 10 | 401 清会话并离开设置页；无 token 访问 /settings 进入登录 |
-| S23 | fix | user | auto | done | 20 | 登录与注册支持 Tab 焦点与 Enter 提交 |
-| S24 | feat | user | auto | done | 30 | 设置页暗色开关联动可见的 dark 样式 |
+| S22 | fix | user | auto | todo | 10 | 401 清会话并离开设置页；无 token 访问 /settings 进入登录 |
+| S23 | fix | user | auto | todo | 20 | 登录与注册支持 Tab 焦点与 Enter 提交 |
 | S25 | fix | user | auto | done | 40 | generate 首次结构化解析失败时同请求再试一次上游 |
 
 
@@ -437,12 +436,6 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 - **不做**：改助教 `Ctrl+Enter`；给题目列表、设置开关、底栏重做整套键盘方案；改登录/注册的接口与校验文案。
 - **residual**：设置页、题目 Tab、列表项的方向键与快捷键另条。
 
-### S24
-
-- **做**：设置里的暗色开关打开后，页面能看出主题变了。`uno.config.ts` 写明 `darkMode: 'class'`（与 `documentElement` 上的 `dark` class 一致，`settings` store 已在切换时加上该 class）。`SettingsView.vue`、`LoginView.vue`、`BasicLayout.vue` 的页面底色与主标题文字补上 `dark:` 变体，不再只有浅色硬编码。单测锁：`toggleDarkMode` 后 `document.documentElement` 含 `dark`；上述三个视图源码含 `dark:` 类。同步 `docs/test_cases.md`。
-- **不做**：把默认改成暗色；重绘审计页、题目详情、虚拟列表；新做一套设计 token。
-- **residual**：未改到的次级页面在 `html.dark` 下仍可能是浅色块。
-
 ### S25
 
 - **做**：`POST /api/problems/:id/answer/generate` 在上游已返回正文、但 `parseGeneratedAnswerJson` 失败时，**同一次请求**内再 `invoke` 上游最多 1 次（与 D11 的 429/5xx 重试正交，不增加 D11 次数）。第二次解析成功则走现有入库与 `code: 0` 成功响应；两次都失败仍 `502`、`reason` 仍为 `invalid_structured_answer`、不入库。单测 mock：第一次 content 非合法三字段 JSON、第二次合法 → HTTP 200 且只入库一次；两次都非法 → 502 且不入库。同步 `docs/test_cases.md`。
@@ -584,4 +577,5 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | 2026-11-25 | S23 完成：登录与注册支持 Tab 焦点与 Enter 提交 |
 | 2026-11-25 | S24 完成：设置页暗色开关联动可见的 dark 样式 |
 | 2026-11-25 | S25 完成：generate 首次结构化解析失败时同请求再试一次上游 |
+| 2026-11-26 | 从队列表和契约节删除 S24。暗色主题不再做，不要把该 ID 加回队列 |
 | 2026-11-26 | 收回队列表：S22–S25 维持 done，删掉合并冲突留下的重复 todo。事故与并发合并规则见 automation-harness.md §3.5 |

@@ -2,16 +2,13 @@ import { defineStore } from 'pinia'
 import { ref, watch } from 'vue'
 
 export const useSettingsStore = defineStore('settings', () => {
-    const darkMode = ref(false)
     const fontSize = ref(16)
     const aiAssistant = ref(true)
     const selectedPreferences = ref<string[]>([])
     const currentUsername = ref<string | null>(null)
 
-    // Apply dark mode class to document root
-    const applyDarkMode = (enabled: boolean) => {
-        document.documentElement.classList.toggle('dark', enabled)
-    }
+    // 主题切换已撤销：清掉旧版本留在根节点上的 dark，避免残留 class
+    document.documentElement.classList.remove('dark')
 
     // Apply font size to document root
     const applyFontSize = (size: number) => {
@@ -22,7 +19,6 @@ export const useSettingsStore = defineStore('settings', () => {
         if (!currentUsername.value) return
         try {
             const settings = {
-                darkMode: darkMode.value,
                 fontSize: fontSize.value,
                 aiAssistant: aiAssistant.value,
                 selectedPreferences: selectedPreferences.value,
@@ -39,12 +35,10 @@ export const useSettingsStore = defineStore('settings', () => {
         if (raw) {
             try {
                 const parsed = JSON.parse(raw)
-                darkMode.value = parsed.darkMode ?? false
                 fontSize.value = parsed.fontSize ?? 16
                 aiAssistant.value = parsed.aiAssistant ?? true
                 selectedPreferences.value = parsed.selectedPreferences ?? []
-                
-                applyDarkMode(darkMode.value)
+
                 applyFontSize(fontSize.value)
                 return
             } catch (e) {
@@ -56,11 +50,9 @@ export const useSettingsStore = defineStore('settings', () => {
     }
 
     const resetAll = () => {
-        darkMode.value = false
         fontSize.value = 16
         aiAssistant.value = true
         selectedPreferences.value = []
-        applyDarkMode(false)
         applyFontSize(16)
     }
 
@@ -70,16 +62,11 @@ export const useSettingsStore = defineStore('settings', () => {
     }
 
     // Watch and persist
-    watch([darkMode, fontSize, aiAssistant, selectedPreferences], () => {
+    watch([fontSize, aiAssistant, selectedPreferences], () => {
         saveToStorage()
     }, { deep: true })
 
-    watch(darkMode, (val) => applyDarkMode(val), { immediate: true })
     watch(fontSize, (val) => applyFontSize(val), { immediate: true })
-
-    const toggleDarkMode = () => {
-        darkMode.value = !darkMode.value
-    }
 
     const toggleAiAssistant = () => {
         aiAssistant.value = !aiAssistant.value
@@ -102,11 +89,9 @@ export const useSettingsStore = defineStore('settings', () => {
     }
 
     return {
-        darkMode,
         fontSize,
         aiAssistant,
         selectedPreferences,
-        toggleDarkMode,
         toggleAiAssistant,
         togglePreference,
         clearPreferences,
