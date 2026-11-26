@@ -836,46 +836,80 @@ app.post('/api/problems/:id/answer/generate', authenticateToken, requirePermissi
     // D12：熔断判定在触达上游之前；open 时零次 invoke（含备用）、upstreamReached 仍为 false
     // D11：仅同步 generate 对 429/5xx 有限重试；整轮耗尽计 1 次熔断失败
     // D21：主 URL 在拿到成功 content 前失败且已配置备用 → 换备用 baseURL 再跑一轮（与 D11 正交）
+    // S25：有正文但 parseGeneratedAnswerJson 失败时，同请求再 invoke 至多 1 次（与 D11 正交）
     const llmDefaults = getLlmDefaults();
-    let response;
-    try {
-      response = await runWithUpstreamCircuit(() => {
-        upstreamReached = true;
-        return invokeWithBaseUrlFailover(async (baseURL) => {
-          const upstreamModel = createLlmModelForBaseUrl(baseURL, guardContext, llmDefaults, 'generation') || model;
-          return invokeWithRetry(() => upstreamModel.invoke([
-            new SystemMessage(promptMessages.system),
-            new HumanMessage(promptMessages.context),
-            new HumanMessage(promptMessages.user),
-          ]));
-        });
+    const upstreamMessages = [
+      new SystemMessage(promptMessages.system),
+      new HumanMessage(promptMessages.context),
+      new HumanMessage(promptMessages.user),
+    ];
+
+    // 单次上游整轮：熔断 →（可选 failover）→ D11 invokeWithRetry；S25 再试复用同一 messages。
+    const invokeGenerateUpstream = () => runWithUpstreamCircuit(() => {
+      upstreamReached = true;
+      return invokeWithBaseUrlFailover(async (baseURL) => {
+        const upstreamModel = createLlmModelForBaseUrl(baseURL, guardContext, llmDefaults, 'generation') || model;
+        return invokeWithRetry(() => upstreamModel.invoke(upstreamMessages));
       });
-    } catch (error) {
-      if (isCircuitOpenError(error)) {
-        await finalizeGuard({
-          status: 'error',
-          reason: 'circuit_open',
-          upstreamReached: false,
-          promptTokens,
-        });
+    });
+
+    // 从 LangChain / OpenAI 兼容响应取出可解析正文。
+    const extractAnswerRaw = (response) => {
+      if (typeof response?.content === 'string') return response.content;
+      if (Array.isArray(response?.content)) {
+        return response.content.map((part) => (typeof part?.text === 'string' ? part.text : '')).join('');
+      }
+      return String(response?.content ?? '');
+    };
+
+    // 处理熔断 open：503；其它错误上抛由外层 catch。
+    const awaitGenerateInvoke = async () => {
+      try {
+        return await invokeGenerateUpstream();
+      } catch (error) {
+        if (isCircuitOpenError(error)) {
+          await finalizeGuard({
+            status: 'error',
+            reason: 'circuit_open',
+            upstreamReached: false,
+            promptTokens,
+          });
+          return { circuitOpen: true, error };
+        }
+        throw error;
+      }
+    };
+
+    let invokeResult = await awaitGenerateInvoke();
+    if (invokeResult?.circuitOpen) {
+      return res.status(503).json({
+        code: 503,
+        message: invokeResult.error.message || 'Upstream circuit is open',
+        reason: 'circuit_open',
+      });
+    }
+    let response = invokeResult;
+    // C51：从 invoke 响应提取上游 usage（顶层 / response_metadata / usage_metadata）
+    let upstreamUsage = extractUpstreamUsage(response);
+    let answerRaw = extractAnswerRaw(response);
+    let parsed = parseGeneratedAnswerJson(answerRaw);
+
+    // S25：首次有正文但结构化解析失败 → 同请求再试上游 1 次（不占用/扩大 D11 429/5xx 预算）
+    if (!parsed.ok) {
+      invokeResult = await awaitGenerateInvoke();
+      if (invokeResult?.circuitOpen) {
         return res.status(503).json({
           code: 503,
-          message: error.message || 'Upstream circuit is open',
+          message: invokeResult.error.message || 'Upstream circuit is open',
           reason: 'circuit_open',
         });
       }
-      throw error;
+      response = invokeResult;
+      upstreamUsage = extractUpstreamUsage(response);
+      answerRaw = extractAnswerRaw(response);
+      parsed = parseGeneratedAnswerJson(answerRaw);
     }
-    // C51：从 invoke 响应提取上游 usage（顶层 / response_metadata / usage_metadata）
-    const upstreamUsage = extractUpstreamUsage(response);
 
-    const answerRaw = typeof response?.content === 'string'
-      ? response.content
-      : Array.isArray(response?.content)
-        ? response.content.map((part) => (typeof part?.text === 'string' ? part.text : '')).join('')
-        : String(response?.content ?? '');
-
-    const parsed = parseGeneratedAnswerJson(answerRaw);
     if (!parsed.ok) {
       await finalizeGuard({
         status: 'error',

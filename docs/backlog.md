@@ -134,7 +134,7 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | S24 | feat | user | auto | done | 30 | 设置页暗色开关联动可见的 dark 样式 |
 | S23 | fix | user | auto | done | 20 | 登录与注册支持 Tab 焦点与 Enter 提交 |
 | S24 | feat | user | auto | todo | 30 | 设置页暗色开关联动可见的 dark 样式 |
-| S25 | fix | user | auto | todo | 40 | generate 首次结构化解析失败时同请求再试一次上游 |
+| S25 | fix | user | auto | done | 40 | generate 首次结构化解析失败时同请求再试一次上游 |
 
 
 ---
@@ -582,6 +582,7 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | 2026-11-24 | F23 完成：低频审计排行 CLI/cron 壳：调 F21+F22；支持 dry-run；与 F13/process-decide 并存 |
 | 2026-11-25 | S19 完成：finalize/reject 审计贯通 actionName/pageTitle/userAgent/pagePath；CORS 放行对应页头 |
 | 2026-11-25 | 登记用户缺陷 S22–S25（auto+todo，优先级 10/20/30/40，排在 S19 之前）：401 离开设置页、登录注册键盘提交、暗色可见样式、generate 解析失败同请求再试一次 |
-| 2026-11-25 | S24 完成：设置页暗色开关联动可见的 dark 样式 |
-| 2026-11-25 | S23 完成：登录与注册支持 Tab 焦点与 Enter 提交 |
 | 2026-11-25 | S22 完成：401 清会话并离开设置页；无 token 访问 /settings 进入登录 |
+| 2026-11-25 | S23 完成：登录与注册支持 Tab 焦点与 Enter 提交 |
+| 2026-11-25 | S24 完成：设置页暗色开关联动可见的 dark 样式 |
+| 2026-11-25 | S25 完成：generate 首次结构化解析失败时同请求再试一次上游 |
