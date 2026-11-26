@@ -103,5 +103,5 @@ graph TD
 ## 4. 相关文档与代码链接
 
 - 源代码实现：[`scripts/static-server.js`](../scripts/static-server.js)
-- 环境变量配置表格：[README.md - 3. 前端静态服务器配置参考](../README.md#3-前端静态服务器配置参考)
-- 生产环境部署方案：[README.md - 1. AWS EC2 + Nginx 一键部署](../README.md#1-aws-ec2--nginx-一键部署)
+- 环境变量配置表格：[生产部署白皮书 §6 静态服务器](deployment-and-operations.md#6-前端定制静态服务器配置参考-static-serverjs)
+- 生产环境部署方案：[生产部署白皮书 §2 AWS EC2 + Nginx](deployment-and-operations.md#2-aws-ec2--nginx-一键自动化部署)
