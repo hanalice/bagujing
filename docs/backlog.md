@@ -10,7 +10,7 @@
 
 **飞轮总设计**：日修 / 周扫 / 拆条 / 合 PR / 流程自检 / 邮件通知，以及日志分析等仍缺的片，见 [`automation-harness.md`](automation-harness.md)。
 
-选任务前由 `scripts/automation/merge-remote-prs.sh` 单独处理远端 PR：`chore/weekly-scan-<日期>` 可合并则直接合入；`auto-fix/*` 与 `auto-feat/*` 仅当恰好一条且远端 `qa` 已通过时合入。合并不了则本次不新开任务。
+选任务前由 `scripts/automation/merge-remote-prs.sh` 单独处理远端 PR：`chore/weekly-scan-<日期>` 可合并则直接合入；`auto-fix/*` 与 `auto-feat/*` 仅当恰好一条且远端 `qa` 已通过时合入。多于一条时一条都不合。只有 `docs/backlog.md` 冲突时，按「done/split 胜出、修订记录里的 ID 完成可把 todo 收回为 done、同一 ID 只留一行」自动收回，不把这张表交给人逐行合并。其它文件冲突则本次不新开任务。日修 `--push` 时若已有未合并的日修 PR，直接拒绝再开一条。
 
 远端 PR 处理之后，由 `scripts/automation/prune-merged-branches.sh` 单独删除已合进 `origin/main` 的本地 `auto-fix/*`、`auto-feat/*`、`chore/weekly-scan-<日期>` 分支。未合并的留下。
 
@@ -131,7 +131,6 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | S21 | feat | scan | auto | todo | 120 | getMetrics 导出 latencyBuckets 四档延迟计数 |
 | S22 | fix | user | auto | todo | 10 | 401 清会话并离开设置页；无 token 访问 /settings 进入登录 |
 | S23 | fix | user | auto | todo | 20 | 登录与注册支持 Tab 焦点与 Enter 提交 |
-| S23 | fix | user | auto | done | 20 | 登录与注册支持 Tab 焦点与 Enter 提交 |
 | S25 | fix | user | auto | done | 40 | generate 首次结构化解析失败时同请求再试一次上游 |
 
 
@@ -579,3 +578,4 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | 2026-11-25 | S24 完成：设置页暗色开关联动可见的 dark 样式 |
 | 2026-11-25 | S25 完成：generate 首次结构化解析失败时同请求再试一次上游 |
 | 2026-11-26 | 从队列表和契约节删除 S24。暗色主题不再做，不要把该 ID 加回队列 |
+| 2026-11-26 | 收回队列表：S22–S25 维持 done，删掉合并冲突留下的重复 todo。事故与并发合并规则见 automation-harness.md §3.5 |
