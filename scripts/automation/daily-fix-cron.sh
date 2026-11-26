@@ -70,6 +70,25 @@ fi
 
 # shellcheck source=lib/backlog-queue.sh
 source "$PROJECT_ROOT/scripts/automation/lib/backlog-queue.sh"
+
+# 上一轮人工合并可能把已完成项写回 todo。先收回队列表，再选新任务。
+if ! "$PROJECT_ROOT/scripts/automation/reconcile-backlog.sh" --commit; then
+  echo "队列表收回失败，本次不新开日修。"
+  automation_record daily-fix-cron "" cron backlog_reconcile_failed 1 "" ""
+  exit 1
+fi
+if ! git diff --quiet -- docs/backlog.md; then
+  echo "收回后工作区仍有 backlog 改动，拒绝继续。"
+  automation_record daily-fix-cron "" cron backlog_reconcile_failed 1 "" ""
+  exit 1
+fi
+if git rev-parse --verify HEAD >/dev/null 2>&1 && [ "$(git rev-list --count origin/main..HEAD 2>/dev/null || echo 0)" != "0" ]; then
+  if ! git push origin main; then
+    echo "队列表收回已提交，但 push main 失败。本次不新开日修。"
+    automation_record daily-fix-cron "" cron backlog_reconcile_failed 1 "" ""
+    exit 1
+  fi
+fi
 # shellcheck source=lib/git-sandbox.sh
 source "$PROJECT_ROOT/scripts/automation/lib/git-sandbox.sh"
 

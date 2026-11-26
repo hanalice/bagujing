@@ -12,6 +12,7 @@ HLD_PATH="${HLD_PATH:-$PROJECT_ROOT/docs/internal/HLD-llm-call-pipeline.md}"
 # 队列表行：| ID | 类型 | 来源 | 分级 | 状态 | 优先级 | 任务 |
 # 输出：ID \t TYPE \t SOURCE \t LEVEL \t STATUS \t TASK
 # 未指定 ID 时，在分级匹配且状态为 todo 的行里取优先级最小者；同号保持表中顺序。
+# 修订记录已有「ID 完成」，或同一 ID 另有 done/split 行时，不再把残留 todo 选进去。
 backlog_read_row() {
   local want_id="$1"
   local want_level="$2"
@@ -20,7 +21,17 @@ backlog_read_row() {
       gsub(/^[[:space:]]+|[[:space:]]+$/, "", s)
       return s
     }
-    /^##[[:space:]]/ { in_queue = ($0 ~ /队列表/) }
+    /^##[[:space:]]/ {
+      in_queue = ($0 ~ /队列表/)
+      in_rev = ($0 ~ /修订记录/)
+      next
+    }
+    in_rev && match($0, /\|[[:space:]]*[A-Z][0-9]+[[:space:]]+完成/) {
+      token = substr($0, RSTART, RLENGTH)
+      gsub(/[^A-Z0-9]/, "", token)
+      finished[token] = 1
+      next
+    }
     !in_queue { next }
     NF < 9 { next }
     /^\|[[:space:]]*[A-Z][0-9]+[[:space:]]*\|/ {
@@ -31,24 +42,39 @@ backlog_read_row() {
       st = trim($6)
       pri = trim($7)
       task = trim($8)
-      if (want_id != "") {
-        if (id == want_id) {
-          print id "\t" typ "\t" src "\t" lvl "\t" st "\t" task
-          exit
-        }
-        next
-      }
-      if (lvl != want_level || st != "todo") next
+      if (st == "done" || st == "split") finished[id] = 1
       seq++
-      n = (pri ~ /^[0-9]+$/) ? pri + 0 : 1000000000
-      if (!chosen || n < best || (n == best && seq < best_seq)) {
-        best = n
-        best_seq = seq
-        chosen = id "\t" typ "\t" src "\t" lvl "\t" st "\t" task
-      }
+      row = id "\t" typ "\t" src "\t" lvl "\t" st "\t" task
+      rows[seq] = row
+      ids[seq] = id
+      lvls[seq] = lvl
+      sts[seq] = st
+      pris[seq] = pri
     }
     END {
-      if (want_id == "" && chosen != "") print chosen
+      for (i = 1; i <= seq; i++) if (finished[ids[i]]) sts[i] = "done"
+      if (want_id != "") {
+        for (i = 1; i <= seq; i++) if (ids[i] == want_id) {
+          split(rows[i], f, "\t")
+          f[5] = sts[i]
+          print f[1] "\t" f[2] "\t" f[3] "\t" f[4] "\t" f[5] "\t" f[6]
+          exit
+        }
+        exit
+      }
+      for (i = 1; i <= seq; i++) {
+        if (lvls[i] != want_level || sts[i] != "todo") continue
+        n = (pris[i] ~ /^[0-9]+$/) ? pris[i] + 0 : 1000000000
+        if (!chosen || n < best || (n == best && i < best_seq)) {
+          best = n
+          best_seq = i
+          chosen = i
+        }
+      }
+      if (chosen) {
+        split(rows[chosen], f, "\t")
+        print f[1] "\t" f[2] "\t" f[3] "\t" f[4] "\t" f[5] "\t" f[6]
+      }
     }
   ' "$BACKLOG_PATH"
 }
@@ -88,15 +114,40 @@ backlog_contract_frozen() {
 }
 
 # 列出当前 auto+todo 的 ID，每行一个，供周扫描限额校验。
+# 已有 done/split 或修订记录「ID 完成」的编号不算可执行项。
 backlog_list_auto_todo_ids() {
   awk -F'|' '
-    /^##[[:space:]]/ { in_queue = ($0 ~ /队列表/) }
+    function trim(s) {
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", s)
+      return s
+    }
+    /^##[[:space:]]/ {
+      in_queue = ($0 ~ /队列表/)
+      in_rev = ($0 ~ /修订记录/)
+      next
+    }
+    in_rev && match($0, /\|[[:space:]]*[A-Z][0-9]+[[:space:]]+完成/) {
+      token = substr($0, RSTART, RLENGTH)
+      gsub(/[^A-Z0-9]/, "", token)
+      finished[token] = 1
+      next
+    }
     !in_queue { next }
     /^\|[[:space:]]*[A-Z][0-9]+[[:space:]]*\|/ {
-      gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2)
-      gsub(/^[[:space:]]+|[[:space:]]+$/, "", $5)
-      gsub(/^[[:space:]]+|[[:space:]]+$/, "", $6)
-      if ($5 == "auto" && $6 == "todo") print $2
+      id = trim($2)
+      lvl = trim($5)
+      st = trim($6)
+      n++
+      ids[n] = id
+      lvls[n] = lvl
+      sts[n] = st
+      if (st == "done" || st == "split") finished[id] = 1
+    }
+    END {
+      for (i = 1; i <= n; i++) {
+        if (finished[ids[i]]) continue
+        if (lvls[i] == "auto" && sts[i] == "todo") print ids[i]
+      }
     }
   ' "$BACKLOG_PATH"
 }
