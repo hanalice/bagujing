@@ -4,27 +4,15 @@
  */
 import DOMPurify from 'dompurify'
 import { marked } from 'marked'
-
-/** 与服务端 html-sanitizer 白名单对齐的排版标签。 */
-const ALLOWED_TAGS = [
-  'p', 'br', 'hr',
-  'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
-  'ul', 'ol', 'li',
-  'strong', 'b', 'em', 'i', 'u', 's', 'del',
-  'code', 'pre', 'blockquote',
-  'table', 'thead', 'tbody', 'tr', 'th', 'td',
-  'span', 'div', 'a',
-]
-
-const ALLOWED_ATTR = ['class', 'title', 'href', 'target', 'rel']
+import { ALLOWED_ATTR, ALLOWED_TAGS } from './rich-text-allowlist'
 
 /**
  * 按答案白名单消毒 HTML，去掉脚本、事件属性和 javascript: 链接。
  */
 function sanitizeAnswerHtml(html: string): string {
   return DOMPurify.sanitize(html, {
-    ALLOWED_TAGS,
-    ALLOWED_ATTR,
+    ALLOWED_TAGS: [...ALLOWED_TAGS],
+    ALLOWED_ATTR: [...ALLOWED_ATTR],
   })
 }
 

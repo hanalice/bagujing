@@ -127,10 +127,10 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | F23 | feat | flywheel | auto | done | 70 | 低频审计排行 CLI/cron 壳：调 F21+F22；支持 dry-run；与 F13/process-decide 并存 |
 | F24 | feat | flywheel | manual | todo | 80 | 本机任务计划/cron 挂载 F23（运维壳；禁止改代码默认强制跑） |
 | S19 | fix | scan | auto | done | 100 | finalize/reject 审计贯通 actionName/pageTitle/userAgent/pagePath；CORS 放行对应页头 |
-| S20 | fix | scan | auto | todo | 110 | 助教 Markdown 消毒与答案区白名单对齐（ALLOWED_TAGS/ATTR） |
+| S20 | fix | scan | auto | done | 110 | 助教 Markdown 消毒与答案区白名单对齐（ALLOWED_TAGS/ATTR） |
 | S21 | feat | scan | auto | todo | 120 | getMetrics 导出 latencyBuckets 四档延迟计数 |
-| S22 | fix | user | auto | todo | 10 | 401 清会话并离开设置页；无 token 访问 /settings 进入登录 |
-| S23 | fix | user | auto | todo | 20 | 登录与注册支持 Tab 焦点与 Enter 提交 |
+| S22 | fix | user | auto | done | 10 | 401 清会话并离开设置页；无 token 访问 /settings 进入登录 |
+| S23 | fix | user | auto | done | 20 | 登录与注册支持 Tab 焦点与 Enter 提交 |
 | S25 | fix | user | auto | done | 40 | generate 首次结构化解析失败时同请求再试一次上游 |
 
 
@@ -579,3 +579,4 @@ ID 规则：`[A-Z][0-9]+`（如 `A81`、`C41`、周扫描新号 `S1`）。周扫
 | 2026-11-25 | S25 完成：generate 首次结构化解析失败时同请求再试一次上游 |
 | 2026-11-26 | 从队列表和契约节删除 S24。暗色主题不再做，不要把该 ID 加回队列 |
 | 2026-11-26 | 收回队列表：S22–S25 维持 done，删掉合并冲突留下的重复 todo。事故与并发合并规则见 automation-harness.md §3.5 |
+| 2026-11-28 | S20 完成：助教 Markdown 消毒与答案区白名单对齐（ALLOWED_TAGS/ATTR） |

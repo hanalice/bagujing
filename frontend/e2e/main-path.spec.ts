@@ -44,8 +44,8 @@ async function mockChatSse(page: Page, sseBody: string) {
 }
 
 /**
- * 【测试用例】E2E-MAIN-01 & E2E-MAIN-04 + E2E-CHAT-MD-01/02/03
- * S6：助手气泡 Markdown + DOMPurify；用户气泡纯文本。
+ * 【测试用例】E2E-MAIN-01 & E2E-MAIN-04 + E2E-CHAT-MD-01/02/03/04
+ * S6 / S20：助手气泡 Markdown + DOMPurify 白名单；用户气泡纯文本。
  */
 test.describe('前端业务主路径端到端测试 (Main Path E2E)', () => {
   test.beforeEach(async ({ page }) => {
@@ -143,10 +143,10 @@ test.describe('前端业务主路径端到端测试 (Main Path E2E)', () => {
     })
     await page.route('**/api/chat', async (route) => {
       await chatHeld
-      // 主路径亦夹带消毒目标：断言无未消毒 XSS（细断言见 E2E-CHAT-MD-02）
+      // 主路径亦夹带消毒目标：断言无未消毒 XSS（细断言见 E2E-CHAT-MD-02/04）；S20 夹带 img
       const sseBody = [
         'data: {"type":"delta","text":"你好！这是**加"}\n\n',
-        'data: {"type":"delta","text":"粗**。<script>window.__s6main=1</script>流式回答结束。"}\n\n',
+        'data: {"type":"delta","text":"粗**。<script>window.__s6main=1</script><img src=x>流式回答结束。"}\n\n',
         'data: {"type":"done"}\n\n',
       ].join('')
 
@@ -182,6 +182,7 @@ test.describe('前端业务主路径端到端测试 (Main Path E2E)', () => {
     await expect(assistantBold.first()).toBeVisible()
     await expect(messagesArea.locator('.text-right strong, .text-right b')).toHaveCount(0)
     await expect(messagesArea.locator('.text-left script')).toHaveCount(0)
+    await expect(messagesArea.locator('.text-left img')).toHaveCount(0)
     const mainXss = await page.evaluate(() => (window as unknown as { __s6main?: unknown }).__s6main)
     expect(mainXss).toBeUndefined()
     await expect(chatInput).toBeEnabled()
@@ -275,5 +276,35 @@ test.describe('前端业务主路径端到端测试 (Main Path E2E)', () => {
 
     const assistant = messagesArea.locator('.text-left').last()
     await expect(assistant).toContainText('ok')
+  })
+
+  test('E2E-CHAT-MD-04: 助手气泡白名单 img / iframe 不保留（S20）', async ({ page }) => {
+    await mockLoginAndEnterAssistant(page)
+
+    const dirty =
+      '可见文本<img src="https://evil.example/x.png" onerror="window.__s20e2e=1"><iframe src="https://evil.example/frame"></iframe>'
+    const sseBody = [
+      `data: ${JSON.stringify({ type: 'delta', text: dirty })}\n\n`,
+      'data: {"type":"done"}\n\n',
+    ].join('')
+    await mockChatSse(page, sseBody)
+
+    await page.goto('/assistant')
+    await page.evaluate(() => {
+      delete (window as unknown as { __s20e2e?: unknown }).__s20e2e
+    })
+    const chatInput = page.locator('textarea')
+    await chatInput.fill('白名单-E2E-S20')
+    await page.locator('button:has-text("发送")').click()
+
+    const messagesArea = page.locator('[aria-label="Chat messages"]')
+    const assistant = messagesArea.locator('.text-left').last()
+    await expect(assistant).toContainText('可见文本')
+    await expect(assistant.locator('img')).toHaveCount(0)
+    await expect(assistant.locator('iframe')).toHaveCount(0)
+
+    const flag = await page.evaluate(() => (window as unknown as { __s20e2e?: unknown }).__s20e2e)
+    expect(flag).toBeUndefined()
+    await expect(chatInput).toBeEnabled()
   })
 })
